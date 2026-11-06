@@ -105,6 +105,7 @@ main { flex: 1; min-height: 0; position: relative; }
 @keyframes blink { 50% { opacity: 0; } }
 .composer { border-top: 1px solid var(--border); background: var(--panel); padding: 8px 10px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
 .composer-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+#model-select:disabled { opacity: .45; }
 #model-select { max-width: 100%; flex: 1 1 200px; font-size: 13px; padding: 5px 8px; }
 .toggle { display: inline-flex; gap: 5px; align-items: center; font-size: 13px; user-select: none; cursor: pointer; }
 .composer-row { display: flex; gap: 6px; align-items: flex-end; }

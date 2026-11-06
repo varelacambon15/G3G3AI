@@ -6,7 +6,8 @@ Cliente de IA al estilo de LM Studio para tu **Konkr Pocket Fit** (SteamOS ARM) 
 
 - 💻 **Modelos locales** con llama.cpp. Puedes buscar y descargar modelos GGUF de Hugging Face (con aviso de si caben en la RAM), cargarlos y descargarlos de memoria.
 - ☁ **Modelos por API**: DeepSeek, Anthropic (Claude), OpenAI, Gemini, Groq, OpenRouter, y cualquier servidor compatible con OpenAI (por ejemplo Ollama o LM Studio).
-- 🔀 **Modo Auto**: en cada mensaje decide si responde el modelo local (gratis y privado) o uno por API (más potente). Si uno falla antes de responder, prueba con el otro.
+- 🎯 **Tú eliges el modelo**: en el selector del chat escoges un modelo local o uno de API para cada conversación.
+- 🔀 **Casilla Auto (opcional, desactivada por defecto)**: si la marcas, en cada mensaje se decide si responde el modelo local (gratis y privado) o uno por API (más potente). Si uno falla antes de responder, prueba con el otro.
 - 🛠 **Modo agente**: la IA puede listar, leer, buscar y **editar archivos** y **ejecutar comandos**. Cada acción te pide permiso (también desde el móvil). El modelo de API puede **pasarle subtareas al modelo local** (resumir, traducir…) para ahorrar coste.
 - 🔗 **Konkr ↔ PC**: cada equipo puede usar el modelo local del otro (Ajustes → Añadir proveedor → «Otro equipo con G3G3AI»).
 - 📱 **Desde el móvil**: interfaz web protegida con contraseña, instalable como app.
@@ -63,13 +64,13 @@ En Linux x64 también hay un binario `G3G3AI-linux-x64` en Releases/Actions.
 
 Abre `http://IP-DEL-EQUIPO:8800/?token=CONTRASEÑA`. La dirección exacta aparece en **Ajustes → Acceso remoto** y al instalar. El móvil tiene que estar en la misma Wi-Fi. Para acceder desde fuera de casa, usa [Tailscale](https://tailscale.com) en los dos dispositivos (no abras el puerto a internet).
 
-### Configurar DeepSeek y el modo Auto
+### Configurar DeepSeek y la casilla Auto
 
 1. Ajustes → Proveedores API → marca **DeepSeek** y pega tu clave API. Guarda.
 2. Ajustes → Modo Auto:
    - **modelo rápido** = el local;
    - **modelo potente** = `deepseek-chat` (o `deepseek-reasoner` para razonamiento profundo).
-3. En el chat, elige **🔀 Auto** en el selector.
+3. En el chat, elige **DeepSeek** en el selector para usarlo directamente, o marca la casilla **🔀 Auto** para que se alterne solo (mientras Auto está marcada, el selector queda en pausa).
 
 Con la estrategia *Inteligente*:
 - las preguntas cortas y la charla van al modelo local;

@@ -159,11 +159,9 @@ async function refreshStatus() {
 // --- Proveedores y selector de modelo -------------------------------------------------------
 async function loadProviders() {
   S.providers = await api("/api/providers");
-  const sel = $("#model-select"), prev = store.get("model", "auto::auto");
+  const sel = $("#model-select"), prev = store.get("model", "local::local");
   sel.innerHTML = "";
-  const r = S.status?.router;
-  const autoLbl = r ? `🔀 Auto · ${r.fast_ok ? "local ✔" : "local ✕"} / ${r.strong_ok ? r.strong.split("::").pop() + " ✔" : "API ✕"}` : "🔀 Auto";
-  sel.append(h("option", { value: "auto::auto" }, autoLbl));
+  updateAutoTitle();
   const local = h("optgroup", { label: "Local (llama.cpp)" });
   const lm = S.status?.llama?.model;
   local.append(h("option", { value: "local::local" }, lm ? `💻 ${lm}` : "💻 Modelo local (cárgalo en Modelos)"));
@@ -183,9 +181,20 @@ async function loadProviders() {
 }
 $("#model-select").addEventListener("change", (e) => store.set("model", e.target.value));
 function currentModel() {
+  if ($("#auto-toggle").checked) return { provider: "auto", model: "auto" };
   const [provider, ...rest] = $("#model-select").value.split("::");
   return { provider, model: rest.join("::") };
 }
+// Casilla Auto: desactivada por defecto; si se activa, el modelo se elige solo en cada mensaje.
+function updateAutoTitle() {
+  const r = S.status?.router, on = $("#auto-toggle").checked;
+  $("#model-select").disabled = on;
+  $("#auto-label").title = r
+    ? `Elige solo entre ${r.fast.split("::").pop()} (${r.fast_ok ? "disponible" : "no disponible"}) y ${r.strong.split("::").pop()} (${r.strong_ok ? "disponible" : "no disponible"}). Se configura en Ajustes.`
+    : "Elige automáticamente entre el modelo local y la API en cada mensaje";
+}
+$("#auto-toggle").checked = store.get("auto", false);
+$("#auto-toggle").addEventListener("change", (e) => { store.set("auto", e.target.checked); updateAutoTitle(); });
 if (matchMedia("(pointer: coarse)").matches) $("#input").placeholder = "Escribe un mensaje…";
 $("#tools-toggle").checked = store.get("tools", false);
 $("#tools-toggle").addEventListener("change", (e) => store.set("tools", e.target.checked));
@@ -216,7 +225,7 @@ async function openConversation(id) {
   S.conv = await api(`/api/conversations/${id}`);
   S.convId = id; S.system = undefined; store.set("conv", id);
   if (S.conv.provider) {
-    const v = `${S.conv.provider}::${S.conv.model}`;
+    const v = `${S.conv.provider}::${S.conv.model}`;  // las conversaciones en Auto no cambian el selector
     if ([...$("#model-select").options].some((o) => o.value === v)) $("#model-select").value = v;
   }
   renderMessages(); loadConversations();
@@ -724,7 +733,7 @@ async function loadSettings() {
     else if (type === "perm") inp = selectEl(key, v, [["off", "Desactivado"], ["ask", "Preguntar cada vez"], ["auto", "Automático (sin preguntar)"]]);
     else if (type === "router") inp = selectEl(key, v, [["smart", "Inteligente (según la tarea)"], ["local_first", "Local primero"], ["api_first", "API primero"]]);
     else if (type === "model") {
-      const opts = [...$("#model-select").options].filter((o) => o.value && !o.disabled && o.value !== "auto::auto").map((o) => [o.value, o.textContent]);
+      const opts = [...$("#model-select").options].filter((o) => o.value && !o.disabled).map((o) => [o.value, o.textContent]);
       if (v && !opts.some((o) => o[0] === v)) opts.push([v, v + " (no disponible ahora)"]);
       inp = selectEl(key, v, opts);
     }
