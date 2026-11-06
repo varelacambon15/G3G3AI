@@ -8,6 +8,7 @@ import secrets
 import shutil
 import platform
 import socket
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from .db import DB
 from .files import FileAccessError, Files
 from .hub import Hub
 from .llama import LlamaManager, default_threads, find_llama_server
-from . import router
+from . import router, sandbox
 from .engine import EngineInstaller
 from .providers import ProviderError, chat_stream, complete, list_models
 from .tools import ToolContext, resolve_approval
@@ -75,6 +76,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     hub = Hub(cfg)
     llama = LlamaManager(cfg)
     engine = EngineInstaller(cfg)
+    session_allow: dict[str, set] = {}  # conversación -> herramientas permitidas «siempre»
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -144,6 +146,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             "disk_free": shutil.disk_usage(hub.models_dir).free,
             "downloads_active": sum(1 for d in hub.downloads.values() if d["status"] == "downloading"),
             "platform": f"{platform.system()} {platform.machine()}",
+            "sandbox": {"available": sandbox.bwrap_path() is not None, "active": sandbox.available(cfg),
+                        "supported": sys.platform.startswith("linux")},
             "is_local": bool(is_local),
             "router": {"fast": cfg["router_fast"], "strong": cfg["router_strong"], "mode": cfg["router_mode"],
                        "fast_ok": provider_available(router.split(cfg["router_fast"])[0]),
@@ -269,13 +273,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         if not text and not attach_text and not body.get("continue"):
             raise HTTPException(400, "Mensaje vacío")
         agent = bool(body.get("use_tools"))
+        use_web = bool(body.get("use_web"))
 
         conv = db.get_conversation(cid) if cid else None
         # Último mensaje del usuario (para decidir la ruta al regenerar)
         last_user = text or next((m["content"] for m in reversed((conv or {}).get("messages", []))
                                   if m["role"] == "user"), "")
         if pid == AUTO_PROVIDER:
-            candidates = router.plan(cfg, last_user, bool(attachments), agent, provider_available)
+            candidates = router.plan(cfg, last_user, bool(attachments), agent or use_web, provider_available)
             if not candidates:
                 raise HTTPException(409, "Modo Auto: no hay ningún modelo disponible. Carga un modelo local "
                                          "o configura un proveedor API (Ajustes → Modo Auto).")
@@ -309,10 +314,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 "max_tokens": body.get("max_tokens", cfg["max_tokens"])}
 
         def make_ctx(chosen_pid: str):
-            if not agent:
+            if not (agent or use_web):
                 return None
-            delegate = local_complete if (chosen_pid != LOCAL_PROVIDER and llama.ready) else None
-            return ToolContext(files, cfg, delegate)
+            delegate = local_complete if (agent and chosen_pid != LOCAL_PROVIDER and llama.ready) else None
+            return ToolContext(files, cfg, delegate, agent=agent, web=use_web,
+                               session_allow=session_allow.setdefault(cid, set()))
 
         async def gen():
             content, reasoning, trace, stats, route = "", "", [], {}, None
@@ -359,7 +365,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.post("/api/chat/approve")
     async def approve(body: dict):
-        if not resolve_approval(str(body.get("id")), bool(body.get("approved"))):
+        answer = body.get("answer") or ("yes" if body.get("approved") else "no")
+        if not resolve_approval(str(body.get("id")), answer):
             raise HTTPException(404, "Esta solicitud ya no está pendiente")
         return {"ok": True}
 

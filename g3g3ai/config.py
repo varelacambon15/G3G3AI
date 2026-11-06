@@ -11,7 +11,7 @@ from pathlib import Path
 
 APP = "g3g3ai"
 HOME = Path.home()
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 
 def _default_dirs() -> tuple[Path, Path]:
@@ -55,6 +55,15 @@ DEFAULTS: dict = {
     "hf_token": "",
     # Archivos: carpetas a las que la interfaz y la IA pueden acceder.
     "file_roots": [str(HOME)],
+    # Carpetas que la IA puede modificar (y únicas escribibles por sus comandos aislados).
+    "write_roots": [str(HOME / "G3G3AI-trabajo")],
+    # Rutas protegidas: nadie las ve desde G3G3AI (ni la IA ni la interfaz remota).
+    "blocked_paths": [],  # se rellena con default_blocked() al crear la configuración
+    # Aislamiento de comandos (Linux: bubblewrap). "auto" = usarlo si está disponible.
+    "command_sandbox": "auto",
+    # Búsqueda web
+    "web_provider": "duckduckgo",  # duckduckgo | brave | tavily
+    "web_api_key": "",
     # Permisos del modo agente: "off" | "ask" (pide confirmación) | "auto"
     "ai_write": "ask",
     "ai_commands": "ask",
@@ -121,12 +130,38 @@ DEFAULTS: dict = {
     "config_version": CONFIG_VERSION,
 }
 
-SECRET_KEYS = {"token", "hf_token"}
+SECRET_KEYS = {"token", "hf_token", "web_api_key"}
+
+
+def default_blocked() -> list[str]:
+    """Secretos y datos personales que la IA nunca debería leer."""
+    items = [
+        "~/.ssh", "~/.gnupg", "~/.aws", "~/.azure", "~/.kube", "~/.docker", "~/.password-store",
+        "~/.local/share/keyrings", "~/.mozilla", "~/.thunderbird", "~/.config/chromium",
+        "~/.config/google-chrome", "~/.config/BraveSoftware", "~/.config/microsoft-edge",
+        "~/.var/app/org.chromium.Chromium", "~/.var/app/com.google.Chrome", "~/.var/app/org.mozilla.firefox",
+        "~/.var/app/com.brave.Browser", "~/.local/share/Steam/config", "~/.steam/steam/config",
+        "~/.config/gh", "~/.local/share/g3g3ai/g3g3ai.db",
+        str(CONFIG_DIR),
+        ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.kdbx", "id_rsa*", "id_ed25519*", "id_ecdsa*",
+        ".netrc", ".git-credentials", ".pgpass", "credentials.json",
+    ]
+    if sys.platform == "win32":
+        items += [
+            "~/AppData/Local/Google/Chrome/User Data", "~/AppData/Local/Microsoft/Edge/User Data",
+            "~/AppData/Roaming/Mozilla", "~/AppData/Local/BraveSoftware", "~/AppData/Roaming/Microsoft/Credentials",
+            "~/AppData/Local/Microsoft/Credentials", str(DATA_DIR / "g3g3ai.db"),
+        ]
+    if sys.platform == "darwin":
+        items += ["~/Library/Keychains", "~/Library/Application Support/Google/Chrome",
+                  "~/Library/Application Support/Firefox", "~/Library/Cookies"]
+    return items
 
 
 class Config:
     def __init__(self, path: Path = CONFIG_FILE):
         self.path = path
+        self._stored_keys: set = set()
         self._lock = threading.Lock()
         self.data: dict = copy.deepcopy(DEFAULTS)
         self.load()
@@ -136,9 +171,13 @@ class Config:
             try:
                 stored = json.loads(self.path.read_text("utf-8"))
                 self.data.update(stored)
+                self._stored_keys = set(stored)
             except (OSError, json.JSONDecodeError):
                 pass
         changed = self._migrate()
+        if not self.data.get("blocked_paths"):
+            self.data["blocked_paths"] = default_blocked()
+            changed = True
         if not self.data.get("token"):
             self.data["token"] = secrets.token_urlsafe(9)
             changed = True
@@ -149,6 +188,12 @@ class Config:
         d = self.data
         if d.get("config_version", 1) >= CONFIG_VERSION:
             return False
+        if "write_roots" not in self._stored_keys and d.get("agent_workdir"):
+            # v3: la carpeta de trabajo del agente pasa a ser la carpeta modificable inicial
+            d["write_roots"] = [d["agent_workdir"]]
+        if d.get("config_version", 1) >= 2:
+            d["config_version"] = CONFIG_VERSION
+            return True
         if "allow_ai_file_write" in d:
             d["ai_write"] = "auto" if d.pop("allow_ai_file_write") else "off"
         have = {p.get("id") for p in d.get("providers", [])}

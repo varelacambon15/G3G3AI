@@ -196,6 +196,8 @@ function updateAutoTitle() {
 $("#auto-toggle").checked = store.get("auto", false);
 $("#auto-toggle").addEventListener("change", (e) => { store.set("auto", e.target.checked); updateAutoTitle(); });
 if (matchMedia("(pointer: coarse)").matches) $("#input").placeholder = "Escribe un mensaje…";
+$("#web-toggle").checked = store.get("web", false);
+$("#web-toggle").addEventListener("change", (e) => store.set("web", e.target.checked));
 $("#tools-toggle").checked = store.get("tools", false);
 $("#tools-toggle").addEventListener("change", (e) => store.set("tools", e.target.checked));
 
@@ -256,17 +258,21 @@ function approvalCard(a) {
     : a.name === "write_file" ? h("pre", {}, `${args.path}\n\n${String(args.content || "").slice(0, 3000)}`)
     : h("pre", {}, JSON.stringify(args, null, 2));
   const title = { run_command: "ejecutar un comando", edit_file: "editar un archivo", write_file: "escribir un archivo" }[a.name] || a.name;
-  const card = h("div", { class: "approval" + (a.state ? " " + a.state : "") },
-    h("b", {}, a.state === "approved" ? "✔ Permitido: " : a.state === "denied" ? "✕ Denegado: " : "⚠ La IA quiere " ), title, what);
+  const card = h("div", { class: "approval" + (a.state ? " " + a.state : "") + (a.dangerous ? " dangerous" : "") },
+    h("b", {}, a.state === "approved" ? "✔ Permitido: " : a.state === "denied" ? "✕ Denegado: " : (a.dangerous ? "⛔ Atención: la IA quiere " : "⚠ La IA quiere ")), title,
+    a.sandboxed === true ? h("span", { class: "badge ok", title: "El comando sólo puede escribir en las carpetas permitidas" }, "🛡 aislado") : null,
+    what,
+    (a.warnings || []).length ? h("ul", { class: "warnings" }, a.warnings.map((w) => h("li", {}, w))) : null);
   if (!a.state) {
-    const answer = async (ok) => {
+    const answer = async (ans) => {
       card.querySelectorAll("button").forEach((b) => (b.disabled = true));
-      try { await api("/api/chat/approve", { method: "POST", body: { id: a.id, approved: ok } }); }
+      try { await api("/api/chat/approve", { method: "POST", body: { id: a.id, answer: ans } }); }
       catch (e) { toast(e.message); }
     };
     card.append(h("div", { class: "row" },
-      h("button", { class: "primary small", onclick: () => answer(true) }, "Permitir"),
-      h("button", { class: "danger small", onclick: () => answer(false) }, "Denegar")));
+      h("button", { class: "primary small", onclick: () => answer("yes") }, "Permitir"),
+      a.can_always !== false ? h("button", { class: "ghost small", title: "No volver a preguntar por esta herramienta en esta conversación (salvo acciones peligrosas)", onclick: () => answer("always") }, "Permitir siempre aquí") : null,
+      h("button", { class: "danger small", onclick: () => answer("no") }, "Denegar")));
   }
   return card;
 }
@@ -369,7 +375,7 @@ async function send(text, attachments, isContinue = false) {
   };
   try {
     const body = { conversation_id: S.convId, message: text, attachments, provider, model,
-      use_tools: $("#tools-toggle").checked, continue: isContinue };
+      use_tools: $("#tools-toggle").checked, use_web: $("#web-toggle").checked, continue: isContinue };
     if (S.system !== undefined) body.system = S.system;
     const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body), signal: ctrl.signal });
@@ -643,6 +649,7 @@ function renderFileList(entries) {
   for (const e of entries) {
     ul.append(h("li", { onclick: () => (e.is_dir ? loadFiles(e.path) : previewFile(e.path)) },
       h("span", { class: "name" }, (e.is_dir ? "📁 " : "📄 ") + (e.name || e.path)),
+      e.is_dir && e.ai_write ? h("span", { class: "badge ok", title: "La IA puede modificar esta carpeta" }, "IA ✎") : null,
       e.is_dir ? null : h("span", { class: "sub" }, fmtSize(e.size)),
       e.mtime ? h("span", { class: "sub" }, new Date(e.mtime * 1000).toLocaleDateString()) : null));
   }
@@ -695,10 +702,15 @@ const FIELDS = [
   ["llama_gpu_layers", "Capas en GPU", "number", "Sólo si compilaste llama.cpp con Vulkan (Adreno)."],
   ["llama_extra_args", "Argumentos extra de llama-server", "text", "p.ej. --flash-attn on --cache-type-k q8_0"],
   ["autoload_last_model", "Cargar el último modelo al arrancar", "checkbox"],
-  ["file_roots", "Carpetas accesibles (una por línea)", "lines", "La interfaz y la IA sólo pueden ver estas carpetas."],
+  ["file_roots", "Carpetas visibles (una por línea)", "lines", "La interfaz y la IA sólo pueden ver (leer) estas carpetas."],
   ["ai_write", "Agente: escribir/editar archivos", "perm"],
-  ["ai_commands", "Agente: ejecutar comandos", "perm", "«Preguntar» muestra cada acción para que la apruebes (también desde el móvil). Los comandos pueden tocar todo el equipo."],
-  ["agent_workdir", "Carpeta de trabajo del agente", "text"],
+  ["ai_commands", "Agente: ejecutar comandos", "perm", "«Preguntar» muestra cada acción para que la apruebes (también desde el móvil). Con aislamiento activo, los comandos sólo pueden escribir en las carpetas modificables; sin él, siempre se pide confirmación. Los comandos peligrosos se bloquean."],
+  ["agent_workdir", "Carpeta de trabajo del agente", "text", "Debe estar dentro de las carpetas que la IA puede modificar."],
+  ["write_roots", "Carpetas que la IA puede modificar (una por línea)", "lines", "Añade aquí tus proyectos. Fuera de estas carpetas la IA sólo puede leer."],
+  ["blocked_paths", "Rutas protegidas (una por línea)", "lines", "Nadie puede verlas desde G3G3AI, ni la IA ni la interfaz. Sin barra = patrón de nombre (p.ej. .env, *.pem)."],
+  ["command_sandbox", "Aislamiento de comandos", "sandbox"],
+  ["web_provider", "Búsqueda web: proveedor", "webprov", "DuckDuckGo no necesita clave pero a veces bloquea. Brave y Tavily tienen plan gratuito y son más fiables."],
+  ["web_api_key", "Búsqueda web: clave API", "password", "Sólo para Brave o Tavily."],
   ["hf_token", "Token de Hugging Face (opcional)", "password", "Sólo para modelos restringidos."],
   ["localhost_without_token", "El propio Konkr entra sin contraseña", "checkbox"],
   ["port", "Puerto", "number", "Requiere reiniciar el servicio."],
@@ -724,13 +736,21 @@ async function loadSettings() {
   S.settings.providers.forEach((p, idx) => pe.append(providerBox(p, idx)));
 
   const f = $("#settings-form"); f.innerHTML = "";
-  for (const [key, label, type, hint] of FIELDS) {
+  for (let [key, label, type, hint] of FIELDS) {
     const v = S.settings[key];
     let inp;
     if (type === "textarea") inp = h("textarea", { name: key, rows: 3 }, v || "");
     else if (type === "lines") inp = h("textarea", { name: key, rows: 2 }, (v || []).join("\n"));
     else if (type === "checkbox") inp = h("input", { type: "checkbox", name: key, checked: !!v });
     else if (type === "perm") inp = selectEl(key, v, [["off", "Desactivado"], ["ask", "Preguntar cada vez"], ["auto", "Automático (sin preguntar)"]]);
+    else if (type === "sandbox") {
+      const sb = S.status?.sandbox || {};
+      inp = selectEl(key, v, [["auto", "Usar si está disponible (recomendado)"], ["off", "Desactivado"]]);
+      hint = !sb.supported ? "No disponible en este sistema: los comandos piden siempre confirmación."
+        : sb.available ? (sb.active ? "🛡 Activo: los comandos sólo pueden escribir en las carpetas modificables." : "Disponible pero desactivado.")
+        : "Falta bubblewrap (bwrap). En SteamOS viene con Flatpak; en otras distros instala el paquete «bubblewrap».";
+    }
+    else if (type === "webprov") inp = selectEl(key, v, [["duckduckgo", "DuckDuckGo (sin clave)"], ["brave", "Brave Search (clave)"], ["tavily", "Tavily (clave)"]]);
     else if (type === "router") inp = selectEl(key, v, [["smart", "Inteligente (según la tarea)"], ["local_first", "Local primero"], ["api_first", "API primero"]]);
     else if (type === "model") {
       const opts = [...$("#model-select").options].filter((o) => o.value && !o.disabled).map((o) => [o.value, o.textContent]);
@@ -786,7 +806,7 @@ $("#save-settings").addEventListener("click", async () => {
   for (const [key, , type] of FIELDS) {
     const el = f.elements[key];
     if (type === "checkbox") out[key] = el.checked;
-    else if (["perm", "router", "model"].includes(type)) out[key] = el.value;
+    else if (["perm", "router", "model", "sandbox", "webprov"].includes(type)) out[key] = el.value;
     else if (type === "number") out[key] = el.value === "" ? 0 : Number(el.value);
     else if (type === "lines") out[key] = el.value.split("\n").map((s) => s.trim()).filter(Boolean);
     else out[key] = el.value;

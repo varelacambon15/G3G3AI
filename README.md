@@ -8,7 +8,8 @@ Cliente de IA al estilo de LM Studio para tu **Konkr Pocket Fit** (SteamOS ARM) 
 - ☁ **Modelos por API**: DeepSeek, Anthropic (Claude), OpenAI, Gemini, Groq, OpenRouter, y cualquier servidor compatible con OpenAI (por ejemplo Ollama o LM Studio).
 - 🎯 **Tú eliges el modelo**: en el selector del chat escoges un modelo local o uno de API para cada conversación.
 - 🔀 **Casilla Auto (opcional, desactivada por defecto)**: si la marcas, en cada mensaje se decide si responde el modelo local (gratis y privado) o uno por API (más potente). Si uno falla antes de responder, prueba con el otro.
-- 🛠 **Modo agente**: la IA puede listar, leer, buscar y **editar archivos** y **ejecutar comandos**. Cada acción te pide permiso (también desde el móvil). El modelo de API puede **pasarle subtareas al modelo local** (resumir, traducir…) para ahorrar coste.
+- 🛠 **Modo agente**: la IA puede leer, buscar y **editar archivos** y **ejecutar comandos**, con permisos, carpetas separadas para leer y modificar, rutas protegidas y comandos aislados. El modelo de API puede **pasarle subtareas al modelo local** para ahorrar coste.
+- 🌐 **Búsqueda web**: busca en internet y lee páginas, citando las fuentes.
 - 🔗 **Konkr ↔ PC**: cada equipo puede usar el modelo local del otro (Ajustes → Añadir proveedor → «Otro equipo con G3G3AI»).
 - 📱 **Desde el móvil**: interfaz web protegida con contraseña, instalable como app.
 - 📁 Explorador de archivos, subida y descarga, adjuntos en el chat.
@@ -78,17 +79,27 @@ Con la estrategia *Inteligente*:
 
 Cada respuesta indica qué modelo contestó y por qué.
 
-### Modo agente
+### Modo agente (🛠) y búsqueda web (🌐)
 
-Activa **🛠 Agente** junto al selector de modelo. Los permisos se configuran en Ajustes:
+Junto al selector de modelo hay tres casillas: **🔀 Auto**, **🌐 Web** (buscar en internet y leer páginas) y **🛠 Agente** (trabajar con tus archivos y comandos). Se pueden combinar.
 
-| Acción | Opciones |
-|---|---|
-| Leer, listar y buscar archivos | Siempre permitido, dentro de las carpetas accesibles |
-| Escribir o editar archivos | Desactivado / **Preguntar** / Automático |
-| Ejecutar comandos | Desactivado / **Preguntar** / Automático |
+**Carpetas: útil pero seguro**
 
-Con *Preguntar* verás una tarjeta con el comando exacto o el cambio propuesto, con los botones **Permitir** y **Denegar**. Si la pestaña está en segundo plano, recibirás una notificación del navegador. ⚠ Los comandos se ejecutan con tus permisos de usuario y pueden afectar a todo el equipo: usa *Automático* solo si confías en el modelo.
+| Lista (Ajustes) | Para qué | Por defecto |
+|---|---|---|
+| Carpetas visibles | La interfaz y la IA pueden **leer** | Tu carpeta personal |
+| Carpetas que la IA puede modificar | La IA puede **crear y editar** archivos y sus comandos pueden escribir | `~/G3G3AI-trabajo` (añade tus proyectos) |
+| Rutas protegidas | **Nadie** las ve desde G3G3AI, ni la IA ni la interfaz remota | Claves SSH/GPG, perfiles de navegador, llaveros, configuración de Steam y de G3G3AI, `.env`, `*.pem`, `id_rsa*`… |
+
+**Permisos** (Ajustes): escribir/editar y ejecutar comandos pueden estar en *Desactivado*, *Preguntar* (por defecto) o *Automático*. Con *Preguntar* verás el cambio exacto o el comando, con **Permitir**, **Permitir siempre aquí** (no vuelve a preguntar por esa herramienta en esa conversación) y **Denegar**. Si la pestaña está en segundo plano, recibirás una notificación.
+
+**Comandos:**
+- 🛡 **Aislamiento (Linux y Konkr):** se ejecutan con *bubblewrap*, el mismo aislamiento que usa Flatpak. Ven el sistema en solo lectura, solo pueden escribir en las carpetas modificables (y en un `/tmp` temporal), y las rutas protegidas aparecen vacías. El aislamiento no puede ocultar las rutas protegidas por patrón (como `.env`): solo las indicadas con ruta completa.
+- **Sin aislamiento (Windows, macOS):** se pide confirmación siempre, aunque estén en *Automático*. «Permitir siempre aquí» sí lo evita dentro de una conversación.
+- **Bloqueados siempre:** `rm -rf /` o `~`, formatear discos, escribir directamente en discos, bombas fork…
+- **Siempre preguntan**, incluso en *Automático* o con «permitir siempre»: `sudo`, `curl … | sh`, apagar o reiniciar, borrados recursivos, `git push --force`, servicios del sistema, el registro de Windows…
+
+**Búsqueda web:** `web_search` usa DuckDuckGo sin clave, o Brave Search / Tavily con clave (más fiables; ambos tienen plan gratuito). `fetch_url` lee páginas públicas, pero nunca puede acceder a tu red local (127.0.0.1, 192.168.x.x, `.local`…), para que una página no pueda hacer que la IA toque tus dispositivos. La IA cita las fuentes con enlaces.
 
 ## Modelos recomendados
 
@@ -110,6 +121,8 @@ g3g3ai/
   server.py     API, autenticación, chat con modo Auto, proxy /v1
   router.py     decisión local ↔ API
   tools.py      herramientas del agente y aprobaciones
+  sandbox.py    evaluación y aislamiento (bubblewrap) de comandos
+  web.py        búsqueda web y lectura de páginas
   providers.py  streaming OpenAI/Anthropic + bucle de herramientas
   llama.py      proceso llama-server
   engine.py     descarga de llama.cpp precompilado (Windows/macOS/Linux x64)
