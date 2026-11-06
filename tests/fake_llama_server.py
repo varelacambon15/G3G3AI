@@ -28,6 +28,11 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
         msgs = req["messages"]
         last = msgs[-1]
+        names = [t["function"]["name"] for t in req.get("tools") or []]
+        if "run_command" in names and last["role"] == "user" and "ejecuta" in last["content"]:
+            self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c2", "function": {
+                "name": "run_command", "arguments": json.dumps({"command": "echo hola-g3"})}}]}}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if req.get("tools") and last["role"] == "user" and "lista" in last["content"]:
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "list_dir", "arguments": ""}}]}}]})
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{}"}}]}}]})

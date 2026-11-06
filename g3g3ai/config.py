@@ -5,13 +5,29 @@ import copy
 import json
 import os
 import secrets
+import sys
 import threading
 from pathlib import Path
 
 APP = "g3g3ai"
 HOME = Path.home()
-CONFIG_DIR = Path(os.environ.get("G3G3AI_CONFIG_DIR", HOME / ".config" / APP))
-DATA_DIR = Path(os.environ.get("G3G3AI_DATA_DIR", HOME / ".local" / "share" / APP))
+CONFIG_VERSION = 2
+
+
+def _default_dirs() -> tuple[Path, Path]:
+    if sys.platform == "win32":
+        roaming = Path(os.environ.get("APPDATA") or HOME / "AppData" / "Roaming")
+        local = Path(os.environ.get("LOCALAPPDATA") or HOME / "AppData" / "Local")
+        return roaming / "G3G3AI", local / "G3G3AI"
+    if sys.platform == "darwin":
+        base = HOME / "Library" / "Application Support" / "G3G3AI"
+        return base, base
+    return HOME / ".config" / APP, HOME / ".local" / "share" / APP
+
+
+_CFG, _DATA = _default_dirs()
+CONFIG_DIR = Path(os.environ.get("G3G3AI_CONFIG_DIR") or _CFG)
+DATA_DIR = Path(os.environ.get("G3G3AI_DATA_DIR") or _DATA)
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 MASK = "••••••••"
@@ -39,13 +55,28 @@ DEFAULTS: dict = {
     "hf_token": "",
     # Archivos: carpetas a las que la interfaz y la IA pueden acceder.
     "file_roots": [str(HOME)],
-    "allow_ai_file_write": False,
+    # Permisos del modo agente: "off" | "ask" (pide confirmación) | "auto"
+    "ai_write": "ask",
+    "ai_commands": "ask",
+    "agent_workdir": str(HOME / "G3G3AI-trabajo"),
+    # Modo Auto: alterna entre un modelo rápido (local) y uno potente (API).
+    "router_mode": "smart",  # smart | local_first | api_first
+    "router_fast": "local::local",
+    "router_strong": "deepseek::deepseek-chat",
     # Chat
     "default_system_prompt": "Eres un asistente útil. Responde en el idioma del usuario.",
     "temperature": 0.7,
     "max_tokens": 2048,
     # Proveedores API externos.
     "providers": [
+        {
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "type": "openai",
+            "base_url": "https://api.deepseek.com",
+            "api_key": "",
+            "enabled": False,
+        },
         {
             "id": "openai",
             "name": "OpenAI",
@@ -70,7 +101,24 @@ DEFAULTS: dict = {
             "api_key": "",
             "enabled": False,
         },
+        {
+            "id": "gemini",
+            "name": "Google Gemini",
+            "type": "openai",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "api_key": "",
+            "enabled": False,
+        },
+        {
+            "id": "groq",
+            "name": "Groq",
+            "type": "openai",
+            "base_url": "https://api.groq.com/openai/v1",
+            "api_key": "",
+            "enabled": False,
+        },
     ],
+    "config_version": CONFIG_VERSION,
 }
 
 SECRET_KEYS = {"token", "hf_token"}
@@ -90,19 +138,35 @@ class Config:
                 self.data.update(stored)
             except (OSError, json.JSONDecodeError):
                 pass
-        changed = False
+        changed = self._migrate()
         if not self.data.get("token"):
             self.data["token"] = secrets.token_urlsafe(9)
             changed = True
         if changed or not self.path.exists():
             self.save()
 
+    def _migrate(self) -> bool:
+        d = self.data
+        if d.get("config_version", 1) >= CONFIG_VERSION:
+            return False
+        if "allow_ai_file_write" in d:
+            d["ai_write"] = "auto" if d.pop("allow_ai_file_write") else "off"
+        have = {p.get("id") for p in d.get("providers", [])}
+        for p in DEFAULTS["providers"]:
+            if p["id"] not in have:
+                d.setdefault("providers", []).append(copy.deepcopy(p))
+        d["config_version"] = CONFIG_VERSION
+        return True
+
     def save(self) -> None:
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(self.data, indent=2, ensure_ascii=False), "utf-8")
-            os.chmod(tmp, 0o600)
+            try:
+                os.chmod(tmp, 0o600)
+            except OSError:
+                pass
             tmp.replace(self.path)
 
     def __getitem__(self, key):
@@ -128,7 +192,7 @@ class Config:
 
     def update_public(self, incoming: dict) -> None:
         """Aplica cambios llegados de la interfaz, conservando secretos enmascarados."""
-        allowed = set(DEFAULTS) - {"last_model"}
+        allowed = set(DEFAULTS) - {"last_model", "config_version"}
         for key, value in incoming.items():
             if key not in allowed:
                 continue

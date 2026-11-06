@@ -42,6 +42,16 @@ def env(tmp_path, monkeypatch):
         yield client, cfg, home, tmp_path
 
 
+def load_model(client, h):
+    models = client.get("/api/models/local", headers=h).json()
+    client.post("/api/llama/load", headers=h, json={"path": models[0]["path"]})
+    for _ in range(50):
+        if client.get("/api/llama/status", headers=h).json()["state"] == "ready":
+            return
+        time.sleep(0.2)
+    raise AssertionError("el modelo no cargó")
+
+
 def auth(cfg):
     return {"Authorization": f"Bearer {cfg['token']}"}
 
@@ -63,10 +73,12 @@ def test_settings_mask_secrets(env):
     client, cfg, *_ = env
     h = auth(cfg)
     s = client.get("/api/settings", headers=h).json()
-    s["providers"][0]["api_key"] = "sk-123"; s["providers"][0]["enabled"] = True
+    op = next(p for p in s["providers"] if p["id"] == "openai")
+    op["api_key"] = "sk-123"; op["enabled"] = True
     client.put("/api/settings", headers=h, json=s)
     s2 = client.get("/api/settings", headers=h).json()
-    assert s2["providers"][0]["api_key"] == "••••••••" and s2["token"] == "••••••••"
+    assert next(p for p in s2["providers"] if p["id"] == "openai")["api_key"] == "••••••••"
+    assert s2["token"] == "••••••••"
     client.put("/api/settings", headers=h, json=s2)  # reenviar enmascarado no borra la clave
     assert cfg.provider("openai")["api_key"] == "sk-123"
     assert cfg["token"] != "••••••••"
@@ -135,3 +147,86 @@ def test_hub_split_grouping(env):
     assert SPLIT_RE.match("Model-Q8_0-00001-of-00003.gguf").group(1) == "Model-Q8_0"
     assert quant_of("qwen3-4b-IQ4_XS.gguf") == "IQ4_XS"
     assert quant_of("x.Q5_K_M.gguf") == "Q5_K_M"
+
+
+def test_router_plan():
+    from g3g3ai import router
+    cfg = {"router_fast": "local::local", "router_strong": "deepseek::deepseek-chat", "router_mode": "smart"}
+    both = lambda pid: True  # noqa: E731
+    assert router.plan(cfg, "hola, ¿qué tal?", False, False, both)[0][0] == "local"
+    assert router.plan(cfg, "corrige este error de Python", False, False, both)[0][0] == "deepseek"
+    assert router.plan(cfg, "hola", False, True, both)[0][0] == "deepseek"  # agente
+    only_local = lambda pid: pid == "local"  # noqa: E731
+    plan = router.plan(cfg, "escribe un script", False, False, only_local)
+    assert [c[0] for c in plan] == ["local"] and "no está disponible" in plan[0][2]
+    cfg["router_mode"] = "api_first"
+    assert [c[0] for c in router.plan(cfg, "hola", False, False, both)] == ["deepseek", "local"]
+
+
+def test_auto_fallback_to_local(env):
+    """Modo Auto: la API (inaccesible) falla antes de responder → responde el modelo local."""
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    s = client.get("/api/settings", headers=h).json()
+    for p in s["providers"]:
+        if p["id"] == "deepseek":
+            p.update(enabled=True, api_key="x", base_url="http://127.0.0.1:9/v1")
+    s["router_mode"] = "api_first"
+    client.put("/api/settings", headers=h, json=s)
+    evs = sse(client.post("/api/chat", headers=h, json={"provider": "auto", "message": "hola"}))
+    types = [e["type"] for e in evs]
+    assert "route_fallback" in types and types[-1] == "done"
+    routes = [e for e in evs if e["type"] == "route"]
+    assert routes[0]["provider"] == "deepseek" and routes[-1]["provider"] == "local"
+    cid = evs[0]["conversation_id"]
+    msg = client.get(f"/api/conversations/{cid}", headers=h).json()["messages"][-1]
+    assert msg["meta"]["provider"] == "local" and "Eco" in msg["content"]
+
+
+def test_agent_command_with_approval(env):
+    import threading
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    cfg.data.update(ai_commands="ask", agent_workdir=str(home))
+    approved = []
+
+    def approver():
+        # Espera a que aparezca la solicitud y la aprueba (como haría el usuario en la interfaz)
+        from g3g3ai.tools import PENDING
+        for _ in range(100):
+            if PENDING:
+                aid = next(iter(PENDING))
+                approved.append(client.post("/api/chat/approve", headers=h, json={"id": aid, "approved": True}).status_code)
+                return
+            time.sleep(0.05)
+
+    threading.Thread(target=approver).start()
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "ejecuta un comando", "use_tools": True}))
+    assert approved == [200]
+    assert any(e["type"] == "approval" and e["args"]["command"] == "echo hola-g3" for e in evs)
+    res = next(e for e in evs if e["type"] == "tool_result")
+    assert "hola-g3" in res["result"] and "salida: 0" in res["result"]
+
+    # Con permisos desactivados la herramienta ni se ofrece
+    cfg.data.update(ai_commands="off")
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "ejecuta otra vez", "use_tools": True}))
+    assert not any(e["type"] == "approval" for e in evs)
+
+
+def test_edit_file_tool(env):
+    client, cfg, home, tmp = env
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    import asyncio
+    (home / "a.py").write_text("x = 1\ny = 2\n")
+    ctx = ToolContext(Files(cfg), cfg)
+    r = asyncio.run(ctx.run("edit_file", {"path": str(home / "a.py"), "old_text": "y = 2", "new_text": "y = 3"}))
+    assert r.startswith("Editado") and (home / "a.py").read_text() == "x = 1\ny = 3\n"
+    r = asyncio.run(ctx.run("edit_file", {"path": str(home / "a.py"), "old_text": "nada", "new_text": ""}))
+    assert r.startswith("Error")
+    r = asyncio.run(ctx.run("read_file", {"path": str(home / "a.py"), "start_line": 2}))
+    assert "2: y = 3" in r and "1: x" not in r
+    r = asyncio.run(ctx.run("read_file", {"path": str(tmp / "fuera.txt")}))
+    assert r.startswith("Error")

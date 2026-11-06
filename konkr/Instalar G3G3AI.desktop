@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Instalar G3G3AI
+Comment=Instala o actualiza G3G3AI en esta Konkr
+Icon=system-software-install
+Exec=konsole --hold -e bash -c 'cd "$(dirname "$(readlink -f "%k")")/.." && ./install.sh'
+Terminal=false

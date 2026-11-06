@@ -16,8 +16,7 @@ import httpx
 
 from . import tools as T
 
-MAX_TOOL_STEPS = 8
-TOOL_RESULT_PREVIEW = 600
+MAX_TOOL_STEPS = 25
 
 
 class ProviderError(Exception):
@@ -64,19 +63,20 @@ async def list_models(p: dict) -> list[str]:
 
 
 # --- OpenAI compatible (incluye llama-server local) -----------------------------------
-async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict, files, use_tools: bool,
-                       allow_write: bool) -> AsyncIterator[dict]:
+async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
+                       ctx: T.ToolContext | None) -> AsyncIterator[dict]:
     url = p["base_url"].rstrip("/") + "/chat/completions"
     headers = {"Authorization": f"Bearer {p['api_key']}"} if p.get("api_key") else {}
     msgs = list(messages)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600)) as c:
+    local = p["base_url"].startswith(("http://127.0.0.1", "http://localhost"))
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), trust_env=not local) as c:
         for _ in range(MAX_TOOL_STEPS):
             body = {"model": model, "messages": msgs, "stream": True,
                     "temperature": opts.get("temperature"), "max_tokens": opts.get("max_tokens"),
                     "stream_options": {"include_usage": True}}
             body = {k: v for k, v in body.items() if v is not None}
-            if use_tools:
-                body["tools"] = T.openai_tools(allow_write)
+            if ctx:
+                body["tools"] = ctx.openai_specs()
             content, calls = "", {}
             async with c.stream("POST", url, json=body, headers=headers) as r:
                 await _raise_for(r)
@@ -111,16 +111,16 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict, fi
                  "function": {"name": k["name"], "arguments": k["args"] or "{}"}}
                 for i, k in enumerate(ordered)]})
             for i, k in enumerate(ordered):
-                yield {"type": "tool_call", "name": k["name"], "args": k["args"]}
-                result = T.run_tool(files, k["name"], k["args"], allow_write)
-                yield {"type": "tool_result", "name": k["name"], "result": result[:TOOL_RESULT_PREVIEW]}
-                msgs.append({"role": "tool", "tool_call_id": k["id"] or f"call_{i}", "content": result})
+                sink: list[str] = []
+                async for ev in T.tool_events(ctx, k["name"], k["args"], sink):
+                    yield ev
+                msgs.append({"role": "tool", "tool_call_id": k["id"] or f"call_{i}", "content": sink[0]})
         yield {"type": "content", "text": "\n\n[Se alcanzó el límite de pasos con herramientas]"}
 
 
 # --- Anthropic ---------------------------------------------------------------------
-async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict, files, use_tools: bool,
-                          allow_write: bool) -> AsyncIterator[dict]:
+async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
+                          ctx: T.ToolContext | None) -> AsyncIterator[dict]:
     url = p["base_url"].rstrip("/") + "/v1/messages"
     headers = {"x-api-key": p.get("api_key", ""), "anthropic-version": "2023-06-01"}
     system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
@@ -133,8 +133,8 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
                 body["temperature"] = opts["temperature"]
             if system:
                 body["system"] = system
-            if use_tools:
-                body["tools"] = T.anthropic_tools(allow_write)
+            if ctx:
+                body["tools"] = ctx.anthropic_specs()
             blocks: dict[int, dict] = {}
             stop_reason = None
             async with c.stream("POST", url, json=body, headers=headers) as r:
@@ -177,15 +177,25 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
             msgs.append({"role": "assistant", "content": assistant_content})
             results = []
             for b in uses:
-                yield {"type": "tool_call", "name": b["name"], "args": json.dumps(b["input"], ensure_ascii=False)}
-                result = T.run_tool(files, b["name"], b["input"], allow_write)
-                yield {"type": "tool_result", "name": b["name"], "result": result[:TOOL_RESULT_PREVIEW]}
-                results.append({"type": "tool_result", "tool_use_id": b["id"], "content": result})
+                sink: list[str] = []
+                async for ev in T.tool_events(ctx, b["name"], b["input"], sink):
+                    yield ev
+                results.append({"type": "tool_result", "tool_use_id": b["id"], "content": sink[0]})
             msgs.append({"role": "user", "content": results})
         yield {"type": "content", "text": "\n\n[Se alcanzó el límite de pasos con herramientas]"}
 
 
-def chat_stream(p: dict, model: str, messages: list[dict], opts: dict, files, use_tools: bool,
-                allow_write: bool) -> AsyncIterator[dict]:
+def chat_stream(p: dict, model: str, messages: list[dict], opts: dict,
+                ctx: T.ToolContext | None = None) -> AsyncIterator[dict]:
     fn = _anthropic_chat if p["type"] == "anthropic" else _openai_chat
-    return fn(p, model, messages, opts, files, use_tools, allow_write)
+    return fn(p, model, messages, opts, ctx)
+
+
+async def complete(p: dict, model: str, prompt: str, max_tokens: int = 1024) -> str:
+    """Respuesta completa sin streaming (para delegar subtareas al modelo local)."""
+    text = ""
+    async for ev in chat_stream(p, model, [{"role": "user", "content": prompt}],
+                                {"max_tokens": max_tokens, "temperature": 0.3}):
+        if ev["type"] == "content":
+            text += ev["text"]
+    return text.strip() or "(sin respuesta)"

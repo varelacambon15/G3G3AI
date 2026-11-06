@@ -36,9 +36,12 @@ def main() -> None:
             print(f"  Desde móvil/portátil: http://{ip}:{port}/?token={cfg['token']}")
     print(f"  Contraseña: {cfg['token']}")
     if not find_llama_server(cfg["llama_server_path"]):
-        print("  AVISO: no se encontró llama-server (ejecuta ./install.sh). Sólo funcionarán los proveedores API.")
+        print("  AVISO: no se encontró llama-server. Instálalo en Modelos → Motor (o ./install.sh en Linux).")
     print()
-    uvicorn.run(create_app(cfg), host=host, port=port, log_level="warning")
+    app = create_app(cfg)
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
+    app.state.request_exit = lambda: setattr(server, "should_exit", True)
+    server.run()
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@
 #   ./install.sh --skip-llama  no compila llama.cpp (sólo APIs o ya lo tienes)
 #   ./install.sh --no-service  no instala el servicio de arranque automático
 #   ./install.sh --update-llama  vuelve a descargar y compilar llama.cpp
+#   ./install.sh --no-steam    no crea el acceso en Steam / menú de aplicaciones
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,14 +16,15 @@ VENV="$DATA_DIR/venv"
 LLAMA_DIR="$DATA_DIR/llama.cpp"
 BIN_DIR="$HOME/.local/bin"
 
-VULKAN=0; SKIP_LLAMA=0; SERVICE=1; UPDATE_LLAMA=0
+VULKAN=0; SKIP_LLAMA=0; SERVICE=1; UPDATE_LLAMA=0; STEAM=1
 for a in "$@"; do
   case "$a" in
     --vulkan) VULKAN=1 ;;
     --skip-llama) SKIP_LLAMA=1 ;;
     --no-service) SERVICE=0 ;;
     --update-llama) UPDATE_LLAMA=1 ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    --no-steam) STEAM=0 ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
     *) echo "Opción desconocida: $a"; exit 1 ;;
   esac
 done
@@ -94,6 +96,11 @@ if [ "$SERVICE" = 1 ] && command -v systemctl >/dev/null; then
   systemctl --user --no-pager --lines=0 status g3g3ai.service || true
 fi
 
+# 5) Acceso en Steam (Big Picture) y en el menú de aplicaciones ------------------------------
+if [ "$STEAM" = 1 ]; then
+  bash "$REPO_DIR/konkr/steam-setup.sh" || true
+fi
+
 TOKEN="$("$VENV/bin/python" -c 'import sys; sys.path.insert(0, sys.argv[1]); from g3g3ai.config import Config; print(Config()["token"])' "$REPO_DIR")"
 IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' || true)"
 say "¡Listo!"
@@ -102,3 +109,4 @@ echo "  En el Konkr:          http://127.0.0.1:8800"
 echo "  Contraseña:           $TOKEN"
 [ "$SERVICE" = 1 ] || echo "  Arranque manual:      g3g3ai"
 echo "  Registro del servicio: journalctl --user -u g3g3ai -f"
+[ "$STEAM" = 1 ] && echo "  En modo juego:        Biblioteca → No de Steam → G3G3AI"

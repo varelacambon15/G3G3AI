@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import shutil
+import platform
 import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -22,11 +23,19 @@ from .db import DB
 from .files import FileAccessError, Files
 from .hub import Hub
 from .llama import LlamaManager, default_threads, find_llama_server
-from .providers import ProviderError, chat_stream, list_models
+from . import router
+from .engine import EngineInstaller
+from .providers import ProviderError, chat_stream, complete, list_models
+from .tools import ToolContext, resolve_approval
 
 STATIC = Path(__file__).parent / "static"
 COOKIE = "g3g3ai_token"
 LOCAL_PROVIDER = "local"
+AUTO_PROVIDER = "auto"
+
+
+def sse(obj: dict) -> str:
+    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
 
 
 # --- Utilidades del sistema ----------------------------------------------------------
@@ -65,6 +74,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     files = Files(cfg)
     hub = Hub(cfg)
     llama = LlamaManager(cfg)
+    engine = EngineInstaller(cfg)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -133,7 +143,23 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             "token": cfg["token"] if is_local else None,
             "disk_free": shutil.disk_usage(hub.models_dir).free,
             "downloads_active": sum(1 for d in hub.downloads.values() if d["status"] == "downloading"),
+            "platform": f"{platform.system()} {platform.machine()}",
+            "is_local": bool(is_local),
+            "router": {"fast": cfg["router_fast"], "strong": cfg["router_strong"], "mode": cfg["router_mode"],
+                       "fast_ok": provider_available(router.split(cfg["router_fast"])[0]),
+                       "strong_ok": provider_available(router.split(cfg["router_strong"])[0])},
         }
+
+    @app.post("/api/shutdown")
+    async def shutdown(request: Request):
+        if not (request.client and request.client.host in ("127.0.0.1", "::1")):
+            raise HTTPException(403, "Sólo se puede apagar desde el propio equipo")
+        stop = getattr(app.state, "request_exit", None)
+        if not stop:
+            raise HTTPException(501, "No disponible en este modo")
+        await llama.unload()
+        stop()
+        return {"ok": True}
 
     @app.get("/api/settings")
     async def get_settings():
@@ -155,7 +181,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/providers")
     async def providers():
-        out = [{"id": LOCAL_PROVIDER, "name": "Local (llama.cpp)", "type": "local", "enabled": True}]
+        out = [{"id": AUTO_PROVIDER, "name": "Auto (local ↔ API)", "type": "auto", "enabled": True},
+               {"id": LOCAL_PROVIDER, "name": "Local (llama.cpp)", "type": "local", "enabled": True}]
         for p in cfg.public()["providers"]:
             out.append({k: p.get(k) for k in ("id", "name", "type", "enabled")})
         return out
@@ -216,20 +243,48 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             meta.append({"name": f["name"], "path": f["path"]})
         return "\n\n".join(parts), meta
 
+    def provider_available(pid: str) -> bool:
+        if pid == LOCAL_PROVIDER:
+            return llama.ready
+        p = cfg.provider(pid)
+        if not p or not p.get("enabled"):
+            return False
+        return bool(p.get("api_key")) or p.get("base_url", "").startswith("http://")
+
+    async def local_complete(prompt: str) -> str:
+        p = provider_for(LOCAL_PROVIDER)
+        try:
+            return await complete(p, "local", prompt, max_tokens=cfg["max_tokens"])
+        except (ProviderError, httpx.HTTPError) as e:
+            return f"Error del modelo local: {e}"
+
     @app.post("/api/chat")
     async def chat(body: dict):
         cid = body.get("conversation_id")
         pid = body.get("provider") or LOCAL_PROVIDER
         model = body.get("model") or "local"
         text = (body.get("message") or "").strip()
-        attach_text, attach_meta = expand_attachments(body.get("attachments") or [])
+        attachments = body.get("attachments") or []
+        attach_text, attach_meta = expand_attachments(attachments)
         if not text and not attach_text and not body.get("continue"):
             raise HTTPException(400, "Mensaje vacío")
-        p = provider_for(pid)
-        if pid == LOCAL_PROVIDER and llama.state != "ready":
-            raise HTTPException(409, "No hay ningún modelo local cargado. Cárgalo en la pestaña Modelos.")
+        agent = bool(body.get("use_tools"))
 
         conv = db.get_conversation(cid) if cid else None
+        # Último mensaje del usuario (para decidir la ruta al regenerar)
+        last_user = text or next((m["content"] for m in reversed((conv or {}).get("messages", []))
+                                  if m["role"] == "user"), "")
+        if pid == AUTO_PROVIDER:
+            candidates = router.plan(cfg, last_user, bool(attachments), agent, provider_available)
+            if not candidates:
+                raise HTTPException(409, "Modo Auto: no hay ningún modelo disponible. Carga un modelo local "
+                                         "o configura un proveedor API (Ajustes → Modo Auto).")
+        else:
+            provider_for(pid)
+            if pid == LOCAL_PROVIDER and not llama.ready:
+                raise HTTPException(409, "No hay ningún modelo local cargado. Cárgalo en la pestaña Modelos.")
+            candidates = [(pid, model, None)]
+
         if not conv:
             conv = db.create_conversation(provider=pid, model=model, system=body.get("system"))
             cid = conv["id"]
@@ -244,15 +299,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             db.update_conversation(cid, system=body.get("system"))
         conv = db.get_conversation(cid)
 
-        system = conv.get("system") if conv.get("system") is not None else cfg["default_system_prompt"]
-        use_tools = bool(body.get("use_tools"))
-        if use_tools:
-            roots = ", ".join(str(r) for r in files.roots)
-            system = (system or "") + (
-                f"\n\nTienes herramientas para acceder a los archivos del dispositivo (carpetas permitidas: {roots}). "
-                "Úsalas cuando el usuario pregunte por sus archivos."
-            )
-        history = [{"role": "system", "content": system}] if system else []
+        base_system = conv.get("system") if conv.get("system") is not None else cfg["default_system_prompt"]
+        history = []
         for m in conv["messages"]:
             if m["role"] in ("user", "assistant"):
                 content = (m["meta"] or {}).get("expanded") or m["content"]
@@ -260,31 +308,76 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         opts = {"temperature": body.get("temperature", cfg["temperature"]),
                 "max_tokens": body.get("max_tokens", cfg["max_tokens"])}
 
+        def make_ctx(chosen_pid: str):
+            if not agent:
+                return None
+            delegate = local_complete if (chosen_pid != LOCAL_PROVIDER and llama.ready) else None
+            return ToolContext(files, cfg, delegate)
+
         async def gen():
-            content, reasoning, trace, stats = "", "", [], {}
-            yield f"data: {json.dumps({'type': 'start', 'conversation_id': cid})}\n\n"
+            content, reasoning, trace, stats, route = "", "", [], {}, None
+            yield sse({"type": "start", "conversation_id": cid})
             try:
-                async for ev in chat_stream(p, model, history, opts, files, use_tools, cfg["allow_ai_file_write"]):
-                    if ev["type"] == "content":
-                        content += ev["text"]
-                    elif ev["type"] == "reasoning":
-                        reasoning += ev["text"]
-                    elif ev["type"] in ("tool_call", "tool_result"):
-                        trace.append(ev)
-                    elif ev["type"] == "stats":
-                        stats.update({k: v for k, v in ev.items() if v is not None and k != "type"})
-                    yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-            except (ProviderError, httpx.HTTPError) as e:
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e) or type(e).__name__}, ensure_ascii=False)}\n\n"
+                for i, (cpid, cmodel, why) in enumerate(candidates):
+                    p = provider_for(cpid)
+                    shown = (llama.status()["model"] or "local") if cpid == LOCAL_PROVIDER else cmodel
+                    route = {"provider": cpid, "model": shown, "reason": why}
+                    if why:
+                        yield sse({"type": "route", **route})
+                    ctx = make_ctx(cpid)
+                    system = "\n\n".join(x for x in (base_system, ctx.system_hint() if ctx else "") if x)
+                    msgs = ([{"role": "system", "content": system}] if system else []) + history
+                    try:
+                        async for ev in chat_stream(p, cmodel, msgs, opts, ctx):
+                            if ev["type"] == "content":
+                                content += ev["text"]
+                            elif ev["type"] == "reasoning":
+                                reasoning += ev["text"]
+                            elif ev["type"] in ("tool_call", "tool_result"):
+                                trace.append(ev)
+                            elif ev["type"] == "stats":
+                                stats.update({k: v for k, v in ev.items() if v is not None and k != "type"})
+                            yield sse(ev)
+                        break
+                    except (ProviderError, httpx.HTTPError) as e:
+                        msg = str(e) or type(e).__name__
+                        if content or trace or i == len(candidates) - 1:
+                            yield sse({"type": "error", "message": msg})
+                            break
+                        yield sse({"type": "route_fallback", "message": f"{shown}: {msg}"})
             finally:
                 if content or reasoning or trace:
-                    meta = {"provider": pid, "model": model, "stats": stats, "tools": trace or None}
-                    mid = db.add_message(cid, "assistant", content, reasoning or None, meta)
-                    stats["message_id"] = mid
-            yield f"data: {json.dumps({'type': 'done', **stats})}\n\n"
+                    meta = {"provider": route["provider"] if route else pid,
+                            "model": route["model"] if route else model,
+                            "route": route.get("reason") if route else None,
+                            "stats": stats, "tools": trace or None}
+                    stats["message_id"] = db.add_message(cid, "assistant", content, reasoning or None, meta)
+            yield sse({"type": "done", **stats})
 
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.post("/api/chat/approve")
+    async def approve(body: dict):
+        if not resolve_approval(str(body.get("id")), bool(body.get("approved"))):
+            raise HTTPException(404, "Esta solicitud ya no está pendiente")
+        return {"ok": True}
+
+    # --- Motor llama.cpp precompilado -------------------------------------------------
+    @app.get("/api/engine/assets")
+    async def engine_assets():
+        try:
+            return await engine.assets()
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"No se pudo consultar GitHub: {e}") from e
+
+    @app.post("/api/engine/install")
+    async def engine_install(body: dict):
+        return engine.start(body["url"], body["name"])
+
+    @app.get("/api/engine/status")
+    async def engine_status():
+        return engine.state
 
     # --- Modelos locales / llama.cpp ---------------------------------------------------
     @app.get("/api/models/local")

@@ -23,6 +23,8 @@ const fmtSize = (b) => {
   while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
   return `${b.toFixed(b < 10 && i ? 1 : 0)} ${u[i]}`;
 };
+const baseName = (p) => String(p).split(/[\\/]/).pop();
+const joinPath = (dir, name) => dir.replace(/[\\/]+$/, "") + (dir.includes("\\") && !dir.includes("/") ? "\\" : "/") + name;
 function toast(msg, ms = 3500) {
   const d = h("div", {}, msg); $("#toast").append(d); setTimeout(() => d.remove(), ms);
 }
@@ -157,13 +159,16 @@ async function refreshStatus() {
 // --- Proveedores y selector de modelo -------------------------------------------------------
 async function loadProviders() {
   S.providers = await api("/api/providers");
-  const sel = $("#model-select"), prev = store.get("model", "local::local");
+  const sel = $("#model-select"), prev = store.get("model", "auto::auto");
   sel.innerHTML = "";
+  const r = S.status?.router;
+  const autoLbl = r ? `🔀 Auto · ${r.fast_ok ? "local ✔" : "local ✕"} / ${r.strong_ok ? r.strong.split("::").pop() + " ✔" : "API ✕"}` : "🔀 Auto";
+  sel.append(h("option", { value: "auto::auto" }, autoLbl));
   const local = h("optgroup", { label: "Local (llama.cpp)" });
   const lm = S.status?.llama?.model;
   local.append(h("option", { value: "local::local" }, lm ? `💻 ${lm}` : "💻 Modelo local (cárgalo en Modelos)"));
   sel.append(local);
-  for (const p of S.providers.filter((p) => p.id !== "local" && p.enabled)) {
+  for (const p of S.providers.filter((p) => !["local", "auto"].includes(p.id) && p.enabled)) {
     const g = h("optgroup", { label: p.name });
     let models = S.models[p.id];
     if (!models) {
@@ -235,14 +240,38 @@ function renderMessages() {
   for (const m of msgs) box.append(messageEl(m));
   box.scrollTop = box.scrollHeight;
 }
-function assistantInner(content, reasoning, tools, streaming) {
+function approvalCard(a) {
+  const args = a.args || {};
+  const what = a.name === "run_command" ? h("pre", {}, (args.cwd ? `[${args.cwd}] ` : "") + "$ " + args.command)
+    : a.name === "edit_file" ? h("pre", {}, `${args.path}\n--- antes\n${args.old_text}\n+++ después\n${args.new_text}`)
+    : a.name === "write_file" ? h("pre", {}, `${args.path}\n\n${String(args.content || "").slice(0, 3000)}`)
+    : h("pre", {}, JSON.stringify(args, null, 2));
+  const title = { run_command: "ejecutar un comando", edit_file: "editar un archivo", write_file: "escribir un archivo" }[a.name] || a.name;
+  const card = h("div", { class: "approval" + (a.state ? " " + a.state : "") },
+    h("b", {}, a.state === "approved" ? "✔ Permitido: " : a.state === "denied" ? "✕ Denegado: " : "⚠ La IA quiere " ), title, what);
+  if (!a.state) {
+    const answer = async (ok) => {
+      card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      try { await api("/api/chat/approve", { method: "POST", body: { id: a.id, approved: ok } }); }
+      catch (e) { toast(e.message); }
+    };
+    card.append(h("div", { class: "row" },
+      h("button", { class: "primary small", onclick: () => answer(true) }, "Permitir"),
+      h("button", { class: "danger small", onclick: () => answer(false) }, "Denegar")));
+  }
+  return card;
+}
+function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   const frag = document.createDocumentFragment();
+  if (extra.route) frag.append(h("div", { class: "route" }, `🔀 ${extra.route.provider === "local" ? "💻" : "☁"} ${extra.route.model}` + (extra.route.reason ? ` — ${extra.route.reason}` : "")));
+  for (const f of extra.fallbacks || []) frag.append(h("div", { class: "route warn" }, "↪ falló " + f + ", probando el otro modelo…"));
   const { think, body, open } = splitThink(content || "");
   const r = [reasoning, think].filter(Boolean).join("\n");
   if (r) frag.append(h("details", { open: streaming && (open || !body) ? true : false }, h("summary", {}, "💭 Razonamiento"), h("pre", {}, r)));
   for (const t of tools || []) {
     if (t.type === "tool_call") frag.append(h("details", { class: "tool" }, h("summary", {}, `🔧 ${t.name}`), h("pre", {}, t.args)));
-    else frag.append(h("details", { class: "tool" }, h("summary", {}, `↳ resultado de ${t.name}`), h("pre", {}, t.result)));
+    else if (t.type === "approval") frag.append(approvalCard(t));
+    else if (t.type === "tool_result") frag.append(h("details", { class: "tool" }, h("summary", {}, `↳ resultado de ${t.name}`), h("pre", {}, t.result)));
   }
   const b = h("div", { class: "bubble" + (streaming ? " cursor" : "") });
   b.innerHTML = md(body);
@@ -261,7 +290,8 @@ function messageEl(m) {
     el.append(assistantInner(m.content, m.reasoning, m.meta?.tools));
     const st = m.meta?.stats || {};
     el.append(h("div", { class: "meta" },
-      h("span", {}, m.meta?.model && m.meta.model !== "local" ? m.meta.model : (m.meta?.provider === "local" ? "local" : "")),
+      h("span", { title: m.meta?.route || "" }, (m.meta?.provider === "local" ? "💻 " : "☁ ") + (m.meta?.model || "")),
+      m.meta?.route ? h("span", {}, "🔀 " + m.meta.route) : null,
       st.tokens_per_second ? h("span", {}, `${st.tokens_per_second.toFixed(1)} tok/s`) : null,
       st.tokens ? h("span", {}, `${st.tokens} tokens`) : null,
       h("button", { onclick: () => { navigator.clipboard?.writeText(m.content); toast("Copiado"); } }, "⧉ copiar"),
@@ -311,7 +341,7 @@ async function send(text, attachments, isContinue = false) {
   const box = $("#messages");
   if (!S.conv?.messages?.length) box.innerHTML = "";
   if (text || attachments.length) {
-    const um = { id: 0, role: "user", content: text, meta: { attachments: attachments.map((p) => ({ name: p.split("/").pop(), path: p })) } };
+    const um = { id: 0, role: "user", content: text, meta: { attachments: attachments.map((p) => ({ name: baseName(p), path: p })) } };
     box.append(messageEl(um));
   }
   const el = h("div", { class: "msg assistant" });
@@ -321,10 +351,11 @@ async function send(text, attachments, isContinue = false) {
   const ctrl = new AbortController(); S.streaming = ctrl;
   $("#send-btn").textContent = "Detener"; $("#send-btn").classList.add("danger");
   let content = "", reasoning = "", tools = [], errorMsg = null, raf = 0;
+  const extra = { route: null, fallbacks: [] };
   const paint = () => {
     raf = 0;
     const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    el.innerHTML = ""; el.append(assistantInner(content, reasoning, tools, true));
+    el.innerHTML = ""; el.append(assistantInner(content, reasoning, tools, true, extra));
     if (stick) box.scrollTop = box.scrollHeight;
   };
   try {
@@ -350,6 +381,10 @@ async function send(text, attachments, isContinue = false) {
         else if (ev.type === "content") content += ev.text;
         else if (ev.type === "reasoning") reasoning += ev.text;
         else if (ev.type === "tool_call" || ev.type === "tool_result") tools.push(ev);
+        else if (ev.type === "approval") { tools.push(ev); notifyApproval(ev); }
+        else if (ev.type === "approval_result") { const a = tools.find((t) => t.id === ev.id); if (a) a.state = ev.approved ? "approved" : "denied"; }
+        else if (ev.type === "route") extra.route = ev;
+        else if (ev.type === "route_fallback") extra.fallbacks.push(ev.message);
         else if (ev.type === "error") errorMsg = ev.message;
         if (!raf) raf = requestAnimationFrame(paint);
       }
@@ -365,6 +400,15 @@ async function send(text, attachments, isContinue = false) {
   }
 }
 
+function notifyApproval(ev) {
+  if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+    new Notification("G3G3AI necesita tu permiso", { body: ev.name + ": " + (ev.args?.command || ev.args?.path || "") });
+  }
+}
+if ("Notification" in window && Notification.permission === "default") {
+  document.addEventListener("click", () => Notification.requestPermission().catch(() => {}), { once: true });
+}
+
 // --- Adjuntos --------------------------------------------------------------------------
 function renderAttachments() {
   const c = $("#attachments"); c.innerHTML = "";
@@ -372,7 +416,7 @@ function renderAttachments() {
     h("button", { onclick: () => { S.attachments.splice(i, 1); renderAttachments(); } }, "✕"))));
 }
 function addAttachment(path) {
-  if (!S.attachments.some((a) => a.path === path)) S.attachments.push({ path, name: path.split("/").pop() });
+  if (!S.attachments.some((a) => a.path === path)) S.attachments.push({ path, name: baseName(path) });
   renderAttachments();
 }
 $("#attach-btn").addEventListener("click", () => { $("#picker").showModal(); loadPicker(S.pickerPath); });
@@ -399,12 +443,12 @@ async function uploadFiles(fileList, dir) {
 $("#picker-upload").addEventListener("change", async (e) => {
   const res = await uploadFiles(e.target.files, await uploadsDir());
   res.forEach((r) => addAttachment(r.path)); e.target.value = ""; $("#picker").close();
-  if (res.length) toast(`Subido a ${res[0].path.replace(/\/[^/]*$/, "")}`);
+  if (res.length) toast(`Subido a ${res[0].path.replace(/[\\/][^\\/]*$/, "")}`);
 });
 async function uploadsDir() {
   // Los archivos subidos desde el móvil se guardan en ~/G3G3AI-subidas
   const roots = await api("/api/files/roots");
-  const dir = roots[0] + "/G3G3AI-subidas";
+  const dir = joinPath(roots[0], "G3G3AI-subidas");
   await api("/api/files/mkdir", { method: "POST", body: { path: dir } }).catch(() => {});
   return dir;
 }
@@ -443,9 +487,38 @@ function renderLlamaStatus() {
       l.model ? ` — ${l.model}` : "", l.params?.ctx ? h("span", { class: "sub muted" }, ` (ctx ${l.params.ctx}, ${l.params.threads} hilos)`) : null),
     l.state === "ready" || l.state === "loading" ? h("button", { class: "danger", onclick: async () => { await api("/api/llama/unload", { method: "POST" }); refreshStatus(); refreshModels(); loadProviders(); } }, "Descargar de memoria") : null));
   if (l.error) box.append(h("pre", { class: "logs error" }, l.error));
-  if (!l.binary) box.append(h("p", { class: "error" }, "No se encontró llama-server. Ejecuta ./install.sh en el Konkr."));
+  if (!l.binary) box.append(engineBox());
   if (mem?.total) box.append(h("p", { class: "muted" }, `RAM disponible: ${fmtSize(mem.available)} de ${fmtSize(mem.total)}`));
   $("#disk-free").textContent = S.status.disk_free ? `· ${fmtSize(S.status.disk_free)} libres` : "";
+}
+function engineBox() {
+  const box = h("div", { class: "engine" },
+    h("p", {}, h("b", {}, "Falta el motor llama.cpp."), " En la Konkr se instala con ./install.sh (compilado para su CPU). En PC puedes descargarlo ya compilado:"));
+  const list = h("div", {}, h("span", { class: "muted" }, "Consultando versiones…"));
+  box.append(list);
+  api("/api/engine/assets").then((r) => {
+    list.innerHTML = "";
+    if (r.note) list.append(h("p", { class: "muted" }, r.note));
+    for (const a of r.assets) list.append(h("div", { class: "row" },
+      h("span", { class: "grow" }, h("b", {}, a.variant.toUpperCase()), " — ", a.description, h("span", { class: "sub muted" }, ` (${fmtSize(a.size)}, ${r.release})`)),
+      h("button", { class: "primary small", onclick: () => installEngine(a) }, "Instalar")));
+  }).catch((e) => { list.innerHTML = ""; list.append(h("p", { class: "error" }, e.message)); });
+  return box;
+}
+async function installEngine(a) {
+  await api("/api/engine/install", { method: "POST", body: { url: a.url, name: a.name } });
+  toast("Descargando motor…");
+  const t = setInterval(async () => {
+    const st = await api("/api/engine/status");
+    const pill = $("#status-pill");
+    if (st.status === "downloading") pill.textContent = `⬇ motor ${st.total ? Math.round(100 * st.done / st.total) : 0}%`;
+    if (st.status === "extracting") pill.textContent = "⬇ motor: descomprimiendo";
+    if (st.status === "done" || st.status === "error") {
+      clearInterval(t);
+      toast(st.status === "done" ? "Motor instalado ✔" : "Error: " + st.error, 6000);
+      refreshModels();
+    }
+  }, 1000);
 }
 async function refreshModels() {
   await refreshStatus();
@@ -531,7 +604,7 @@ async function refreshDownloads() {
   for (const d of list) {
     const pct = d.total ? (100 * d.done / d.total) : 0;
     box.append(h("div", { class: "card" },
-      h("div", { class: "row" }, h("b", { class: "grow" }, d.dest.split("/").pop()),
+      h("div", { class: "row" }, h("b", { class: "grow" }, baseName(d.dest)),
         h("span", { class: "sub muted" }, d.status === "downloading" ? `${fmtSize(d.done)} / ${fmtSize(d.total)} · ${fmtSize(d.speed)}/s` : { done: "✔ completado", error: "✕ " + d.error, cancelled: "cancelado", pending: "preparando…" }[d.status]),
         h("button", { class: "ghost small", onclick: async () => { await api(`/api/hub/downloads/${d.id}`, { method: "DELETE" }); refreshDownloads(); } }, d.status === "downloading" ? "Cancelar" : "Quitar")),
       h("div", { class: "progress" }, h("div", { style: `width:${pct.toFixed(1)}%` }))));
@@ -574,7 +647,7 @@ $("#files-upload").addEventListener("change", async (e) => {
 });
 $("#files-mkdir").addEventListener("click", async () => {
   const n = prompt("Nombre de la nueva carpeta"); if (!n) return;
-  await api("/api/files/mkdir", { method: "POST", body: { path: S.filesPath + "/" + n } }).catch((e) => toast(e.message));
+  await api("/api/files/mkdir", { method: "POST", body: { path: joinPath(S.filesPath, n) } }).catch((e) => toast(e.message));
   loadFiles(S.filesPath);
 });
 $("#files-search-form").addEventListener("submit", async (e) => {
@@ -584,7 +657,7 @@ $("#files-search-form").addEventListener("submit", async (e) => {
 });
 const IMG = /\.(png|jpe?g|gif|webp|svg|bmp)$/i, VID = /\.(mp4|webm|mov|mkv)$/i, AUD = /\.(mp3|ogg|wav|flac|m4a)$/i;
 async function previewFile(path) {
-  const name = path.split("/").pop(), body = $("#preview-body"), url = "/api/files/download?" + qs({ path });
+  const name = baseName(path), body = $("#preview-body"), url = "/api/files/download?" + qs({ path });
   $("#preview-title").textContent = name; $("#preview-download").href = url;
   $("#preview-attach").onclick = () => { addAttachment(path); $("#preview").close(); setView("chat"); toast("Adjuntado al chat"); };
   body.innerHTML = "Cargando…"; $("#preview").showModal();
@@ -600,6 +673,9 @@ async function previewFile(path) {
 
 // --- Ajustes ---------------------------------------------------------------------------
 const FIELDS = [
+  ["router_mode", "Modo Auto: estrategia", "router"],
+  ["router_fast", "Modo Auto: modelo rápido", "model", "Normalmente el local (gratis, privado)."],
+  ["router_strong", "Modo Auto: modelo potente", "model", "Normalmente una API (DeepSeek, Claude…). Se usa para código, análisis, documentos largos y el modo agente."],
   ["default_system_prompt", "Instrucciones del sistema", "textarea"],
   ["temperature", "Temperatura", "number", "0 = preciso · 1 = creativo"],
   ["max_tokens", "Máx. tokens por respuesta", "number"],
@@ -611,7 +687,9 @@ const FIELDS = [
   ["llama_extra_args", "Argumentos extra de llama-server", "text", "p.ej. --flash-attn on --cache-type-k q8_0"],
   ["autoload_last_model", "Cargar el último modelo al arrancar", "checkbox"],
   ["file_roots", "Carpetas accesibles (una por línea)", "lines", "La interfaz y la IA sólo pueden ver estas carpetas."],
-  ["allow_ai_file_write", "Permitir que la IA escriba archivos", "checkbox"],
+  ["ai_write", "Agente: escribir/editar archivos", "perm"],
+  ["ai_commands", "Agente: ejecutar comandos", "perm", "«Preguntar» muestra cada acción para que la apruebes (también desde el móvil). Los comandos pueden tocar todo el equipo."],
+  ["agent_workdir", "Carpeta de trabajo del agente", "text"],
   ["hf_token", "Token de Hugging Face (opcional)", "password", "Sólo para modelos restringidos."],
   ["localhost_without_token", "El propio Konkr entra sin contraseña", "checkbox"],
   ["port", "Puerto", "number", "Requiere reiniciar el servicio."],
@@ -627,6 +705,12 @@ async function loadSettings() {
   acc.append(h("p", { class: "muted" }, "Consejo: en el móvil usa «Añadir a pantalla de inicio» para tenerla como app. Para acceder fuera de casa, instala Tailscale en ambos dispositivos. ",
     "Otras apps compatibles con OpenAI pueden usar ", h("code", {}, `${st.urls[0] || "http://IP:" + S.settings.port}/v1`), " con la contraseña como API key."));
 
+  acc.append(h("p", { class: "muted" }, `Equipo: ${st.hostname} · ${st.platform} · G3G3AI ${st.version}`));
+  if (st.is_local) acc.append(h("button", { class: "danger small", onclick: async () => {
+    if (!confirm("¿Apagar el servidor de G3G3AI? Dejarás de poder conectarte desde otros dispositivos.")) return;
+    await api("/api/shutdown", { method: "POST" }).then(() => toast("Apagando…")).catch((e) => toast(e.message));
+  } }, "⏻ Apagar servidor"));
+
   const pe = $("#providers-edit"); pe.innerHTML = "";
   S.settings.providers.forEach((p, idx) => pe.append(providerBox(p, idx)));
 
@@ -637,10 +721,22 @@ async function loadSettings() {
     if (type === "textarea") inp = h("textarea", { name: key, rows: 3 }, v || "");
     else if (type === "lines") inp = h("textarea", { name: key, rows: 2 }, (v || []).join("\n"));
     else if (type === "checkbox") inp = h("input", { type: "checkbox", name: key, checked: !!v });
+    else if (type === "perm") inp = selectEl(key, v, [["off", "Desactivado"], ["ask", "Preguntar cada vez"], ["auto", "Automático (sin preguntar)"]]);
+    else if (type === "router") inp = selectEl(key, v, [["smart", "Inteligente (según la tarea)"], ["local_first", "Local primero"], ["api_first", "API primero"]]);
+    else if (type === "model") {
+      const opts = [...$("#model-select").options].filter((o) => o.value && !o.disabled && o.value !== "auto::auto").map((o) => [o.value, o.textContent]);
+      if (v && !opts.some((o) => o[0] === v)) opts.push([v, v + " (no disponible ahora)"]);
+      inp = selectEl(key, v, opts);
+    }
     else inp = h("input", { type, name: key, value: v ?? "", step: type === "number" ? "any" : null });
     f.append(h("label", {}, label), inp);
     if (hint) f.append(h("div", { class: "hint" }, hint));
   }
+}
+function selectEl(name, value, options) {
+  const s = h("select", { name });
+  for (const [v, label] of options) s.append(h("option", { value: v, selected: v === value }, label));
+  return s;
 }
 function providerBox(p, idx) {
   const set = (k) => (e) => { S.settings.providers[idx][k] = e.target.type === "checkbox" ? e.target.checked : e.target.value; };
@@ -648,34 +744,47 @@ function providerBox(p, idx) {
     h("div", { class: "row" },
       h("label", { class: "toggle grow" }, h("input", { type: "checkbox", checked: !!p.enabled, onchange: set("enabled") }), h("b", {}, p.name), h("span", { class: "badge" }, p.type)),
       h("button", { class: "ghost small", onclick: () => { S.settings.providers.splice(idx, 1); loadSettingsProvidersOnly(); } }, "Quitar")),
-    h("div", { class: "form-grid" },
-      h("label", {}, "Nombre"), h("input", { value: p.name, oninput: set("name") }),
-      h("label", {}, "URL base"), h("input", { value: p.base_url, oninput: set("base_url") }),
-      h("label", {}, "Clave API"), h("input", { type: "password", value: p.api_key || "", placeholder: "sk-…", oninput: set("api_key") })));
+    h("details", { open: !!p.enabled }, h("summary", { class: "muted" }, p.api_key ? "Configurado ✔" : "Configurar"),
+      h("div", { class: "form-grid" },
+        h("label", {}, "Nombre"), h("input", { value: p.name, oninput: set("name") }),
+        h("label", {}, "URL base"), h("input", { value: p.base_url, oninput: set("base_url") }),
+        h("label", {}, "Clave API"), h("input", { type: "password", value: p.api_key || "", placeholder: "sk-…", oninput: set("api_key") }))));
 }
 function loadSettingsProvidersOnly() {
   const pe = $("#providers-edit"); pe.innerHTML = "";
   S.settings.providers.forEach((p, idx) => pe.append(providerBox(p, idx)));
 }
 $("#add-provider").addEventListener("click", () => {
-  const name = prompt("Nombre (p.ej. Groq, Ollama en el portátil, LM Studio…)"); if (!name) return;
-  const url = prompt("URL base compatible con OpenAI (termina en /v1)", "http://192.168.1.10:11434/v1"); if (!url) return;
-  S.settings.providers.push({ id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now().toString(36).slice(-4),
-    name, type: "openai", base_url: url, api_key: "", enabled: true });
-  loadSettingsProvidersOnly();
+  const kind = prompt("¿Qué quieres añadir?\n1 = Otro equipo con G3G3AI (Konkr ↔ PC)\n2 = Ollama / LM Studio / servidor compatible con OpenAI", "1");
+  if (!kind) return;
+  let name, url, key = "";
+  if (kind.trim() === "1") {
+    const ip = prompt("IP o nombre del otro equipo (p.ej. 192.168.1.50 o konkr-pocket-fit.local)"); if (!ip) return;
+    name = prompt("Nombre", "G3G3AI en " + ip) || ip;
+    url = `http://${ip.replace(/^https?:\/\//, "").replace(/\/.*$/, "")}${ip.includes(":") ? "" : ":8800"}/v1`;
+    key = prompt("Contraseña de G3G3AI en ese equipo (Ajustes → Acceso remoto)") || "";
+  } else {
+    name = prompt("Nombre (p.ej. Ollama del portátil)"); if (!name) return;
+    url = prompt("URL base compatible con OpenAI (termina en /v1)", "http://192.168.1.10:11434/v1"); if (!url) return;
+    key = prompt("Clave API (vacío si no hace falta)") || "";
+  }
+  S.settings.providers.push({ id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 24) + "-" + Date.now().toString(36).slice(-4),
+    name, type: "openai", base_url: url, api_key: key, enabled: true });
+  loadSettingsProvidersOnly(); toast("Añadido. Pulsa «Guardar ajustes».");
 });
 $("#save-settings").addEventListener("click", async () => {
   const f = $("#settings-form"), out = { providers: S.settings.providers };
   for (const [key, , type] of FIELDS) {
     const el = f.elements[key];
     if (type === "checkbox") out[key] = el.checked;
+    else if (["perm", "router", "model"].includes(type)) out[key] = el.value;
     else if (type === "number") out[key] = el.value === "" ? 0 : Number(el.value);
     else if (type === "lines") out[key] = el.value.split("\n").map((s) => s.trim()).filter(Boolean);
     else out[key] = el.value;
   }
   try {
     S.settings = await api("/api/settings", { method: "PUT", body: out });
-    S.models = {}; await loadProviders(); toast("Ajustes guardados ✔"); loadSettings();
+    S.models = {}; await refreshStatus(); await loadProviders(); toast("Ajustes guardados ✔"); loadSettings();
   } catch (e) { toast(e.message); }
 });
 $("#logout").addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); location.href = "/"; });
