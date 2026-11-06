@@ -37,6 +37,7 @@ FILE_TOOLS = {"list_dir", "read_file", "search_files"}
 WRITE_TOOLS = {"write_file", "edit_file"}
 COMMAND_TOOLS = {"run_command"}
 WEB_TOOLS = {"web_search", "fetch_url"}
+MEMORY_TOOLS = {"memory_save", "memory_delete"}
 
 
 def _schema(props: dict, required: list[str] | None = None) -> dict:
@@ -71,6 +72,12 @@ ALL_SPECS = {
                             "max_results": {"type": "integer", "description": "Por defecto 6"}}, ["query"])),
     "fetch_url": ("Abre una página web pública y devuelve su texto.",
                   _schema({"url": {"type": "string"}}, ["url"])),
+    "memory_save": ("Guarda (o actualiza) un recuerdo breve y duradero sobre el usuario para próximas conversaciones.",
+                    _schema({"content": {"type": "string", "description": "Una frase clara, en tercera persona"},
+                             "replaces_id": {"type": "integer", "description": "Id del recuerdo que sustituye (opcional)"}},
+                            ["content"])),
+    "memory_delete": ("Borra un recuerdo por su id (cuando quede obsoleto o el usuario pida olvidarlo).",
+                      _schema({"id": {"type": "integer"}}, ["id"])),
     "ask_local_model": ("Delega una subtarea sencilla (resumir, traducir, extraer datos, reformatear) "
                         "en el modelo local gratuito. Devuelve su respuesta.",
                         _schema({"prompt": {"type": "string"}}, ["prompt"])),
@@ -79,12 +86,15 @@ ALL_SPECS = {
 
 class ToolContext:
     def __init__(self, files: Files, cfg, local_chat: Callable[[str], Awaitable[str]] | None = None, *,
-                 agent: bool = True, web: bool = False, session_allow: set | None = None):
+                 agent: bool = True, web: bool = False, session_allow: set | None = None,
+                 memory=None, source: str | None = None):
         self.files = files
         self.cfg = cfg
         self.local_chat = local_chat
         self.agent = agent
         self.web = web
+        self.memory = memory  # objeto Memory si la IA puede guardar recuerdos
+        self.source = source
         # Herramientas que el usuario permitió «siempre» en esta conversación
         self.session_allow = session_allow if session_allow is not None else set()
 
@@ -108,6 +118,8 @@ class ToolContext:
                 out.append("ask_local_model")
         if self.web:
             out += ["web_search", "fetch_url"]
+        if self.memory is not None:
+            out += ["memory_save", "memory_delete"]
         return out
 
     def openai_specs(self) -> list[dict]:
@@ -139,6 +151,9 @@ class ToolContext:
                 parts.append("Para subtareas sencillas y voluminosas (resumir archivos largos, traducir, extraer) "
                              "puedes usar ask_local_model y ahorrar coste.")
             parts.append("Trabaja paso a paso: inspecciona antes de modificar y verifica el resultado.")
+        if self.memory is not None:
+            from .memory import SAVE_GUIDE
+            parts.append(SAVE_GUIDE)
         if self.web:
             parts.append("Puedes buscar en internet con web_search y leer páginas con fetch_url. "
                          "Cuando uses información de la web, cita las fuentes con enlaces.")
@@ -188,6 +203,8 @@ class ToolContext:
                 return web.format_results(q, res)
             if name == "fetch_url":
                 return await web.fetch(str(args.get("url", "")).strip())
+            if name in MEMORY_TOOLS:
+                return self._memory(name, args)
             return await asyncio.to_thread(self._run_sync, name, args)
         except (FileAccessError, web.WebError) as e:
             return f"Error: {e}"
@@ -237,6 +254,23 @@ class ToolContext:
         if name == "run_command":
             return self._run_command(a)
         return f"Error: herramienta desconocida {name}"
+
+    def _memory(self, name: str, a: dict) -> str:
+        from .memory import MemoryRejected
+        if self.memory is None:
+            return "Error: la memoria está desactivada."
+        try:
+            if name == "memory_save":
+                if a.get("replaces_id"):
+                    m = self.memory.update(int(a["replaces_id"]), a.get("content", ""))
+                    return f"Recuerdo {m['id']} actualizado."
+                m = self.memory.add(a.get("content", ""), self.source)
+                return f"Recuerdo {m['id']} guardado."
+            if self.memory.delete(int(a.get("id"))):
+                return f"Recuerdo {a.get('id')} borrado."
+            return f"No existe el recuerdo {a.get('id')}."
+        except MemoryRejected as e:
+            return f"No guardado: {e}"
 
     def _run_command(self, a: dict) -> str:
         cwd = self.files.resolve(a["cwd"]) if a.get("cwd") else self.workdir()

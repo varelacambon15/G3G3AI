@@ -23,6 +23,7 @@ from .config import DATA_DIR, Config
 from .db import DB
 from .files import FileAccessError, Files
 from .hub import Hub
+from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
 from .engine import EngineInstaller
@@ -76,6 +77,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     hub = Hub(cfg)
     llama = LlamaManager(cfg)
     engine = EngineInstaller(cfg)
+    memory = Memory(db)
     session_allow: dict[str, set] = {}  # conversación -> herramientas permitidas «siempre»
 
     @asynccontextmanager
@@ -313,12 +315,18 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         opts = {"temperature": body.get("temperature", cfg["temperature"]),
                 "max_tokens": body.get("max_tokens", cfg["max_tokens"])}
 
+        def memory_for(chosen_pid: str) -> bool:
+            if not cfg["memory_enabled"] or body.get("incognito"):
+                return False
+            return chosen_pid == LOCAL_PROVIDER or bool(cfg["memory_api"])
+
         def make_ctx(chosen_pid: str):
-            if not (agent or use_web):
+            mem = memory if (memory_for(chosen_pid) and cfg["memory_auto"]) else None
+            if not (agent or use_web or mem):
                 return None
             delegate = local_complete if (agent and chosen_pid != LOCAL_PROVIDER and llama.ready) else None
             return ToolContext(files, cfg, delegate, agent=agent, web=use_web,
-                               session_allow=session_allow.setdefault(cid, set()))
+                               session_allow=session_allow.setdefault(cid, set()), memory=mem, source=cid)
 
         async def gen():
             content, reasoning, trace, stats, route = "", "", [], {}, None
@@ -331,7 +339,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     if why:
                         yield sse({"type": "route", **route})
                     ctx = make_ctx(cpid)
-                    system = "\n\n".join(x for x in (base_system, ctx.system_hint() if ctx else "") if x)
+                    mem_text = memory.prompt() if memory_for(cpid) else ""
+                    system = "\n\n".join(x for x in (base_system, mem_text, ctx.system_hint() if ctx else "") if x)
                     msgs = ([{"role": "system", "content": system}] if system else []) + history
                     try:
                         async for ev in chat_stream(p, cmodel, msgs, opts, ctx):
@@ -362,6 +371,34 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # --- Memoria -------------------------------------------------------------------
+    def mem_call(fn, *a):
+        try:
+            return fn(*a)
+        except MemoryRejected as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.get("/api/memory")
+    async def memory_list():
+        return memory.list()
+
+    @app.post("/api/memory")
+    async def memory_add(body: dict):
+        return mem_call(memory.add, body.get("content", ""), "manual")
+
+    @app.put("/api/memory/{mid}")
+    async def memory_update(mid: int, body: dict):
+        return mem_call(memory.update, mid, body.get("content", ""))
+
+    @app.delete("/api/memory/{mid}")
+    async def memory_delete(mid: int):
+        return {"ok": memory.delete(mid)}
+
+    @app.delete("/api/memory")
+    async def memory_clear():
+        memory.clear()
+        return {"ok": True}
 
     @app.post("/api/chat/approve")
     async def approve(body: dict):

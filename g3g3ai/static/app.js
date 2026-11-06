@@ -284,6 +284,14 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   const r = [reasoning, think].filter(Boolean).join("\n");
   if (r) frag.append(h("details", { open: streaming && (open || !body) ? true : false }, h("summary", {}, "💭 Razonamiento"), h("pre", {}, r)));
   for (const t of tools || []) {
+    if (t.name && t.name.startsWith("memory_")) {
+      if (t.type === "tool_call") {
+        let a = {}; try { a = JSON.parse(t.args || "{}"); } catch { /* */ }
+        frag.append(h("div", { class: "memory-note", title: "Gestiona la memoria en Ajustes → Memoria" },
+          t.name === "memory_save" ? `💾 Recordado: ${a.content || ""}` : `🗑 Olvidado el recuerdo ${a.id}`));
+      } else if (/^No guardado|^Error/.test(t.result || "")) frag.append(h("div", { class: "memory-note warn" }, t.result));
+      continue;
+    }
     if (t.type === "tool_call") frag.append(h("details", { class: "tool" }, h("summary", {}, `🔧 ${t.name}`), h("pre", {}, t.args)));
     else if (t.type === "approval") frag.append(approvalCard(t));
     else if (t.type === "tool_result") frag.append(h("details", { class: "tool" }, h("summary", {}, `↳ resultado de ${t.name}`), h("pre", {}, t.result)));
@@ -689,6 +697,9 @@ async function previewFile(path) {
 
 // --- Ajustes ---------------------------------------------------------------------------
 const FIELDS = [
+  ["memory_enabled", "🧠 Usar la memoria entre conversaciones", "checkbox"],
+  ["memory_auto", "🧠 La IA puede guardar recuerdos por su cuenta", "checkbox", "Cada recuerdo nuevo aparece en el chat. También puedes decirle «recuerda que…» u «olvida…»."],
+  ["memory_api", "🧠 Enviar la memoria también a modelos por API", "checkbox", "Si lo desactivas, sólo el modelo local conoce tus recuerdos."],
   ["router_mode", "Modo Auto: estrategia", "router"],
   ["router_fast", "Modo Auto: modelo rápido", "model", "Normalmente el local (gratis, privado)."],
   ["router_strong", "Modo Auto: modelo potente", "model", "Normalmente una API (DeepSeek, Claude…). Se usa para código, análisis, documentos largos y el modo agente."],
@@ -734,6 +745,7 @@ async function loadSettings() {
 
   const pe = $("#providers-edit"); pe.innerHTML = "";
   S.settings.providers.forEach((p, idx) => pe.append(providerBox(p, idx)));
+  loadMemory();
 
   const f = $("#settings-form"); f.innerHTML = "";
   for (let [key, label, type, hint] of FIELDS) {
@@ -762,6 +774,29 @@ async function loadSettings() {
     if (hint) f.append(h("div", { class: "hint" }, hint));
   }
 }
+async function loadMemory() {
+  const box = $("#memory-list"); box.innerHTML = "";
+  const items = await api("/api/memory");
+  if (!items.length) box.append(h("li", { class: "muted" }, "Todavía no hay recuerdos."));
+  for (const m of items) {
+    box.append(h("li", {},
+      h("span", { class: "name" }, m.content, h("div", { class: "sub" }, (m.source === "manual" ? "añadido a mano · " : "guardado por la IA · ") + new Date(m.updated * 1000).toLocaleString())),
+      h("button", { class: "ghost small", onclick: async () => {
+        const t = prompt("Editar recuerdo", m.content); if (t == null) return;
+        await api(`/api/memory/${m.id}`, { method: "PUT", body: { content: t } }).catch((e) => toast(e.message)); loadMemory();
+      } }, "✎"),
+      h("button", { class: "ghost small", onclick: async () => { await api(`/api/memory/${m.id}`, { method: "DELETE" }); loadMemory(); } }, "🗑")));
+  }
+}
+$("#memory-add").addEventListener("submit", async (e) => {
+  e.preventDefault(); const inp = $("#memory-new"); if (!inp.value.trim()) return;
+  try { await api("/api/memory", { method: "POST", body: { content: inp.value } }); inp.value = ""; loadMemory(); }
+  catch (err) { toast(err.message); }
+});
+$("#memory-clear").addEventListener("click", async () => {
+  if (!confirm("¿Borrar todos los recuerdos?")) return;
+  await api("/api/memory", { method: "DELETE" }); loadMemory();
+});
 function selectEl(name, value, options) {
   const s = h("select", { name });
   for (const [v, label] of options) s.append(h("option", { value: v, selected: v === value }, label));

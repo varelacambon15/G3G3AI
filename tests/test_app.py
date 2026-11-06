@@ -403,3 +403,31 @@ def test_config_migration_v2_to_v3(tmp_path):
     p.write_text(json.dumps({"config_version": 1, "token": "t", "allow_ai_file_write": True}))
     c = Config(p)
     assert c["ai_write"] == "auto" and any(x["id"] == "deepseek" for x in c["providers"])
+
+
+def test_memory_between_conversations(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    # 1) La IA guarda un recuerdo (se ve en el chat como herramienta)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "recuerda que le gusta el café solo"}))
+    assert any(e["type"] == "tool_call" and e["name"] == "memory_save" for e in evs)
+    mems = client.get("/api/memory", headers=h).json()
+    assert [m["content"] for m in mems] == ["Al usuario le gusta el café solo"]
+    # 2) Otra conversación nueva lo recibe como contexto
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "qué sabes de mí"}))
+    text = "".join(e["text"] for e in evs if e["type"] == "content")
+    assert "café solo" in text
+    # 3) Modo incógnito y memoria desactivada: no se envía
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "qué sabes de mí", "incognito": True}))
+    assert "café" not in "".join(e["text"] for e in evs if e["type"] == "content")
+    # 4) Gestión manual + filtro de secretos
+    r = client.post("/api/memory", headers=h, json={"content": "Su contraseña: hunter2"})
+    assert r.status_code == 400
+    r = client.post("/api/memory", headers=h, json={"content": "Tiene una Konkr Pocket Fit"})
+    mid = r.json()["id"]
+    client.put(f"/api/memory/{mid}", headers=h, json={"content": "Tiene una Konkr Pocket Fit y un portátil"})
+    assert any("portátil" in m["content"] for m in client.get("/api/memory", headers=h).json())
+    client.delete(f"/api/memory/{mid}", headers=h)
+    client.delete("/api/memory", headers=h)
+    assert client.get("/api/memory", headers=h).json() == []

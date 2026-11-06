@@ -33,6 +33,16 @@ class H(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c2", "function": {
                 "name": "run_command", "arguments": json.dumps({"command": "echo hola-g3"})}}]}}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "memory_save" in names and last["role"] == "user" and "recuerda que" in last["content"]:
+            fact = last["content"].split("recuerda que", 1)[1].strip()
+            self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "m1", "function": {
+                "name": "memory_save", "arguments": json.dumps({"content": "Al usuario " + fact})}}]}}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if last["role"] == "user" and "qué sabes" in last["content"]:
+            system = msgs[0]["content"] if msgs[0]["role"] == "system" else ""
+            mem = system.split("Memoria", 1)[1][:300] if "Memoria" in system else "nada"
+            self.chunk({"choices": [{"delta": {"content": "MEM:" + mem}}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if req.get("tools") and last["role"] == "user" and "lista" in last["content"]:
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "list_dir", "arguments": ""}}]}}]})
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{}"}}]}}]})

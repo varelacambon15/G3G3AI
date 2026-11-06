@@ -61,6 +61,10 @@ DEFAULTS: dict = {
     "blocked_paths": [],  # se rellena con default_blocked() al crear la configuración
     # Aislamiento de comandos (Linux: bubblewrap). "auto" = usarlo si está disponible.
     "command_sandbox": "auto",
+    # Memoria entre conversaciones
+    "memory_enabled": True,     # usar los recuerdos como contexto
+    "memory_auto": True,        # la IA puede guardar recuerdos por su cuenta (se ve en el chat)
+    "memory_api": True,         # enviar la memoria también a modelos por API (si no, sólo al local)
     # Búsqueda web
     "web_provider": "duckduckgo",  # duckduckgo | brave | tavily
     "web_api_key": "",

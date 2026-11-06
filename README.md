@@ -10,6 +10,7 @@ Cliente de IA al estilo de LM Studio para tu **Konkr Pocket Fit** (SteamOS ARM) 
 - 🔀 **Casilla Auto (opcional, desactivada por defecto)**: si la marcas, en cada mensaje se decide si responde el modelo local (gratis y privado) o uno por API (más potente). Si uno falla antes de responder, prueba con el otro.
 - 🛠 **Modo agente**: la IA puede leer, buscar y **editar archivos** y **ejecutar comandos**, con permisos, carpetas separadas para leer y modificar, rutas protegidas y comandos aislados. El modelo de API puede **pasarle subtareas al modelo local** para ahorrar coste.
 - 🌐 **Búsqueda web**: busca en internet y lee páginas, citando las fuentes.
+- 🧠 **Memoria entre conversaciones**: recuerda datos duraderos sobre ti (preferencias, proyectos…). Cada recuerdo nuevo se ve en el chat y puedes editarlos o borrarlos en Ajustes → Memoria.
 - 🔗 **Konkr ↔ PC**: cada equipo puede usar el modelo local del otro (Ajustes → Añadir proveedor → «Otro equipo con G3G3AI»).
 - 📱 **Desde el móvil**: interfaz web protegida con contraseña, instalable como app.
 - 📁 Explorador de archivos, subida y descarga, adjuntos en el chat.
@@ -101,6 +102,14 @@ Junto al selector de modelo hay tres casillas: **🔀 Auto**, **🌐 Web** (busc
 
 **Búsqueda web:** `web_search` usa DuckDuckGo sin clave, o Brave Search / Tavily con clave (más fiables; ambos tienen plan gratuito). `fetch_url` lee páginas públicas, pero nunca puede acceder a tu red local (127.0.0.1, 192.168.x.x, `.local`…), para que una página no pueda hacer que la IA toque tus dispositivos. La IA cita las fuentes con enlaces.
 
+### Memoria
+
+- La IA guarda notas breves con la herramienta `memory_save` cuando aprende algo útil y duradero, o cuando le dices «recuerda que…». «Olvida…» las borra. Cada recuerdo guardado aparece en el chat como 💾.
+- Al empezar cada conversación recibe tus recuerdos como contexto.
+- En **Ajustes → 🧠 Memoria** puedes ver, editar, añadir y borrar recuerdos. En «General» puedes desactivar la memoria, impedir que la IA guarde recuerdos por su cuenta, o no enviar la memoria a las APIs externas (así solo la conoce el modelo local).
+- No guarda nada que parezca una contraseña o una clave.
+- Cada equipo (Konkr, PC) tiene su propia memoria.
+
 ## Modelos recomendados
 
 En la Konkr (8 GB de RAM), mejor modelos de 3–4B en versión Q4_K_M: **Qwen3 4B** (bueno con herramientas y en modo agente), **Gemma 3 4B**, **Llama 3.2 3B**, **Qwen2.5 Coder 3B**. En un PC con 16 GB o más y tarjeta gráfica puedes usar modelos de 7–14B.
@@ -123,6 +132,7 @@ g3g3ai/
   tools.py      herramientas del agente y aprobaciones
   sandbox.py    evaluación y aislamiento (bubblewrap) de comandos
   web.py        búsqueda web y lectura de páginas
+  memory.py     memoria entre conversaciones
   providers.py  streaming OpenAI/Anthropic + bucle de herramientas
   llama.py      proceso llama-server
   engine.py     descarga de llama.cpp precompilado (Windows/macOS/Linux x64)
