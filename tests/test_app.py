@@ -28,9 +28,14 @@ def env(tmp_path, monkeypatch):
     models = tmp_path / "models" / "org__repo"; models.mkdir(parents=True)
     (models / "tiny-Q4_K_M.gguf").write_bytes(b"GGUF" + b"\0" * 100)
 
-    fake = tmp_path / "llama-server"
-    fake.write_text(f"#!/bin/sh\nexec {sys.executable} {Path(__file__).parent / 'fake_llama_server.py'} \"$@\"\n")
-    fake.chmod(0o755)
+    script = Path(__file__).parent / "fake_llama_server.py"
+    if sys.platform == "win32":
+        fake = tmp_path / "llama-server.bat"
+        fake.write_text(f'@"{sys.executable}" "{script}" %*\r\n')
+    else:
+        fake = tmp_path / "llama-server"
+        fake.write_text(f"#!/bin/sh\nexec {sys.executable} {script} \"$@\"\n")
+        fake.chmod(0o755)
 
     cfg = Config(tmp_path / "cfg" / "config.json")
     cfg.data.update({"file_roots": [str(home)], "models_dir": str(tmp_path / "models"),
