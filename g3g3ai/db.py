@@ -39,6 +39,12 @@ class DB:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
+        for col in ("summary TEXT", "summary_upto INTEGER"):  # columnas añadidas en v0.4
+            try:
+                self.conn.execute(f"ALTER TABLE conversations ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
+        self.conn.commit()
         self.lock = threading.Lock()
 
     def _q(self, sql, args=()):
@@ -102,3 +108,12 @@ class DB:
     def delete_messages_from(self, cid: str, message_id: int) -> None:
         """Borra un mensaje y todos los posteriores (para editar/regenerar)."""
         self._q("DELETE FROM messages WHERE conv_id=? AND id>=?", (cid, message_id))
+        # Si el resumen cubría mensajes borrados, se descarta
+        self._q("UPDATE conversations SET summary=NULL, summary_upto=NULL WHERE id=? AND summary_upto>=?",
+                (cid, message_id))
+
+    def update_message_meta(self, message_id: int, meta: dict) -> None:
+        self._q("UPDATE messages SET meta=? WHERE id=?", (json.dumps(meta, ensure_ascii=False), message_id))
+
+    def set_summary(self, cid: str, summary: str, upto: int) -> None:
+        self._q("UPDATE conversations SET summary=?, summary_upto=? WHERE id=?", (summary, upto, cid))

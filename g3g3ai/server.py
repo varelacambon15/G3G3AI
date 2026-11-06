@@ -27,7 +27,9 @@ from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
 from .engine import EngineInstaller
-from .providers import ProviderError, chat_stream, complete, list_models
+from . import documents as D
+from .context import HistoryBuilder
+from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
 from .tools import ToolContext, resolve_approval
 
 STATIC = Path(__file__).parent / "static"
@@ -238,15 +240,31 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     # --- Chat ---------------------------------------------------------------------
     def expand_attachments(paths: list[str]) -> tuple[str, list[dict]]:
+        """Texto de los adjuntos + metadatos. Imágenes y PDF escaneados se envían aparte (context.py)."""
         parts, meta = [], []
         for p in paths:
             try:
-                f = files.read_text(p, 60_000)
-            except FileAccessError as e:
+                path = files.resolve(p)
+                if not path.is_file():
+                    raise FileAccessError(f"No es un archivo: {path}")
+                kind = D.kind_of(path)
+                if kind == "image":
+                    meta.append({"name": path.name, "path": str(path), "kind": "image"})
+                    continue
+                if kind == "document":
+                    text = D.extract_text(path)
+                    if not text.strip() and path.suffix.lower() == ".pdf":
+                        meta.append({"name": path.name, "path": str(path), "kind": "pdf_scan"})
+                        continue
+                    parts.append(f"Documento adjunto `{path}`:\n```\n{text}\n```")
+                    meta.append({"name": path.name, "path": str(path), "kind": "document"})
+                    continue
+                f = files.read_text(str(path), 60_000)
+            except (FileAccessError, D.DocumentError) as e:
                 raise HTTPException(400, str(e)) from e
             note = "\n[... truncado ...]" if f["truncated"] else ""
             parts.append(f"Archivo adjunto `{f['path']}`:\n```\n{f['content']}{note}\n```")
-            meta.append({"name": f["name"], "path": f["path"]})
+            meta.append({"name": f["name"], "path": f["path"], "kind": "text"})
         return "\n\n".join(parts), meta
 
     def provider_available(pid: str) -> bool:
@@ -263,6 +281,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             return await complete(p, "local", prompt, max_tokens=cfg["max_tokens"])
         except (ProviderError, httpx.HTTPError) as e:
             return f"Error del modelo local: {e}"
+
+    builder = HistoryBuilder(db, cfg, llama, provider_for, provider_available, complete_messages)
 
     @app.post("/api/chat")
     async def chat(body: dict):
@@ -296,7 +316,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             conv = db.create_conversation(provider=pid, model=model, system=body.get("system"))
             cid = conv["id"]
         if text or attach_text:
-            meta = {"attachments": attach_meta, "expanded": f"{attach_text}\n\n{text}".strip()} if attach_meta else None
+            meta = ({"attachments": attach_meta, "expanded": f"{attach_text}\n\n{text}".strip() or text}
+                    if attach_meta else None)
             db.add_message(cid, "user", text, meta=meta)
             if conv["title"] == "Nueva conversación":
                 title = text or (attach_meta[0]["name"] if attach_meta else "Conversación")
@@ -307,11 +328,6 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         conv = db.get_conversation(cid)
 
         base_system = conv.get("system") if conv.get("system") is not None else cfg["default_system_prompt"]
-        history = []
-        for m in conv["messages"]:
-            if m["role"] in ("user", "assistant"):
-                content = (m["meta"] or {}).get("expanded") or m["content"]
-                history.append({"role": m["role"], "content": content})
         opts = {"temperature": body.get("temperature", cfg["temperature"]),
                 "max_tokens": body.get("max_tokens", cfg["max_tokens"])}
 
@@ -341,8 +357,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     ctx = make_ctx(cpid)
                     mem_text = memory.prompt() if memory_for(cpid) else ""
                     system = "\n\n".join(x for x in (base_system, mem_text, ctx.system_hint() if ctx else "") if x)
-                    msgs = ([{"role": "system", "content": system}] if system else []) + history
                     try:
+                        history = []
+                        async for ev in builder.build(conv, cpid, cmodel, system, opts["max_tokens"] or 2048):
+                            if ev["type"] == "_history":
+                                history = ev["messages"]
+                            else:
+                                yield sse(ev)
+                        msgs = ([{"role": "system", "content": system}] if system else []) + history
                         async for ev in chat_stream(p, cmodel, msgs, opts, ctx):
                             if ev["type"] == "content":
                                 content += ev["text"]
@@ -354,7 +376,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                                 stats.update({k: v for k, v in ev.items() if v is not None and k != "type"})
                             yield sse(ev)
                         break
-                    except (ProviderError, httpx.HTTPError) as e:
+                    except (ProviderError, httpx.HTTPError, RuntimeError) as e:
                         msg = str(e) or type(e).__name__
                         if content or trace or i == len(candidates) - 1:
                             yield sse({"type": "error", "message": msg})

@@ -131,6 +131,11 @@ main { flex: 1; min-height: 0; position: relative; }
 button.danger.small { padding: 4px 10px; }
 button:disabled { opacity: .5; cursor: default; }
 
+.chip .thumb { width: 22px; height: 22px; object-fit: cover; border-radius: 4px; margin-right: 4px; }
+.msg-images { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 4px; }
+.msg-images img { max-width: 180px; max-height: 180px; border-radius: 10px; object-fit: cover; cursor: zoom-in; border: 1px solid var(--border); }
+.composer.drop { outline: 2px dashed var(--accent); outline-offset: -4px; }
+
 /* Listas */
 .list { list-style: none; padding: 0; margin: 0; }
 .list li { display: flex; gap: 10px; align-items: center; padding: 9px 4px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }

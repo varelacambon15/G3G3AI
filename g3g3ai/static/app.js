@@ -278,6 +278,8 @@ function approvalCard(a) {
 }
 function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   const frag = document.createDocumentFragment();
+  if (extra.compacted) frag.append(h("div", { class: "route" }, `🗜 Se resumieron ${extra.compacted} mensajes antiguos para que la conversación quepa en el contexto`));
+  if (extra.status && streaming) frag.append(h("div", { class: "route" }, extra.status));
   if (extra.route) frag.append(h("div", { class: "route" }, `🔀 ${extra.route.provider === "local" ? "💻" : "☁"} ${extra.route.model}` + (extra.route.reason ? ` — ${extra.route.reason}` : "")));
   for (const f of extra.fallbacks || []) frag.append(h("div", { class: "route warn" }, "↪ falló " + f + ", probando el otro modelo…"));
   const { think, body, open } = splitThink(content || "");
@@ -306,8 +308,11 @@ function messageEl(m) {
   if (m.role === "user") {
     el.append(h("div", { class: "bubble" }, m.content));
     const att = m.meta?.attachments || [];
+    const imgs = att.filter((a) => a.kind === "image" || (!a.kind && isImage(a.name)));
+    if (imgs.length) el.append(h("div", { class: "msg-images" }, imgs.map((a) =>
+      h("img", { src: fileUrl(a.path), alt: a.name, loading: "lazy", onclick: () => previewFile(a.path) }))));
     el.append(h("div", { class: "meta" },
-      att.map((a) => h("span", { class: "chip" }, "📎 " + a.name)),
+      att.filter((a) => !imgs.includes(a)).map((a) => h("span", { class: "chip" }, (a.kind === "document" || a.kind === "pdf_scan" ? "📄 " : "📎 ") + a.name)),
       h("button", { onclick: () => editFrom(m) }, "✎ editar")));
   } else {
     el.append(assistantInner(m.content, m.reasoning, m.meta?.tools));
@@ -401,12 +406,14 @@ async function send(text, attachments, isContinue = false) {
         if (!chunk.startsWith("data:")) continue;
         const ev = JSON.parse(chunk.slice(5));
         if (ev.type === "start") { if (!S.convId) { S.convId = ev.conversation_id; store.set("conv", S.convId); loadConversations(); } }
-        else if (ev.type === "content") content += ev.text;
+        else if (ev.type === "content") { content += ev.text; extra.status = null; }
         else if (ev.type === "reasoning") reasoning += ev.text;
         else if (ev.type === "tool_call" || ev.type === "tool_result") tools.push(ev);
         else if (ev.type === "approval") { tools.push(ev); notifyApproval(ev); }
         else if (ev.type === "approval_result") { const a = tools.find((t) => t.id === ev.id); if (a) a.state = ev.approved ? "approved" : "denied"; }
         else if (ev.type === "route") extra.route = ev;
+        else if (ev.type === "status") extra.status = ev.text;
+        else if (ev.type === "compacted") extra.compacted = ev.messages;
         else if (ev.type === "route_fallback") extra.fallbacks.push(ev.message);
         else if (ev.type === "error") errorMsg = ev.message;
         if (!raf) raf = requestAnimationFrame(paint);
@@ -433,15 +440,34 @@ if ("Notification" in window && Notification.permission === "default") {
 }
 
 // --- Adjuntos --------------------------------------------------------------------------
+const isImage = (name) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(name || "");
+const fileUrl = (path) => "/api/files/download?" + qs({ path, inline: true });
 function renderAttachments() {
   const c = $("#attachments"); c.innerHTML = "";
-  S.attachments.forEach((a, i) => c.append(h("span", { class: "chip" }, "📎 " + a.name,
+  S.attachments.forEach((a, i) => c.append(h("span", { class: "chip" },
+    isImage(a.name) ? h("img", { class: "thumb", src: fileUrl(a.path), alt: "" }) : "📎 ", a.name,
     h("button", { onclick: () => { S.attachments.splice(i, 1); renderAttachments(); } }, "✕"))));
 }
 function addAttachment(path) {
   if (!S.attachments.some((a) => a.path === path)) S.attachments.push({ path, name: baseName(path) });
   renderAttachments();
 }
+async function attachLocalFiles(fileList) {
+  if (!fileList || !fileList.length) return;
+  toast("Subiendo…", 1500);
+  const res = await uploadFiles(fileList, await uploadsDir());
+  res.forEach((r) => addAttachment(r.path));
+}
+$("#camera-input").addEventListener("change", async (e) => { await attachLocalFiles(e.target.files); e.target.value = ""; });
+$("#camera-btn").addEventListener("click", () => $("#camera-input").click());
+const composer = $(".composer");
+composer.addEventListener("dragover", (e) => { e.preventDefault(); composer.classList.add("drop"); });
+composer.addEventListener("dragleave", () => composer.classList.remove("drop"));
+composer.addEventListener("drop", (e) => { e.preventDefault(); composer.classList.remove("drop"); attachLocalFiles(e.dataTransfer.files); });
+input.addEventListener("paste", (e) => {
+  const imgs = [...(e.clipboardData?.files || [])];
+  if (imgs.length) { e.preventDefault(); attachLocalFiles(imgs); }
+});
 $("#attach-btn").addEventListener("click", () => { $("#picker").showModal(); loadPicker(S.pickerPath); });
 async function loadPicker(path) {
   try {
@@ -557,6 +583,7 @@ async function refreshModels() {
     ul.append(h("li", {},
       h("div", { class: "name" }, m.name, h("div", { class: "sub" }, [m.repo, m.quant, fmtSize(m.size)].filter(Boolean).join(" · "))),
       m.mmproj ? h("span", { class: "badge" }, "proyector visión") : fitBadge(m.size),
+      m.vision ? h("span", { class: "badge ok", title: "Tiene proyector de visión: podrá ver imágenes" }, "👁 visión") : null,
       m.mmproj ? null : (loaded === m.path
         ? h("span", { class: "badge ok" }, "cargado")
         : h("button", { class: "primary small", onclick: () => loadModel(m.path) }, "Cargar")),
@@ -606,6 +633,9 @@ async function toggleRepo(repo, box) {
   try {
     const groups = await api("/api/hub/files?" + qs({ repo }));
     box.innerHTML = "";
+    const projs = groups.filter((g) => g.mmproj);
+    const proj = projs.find((g) => /f16/i.test(g.name)) || projs[0];
+    if (proj) box.append(h("p", { class: "muted" }, "👁 Este modelo tiene visión: al descargarlo se añade también su proyector (" + proj.name + ")."));
     const ul = h("ul", { class: "list" });
     for (const g of groups) {
       ul.append(h("li", {},
@@ -613,6 +643,7 @@ async function toggleRepo(repo, box) {
         g.mmproj ? h("span", { class: "badge" }, "visión") : fitBadge(g.size),
         h("button", { class: "primary small", onclick: async () => {
           await api("/api/hub/download", { method: "POST", body: { repo, files: g.files } });
+          if (proj && !g.mmproj) await api("/api/hub/download", { method: "POST", body: { repo, files: proj.files } });
           toast("Descarga iniciada"); refreshDownloads();
         } }, "Descargar")));
     }
@@ -700,6 +731,8 @@ const FIELDS = [
   ["memory_enabled", "🧠 Usar la memoria entre conversaciones", "checkbox"],
   ["memory_auto", "🧠 La IA puede guardar recuerdos por su cuenta", "checkbox", "Cada recuerdo nuevo aparece en el chat. También puedes decirle «recuerda que…» u «olvida…»."],
   ["memory_api", "🧠 Enviar la memoria también a modelos por API", "checkbox", "Si lo desactivas, sólo el modelo local conoce tus recuerdos."],
+  ["vision_fallback", "👁 Modelo para describir imágenes", "model", "Cuando el modelo elegido no ve imágenes (p.ej. DeepSeek), éste las describe. Vacío = el local si tiene visión."],
+  ["context_budget", "Contexto máximo para APIs (tokens)", "number", "Por encima, lo más antiguo de la conversación se resume automáticamente."],
   ["router_mode", "Modo Auto: estrategia", "router"],
   ["router_fast", "Modo Auto: modelo rápido", "model", "Normalmente el local (gratis, privado)."],
   ["router_strong", "Modo Auto: modelo potente", "model", "Normalmente una API (DeepSeek, Claude…). Se usa para código, análisis, documentos largos y el modo agente."],
@@ -766,6 +799,7 @@ async function loadSettings() {
     else if (type === "router") inp = selectEl(key, v, [["smart", "Inteligente (según la tarea)"], ["local_first", "Local primero"], ["api_first", "API primero"]]);
     else if (type === "model") {
       const opts = [...$("#model-select").options].filter((o) => o.value && !o.disabled).map((o) => [o.value, o.textContent]);
+      if (key === "vision_fallback") opts.unshift(["", "Automático (el modelo local si tiene visión)"]);
       if (v && !opts.some((o) => o[0] === v)) opts.push([v, v + " (no disponible ahora)"]);
       inp = selectEl(key, v, opts);
     }
@@ -812,7 +846,13 @@ function providerBox(p, idx) {
       h("div", { class: "form-grid" },
         h("label", {}, "Nombre"), h("input", { value: p.name, oninput: set("name") }),
         h("label", {}, "URL base"), h("input", { value: p.base_url, oninput: set("base_url") }),
-        h("label", {}, "Clave API"), h("input", { type: "password", value: p.api_key || "", placeholder: "sk-…", oninput: set("api_key") }))));
+        h("label", {}, "Clave API"), h("input", { type: "password", value: p.api_key || "", placeholder: "sk-…", oninput: set("api_key") }),
+        h("label", {}, "¿Ve imágenes?"), (() => {
+          const sel = selectEl("", p.vision === true ? "yes" : p.vision === false ? "no" : "auto",
+            [["auto", "Automático"], ["yes", "Sí"], ["no", "No (describirlas con otro modelo)"]]);
+          sel.onchange = (e) => { S.settings.providers[idx].vision = { yes: true, no: false, auto: null }[e.target.value]; };
+          return sel;
+        })())));
 }
 function loadSettingsProvidersOnly() {
   const pe = $("#providers-edit"); pe.innerHTML = "";

@@ -59,6 +59,17 @@ class LlamaManager:
     def ready(self) -> bool:
         return self.state == "ready"
 
+    @property
+    def vision(self) -> bool:
+        return self.ready and bool(self.params.get("mmproj"))
+
+    @staticmethod
+    def find_mmproj(model_path: str) -> str | None:
+        """Proyector de visión (mmproj) descargado junto al modelo, si lo hay."""
+        cands = sorted(Path(model_path).parent.glob("*mmproj*.gguf"),
+                       key=lambda p: (("f16" not in p.name.lower()), p.name))
+        return str(cands[0]) if cands else None
+
     def status(self) -> dict:
         return {
             "state": self.state,
@@ -68,6 +79,7 @@ class LlamaManager:
             "error": self.error,
             "started_at": self.started_at,
             "binary": find_llama_server(self.cfg["llama_server_path"]),
+            "vision": self.vision,
         }
 
     def _read_logs(self, proc: subprocess.Popen):
@@ -101,7 +113,11 @@ class LlamaManager:
                 "-ngl", str(gpu_layers),
                 "--jinja",  # plantillas de chat del modelo + llamadas a herramientas
             ] + shlex.split(extra or "", posix=sys.platform != "win32")
-            self.params = {"ctx": ctx, "threads": threads, "gpu_layers": gpu_layers, "extra_args": extra}
+            mmproj = self.find_mmproj(model_path) if "mmproj" not in Path(model_path).name.lower() else None
+            if mmproj and "--mmproj" not in (extra or ""):
+                cmd += ["--mmproj", mmproj]
+            self.params = {"ctx": ctx, "threads": threads, "gpu_layers": gpu_layers, "extra_args": extra,
+                           "mmproj": mmproj}
             self.logs.clear()
             self.logs.append("$ " + " ".join(cmd))
             self.state, self.error = "loading", None

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import AsyncIterator
 
 import httpx
@@ -17,6 +18,42 @@ import httpx
 from . import tools as T
 
 MAX_TOOL_STEPS = 25
+KEEP_TOOL_OUTPUTS = 4          # resultados de herramientas recientes que se envían completos
+TOOL_BUDGET_CHARS = 120_000    # por encima, se recortan los resultados antiguos
+OMITTED = "[Salida anterior omitida para ahorrar contexto; vuelve a ejecutar la herramienta si la necesitas.]"
+
+
+def _trim_openai(msgs: list[dict]) -> None:
+    tool_idx = [i for i, m in enumerate(msgs) if m.get("role") == "tool"]
+    if sum(len(str(m.get("content") or "")) for m in msgs) <= TOOL_BUDGET_CHARS:
+        return
+    for i in tool_idx[:-KEEP_TOOL_OUTPUTS]:
+        msgs[i]["content"] = OMITTED
+
+
+def _trim_anthropic(msgs: list[dict]) -> None:
+    if sum(len(json.dumps(m.get("content"), ensure_ascii=False)) for m in msgs) <= TOOL_BUDGET_CHARS:
+        return
+    results = [b for m in msgs if isinstance(m.get("content"), list)
+               for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
+    for b in results[:-KEEP_TOOL_OUTPUTS]:
+        b["content"] = OMITTED
+
+
+def _anthropic_content(content):
+    """Convierte partes estilo OpenAI (texto + image_url data:) al formato de Anthropic."""
+    if not isinstance(content, list):
+        return content
+    out = []
+    for part in content:
+        if part.get("type") == "image_url":
+            url = part["image_url"]["url"]
+            media, _, data = url.partition(";base64,")
+            out.append({"type": "image", "source": {"type": "base64", "media_type": media.removeprefix("data:"),
+                                                     "data": data}})
+        elif part.get("type") == "text":
+            out.append({"type": "text", "text": part["text"]})
+    return out
 
 
 class ProviderError(Exception):
@@ -71,6 +108,7 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
     local = p["base_url"].startswith(("http://127.0.0.1", "http://localhost"))
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), trust_env=not local) as c:
         for _ in range(MAX_TOOL_STEPS):
+            _trim_openai(msgs)
             body = {"model": model, "messages": msgs, "stream": True,
                     "temperature": opts.get("temperature"), "max_tokens": opts.get("max_tokens"),
                     "stream_options": {"include_usage": True}}
@@ -124,9 +162,11 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
     url = p["base_url"].rstrip("/") + "/v1/messages"
     headers = {"x-api-key": p.get("api_key", ""), "anthropic-version": "2023-06-01"}
     system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
-    msgs = [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] in ("user", "assistant")]
+    msgs = [{"role": m["role"], "content": _anthropic_content(m["content"])}
+            for m in messages if m["role"] in ("user", "assistant")]
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600)) as c:
         for _ in range(MAX_TOOL_STEPS):
+            _trim_anthropic(msgs)
             body = {"model": model, "messages": msgs, "stream": True,
                     "max_tokens": opts.get("max_tokens") or 4096}
             if opts.get("temperature") is not None:
@@ -191,11 +231,16 @@ def chat_stream(p: dict, model: str, messages: list[dict], opts: dict,
     return fn(p, model, messages, opts, ctx)
 
 
-async def complete(p: dict, model: str, prompt: str, max_tokens: int = 1024) -> str:
-    """Respuesta completa sin streaming (para delegar subtareas al modelo local)."""
+async def complete_messages(p: dict, model: str, messages: list[dict], max_tokens: int = 1024) -> str:
+    """Respuesta completa (sin herramientas) a partir de una lista de mensajes."""
     text = ""
-    async for ev in chat_stream(p, model, [{"role": "user", "content": prompt}],
-                                {"max_tokens": max_tokens, "temperature": 0.3}):
+    async for ev in chat_stream(p, model, messages, {"max_tokens": max_tokens, "temperature": 0.3}):
         if ev["type"] == "content":
             text += ev["text"]
+    text = re.sub(r"^\s*<think>.*?</think>", "", text, flags=re.S)  # modelos que piensan en el contenido
     return text.strip() or "(sin respuesta)"
+
+
+async def complete(p: dict, model: str, prompt: str, max_tokens: int = 1024) -> str:
+    """Respuesta completa a un único mensaje (para delegar subtareas al modelo local)."""
+    return await complete_messages(p, model, [{"role": "user", "content": prompt}], max_tokens)

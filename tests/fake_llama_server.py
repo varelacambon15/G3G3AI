@@ -47,6 +47,11 @@ class H(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "list_dir", "arguments": ""}}]}}]})
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{}"}}]}}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if isinstance(last.get("content"), list):  # mensaje con imágenes
+            n = sum(1 for part in last["content"] if part.get("type") == "image_url")
+            txt = " ".join(part.get("text", "") for part in last["content"] if part.get("type") == "text")
+            self.chunk({"choices": [{"delta": {"content": f"VEO {n} IMAGEN(ES); texto: {txt[-60:]}"}}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if last["role"] == "tool":
             text = "Veo: " + ("hola.txt" if "hola.txt" in last["content"] else "nada")
         else:

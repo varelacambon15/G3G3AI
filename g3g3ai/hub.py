@@ -146,10 +146,12 @@ class Hub:
             if m:
                 size = sum(x.stat().st_size for x in p.parent.glob(f"{m.group(1)}-*-of-{m.group(3)}.gguf"))
             rel = p.relative_to(self.models_dir)
+            is_mmproj = "mmproj" in p.name.lower()
             out.append({
                 "name": p.name, "path": str(p), "size": size,
                 "repo": rel.parts[0].replace("__", "/") if len(rel.parts) > 1 else "",
-                "quant": quant_of(p.name), "mmproj": "mmproj" in p.name.lower(),
+                "quant": quant_of(p.name), "mmproj": is_mmproj,
+                "vision": not is_mmproj and any(p.parent.glob("*mmproj*.gguf")),
             })
         return out
 

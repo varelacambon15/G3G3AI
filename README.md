@@ -10,6 +10,8 @@ Cliente de IA al estilo de LM Studio para tu **Konkr Pocket Fit** (SteamOS ARM) 
 - 🔀 **Casilla Auto (opcional, desactivada por defecto)**: si la marcas, en cada mensaje se decide si responde el modelo local (gratis y privado) o uno por API (más potente). Si uno falla antes de responder, prueba con el otro.
 - 🛠 **Modo agente**: la IA puede leer, buscar y **editar archivos** y **ejecutar comandos**, con permisos, carpetas separadas para leer y modificar, rutas protegidas y comandos aislados. El modelo de API puede **pasarle subtareas al modelo local** para ahorrar coste.
 - 🌐 **Búsqueda web**: busca en internet y lee páginas, citando las fuentes.
+- 📷 **Fotos y documentos**: adjunta fotos (o hazlas con la cámara del móvil), PDF, Word, Excel, PowerPoint u OpenDocument, y pregunta sobre ellos. Si el modelo elegido no ve imágenes (como DeepSeek), otro modelo con visión las describe automáticamente.
+- 🗜 **Conversaciones largas**: cuando no caben en el contexto, lo antiguo se resume solo, y en las tareas largas del agente se recortan las salidas viejas de las herramientas.
 - 🧠 **Memoria entre conversaciones**: recuerda datos duraderos sobre ti (preferencias, proyectos…). Cada recuerdo nuevo se ve en el chat y puedes editarlos o borrarlos en Ajustes → Memoria.
 - 🔗 **Konkr ↔ PC**: cada equipo puede usar el modelo local del otro (Ajustes → Añadir proveedor → «Otro equipo con G3G3AI»).
 - 📱 **Desde el móvil**: interfaz web protegida con contraseña, instalable como app.
@@ -110,6 +112,19 @@ Junto al selector de modelo hay tres casillas: **🔀 Auto**, **🌐 Web** (busc
 - No guarda nada que parezca una contraseña o una clave.
 - Cada equipo (Konkr, PC) tiene su propia memoria.
 
+### Fotos y documentos
+
+- **📎** adjunta archivos del equipo o del dispositivo; **📷** hace o elige una foto. En el ordenador también puedes arrastrar archivos o pegar imágenes con Ctrl+V.
+- **Documentos** (PDF, `.docx`, `.xlsx`, `.pptx`, `.odt`…): se convierten a texto en tu equipo, así que funcionan con cualquier modelo.
+- **Fotos y PDF escaneados:**
+  - Si el modelo ve imágenes (Claude, GPT, Gemini, o un modelo local con visión), las recibe tal cual.
+  - Si no (por ejemplo DeepSeek), un modelo con visión las describe y transcribe su texto. Esa descripción se guarda para no repetirla en cada mensaje.
+- **Visión en local:** descarga un modelo con visión (Gemma 3 4B o Qwen2.5-VL 3B). El proyector de visión (`mmproj`) se descarga y se carga automáticamente con el modelo. En Ajustes puedes elegir qué modelo describe las imágenes, e indicar para cada proveedor si ve imágenes.
+
+### Conversaciones largas
+
+Cuando una conversación no cabe en el contexto (el del modelo local, o «Contexto máximo para APIs» en Ajustes), los mensajes antiguos se resumen automáticamente: verás «🗜 Se resumieron N mensajes». En las tareas largas del modo agente, las salidas antiguas de las herramientas se recortan para que DeepSeek y otros modelos aguanten más pasos.
+
 ## Modelos recomendados
 
 En la Konkr (8 GB de RAM), mejor modelos de 3–4B en versión Q4_K_M: **Qwen3 4B** (bueno con herramientas y en modo agente), **Gemma 3 4B**, **Llama 3.2 3B**, **Qwen2.5 Coder 3B**. En un PC con 16 GB o más y tarjeta gráfica puedes usar modelos de 7–14B.
@@ -133,6 +148,8 @@ g3g3ai/
   sandbox.py    evaluación y aislamiento (bubblewrap) de comandos
   web.py        búsqueda web y lectura de páginas
   memory.py     memoria entre conversaciones
+  documents.py  lectura de PDF, Office e imágenes
+  context.py    historial: imágenes/visión y resumen de conversaciones largas
   providers.py  streaming OpenAI/Anthropic + bucle de herramientas
   llama.py      proceso llama-server
   engine.py     descarga de llama.cpp precompilado (Windows/macOS/Linux x64)

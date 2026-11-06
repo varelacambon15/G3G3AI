@@ -48,7 +48,7 @@ def env(tmp_path, monkeypatch):
 
 
 def load_model(client, h):
-    models = client.get("/api/models/local", headers=h).json()
+    models = [m for m in client.get("/api/models/local", headers=h).json() if not m["mmproj"]]
     client.post("/api/llama/load", headers=h, json={"path": models[0]["path"]})
     for _ in range(50):
         if client.get("/api/llama/status", headers=h).json()["state"] == "ready":
@@ -431,3 +431,101 @@ def test_memory_between_conversations(env):
     client.delete(f"/api/memory/{mid}", headers=h)
     client.delete("/api/memory", headers=h)
     assert client.get("/api/memory", headers=h).json() == []
+
+
+# --- Documentos, imágenes y resumen de conversaciones -------------------------------------------
+def _make_docs(d):
+    import zipfile
+    from PIL import Image
+    with zipfile.ZipFile(d / "informe.docx", "w") as z:
+        z.writestr("word/document.xml", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                   '<w:body><w:p><w:r><w:t>Ventas del trimestre: 1234 euros</w:t></w:r></w:p></w:body></w:document>')
+    with zipfile.ZipFile(d / "datos.xlsx", "w") as z:
+        ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        z.writestr("xl/sharedStrings.xml", f'<sst xmlns="{ns}"><si><t>Producto</t></si><si><t>Konkr</t></si></sst>')
+        z.writestr("xl/workbook.xml", f'<workbook xmlns="{ns}"><sheets><sheet name="Hoja1"/></sheets></workbook>')
+        z.writestr("xl/worksheets/sheet1.xml", f'<worksheet xmlns="{ns}"><sheetData>'
+                   '<row><c t="s"><v>0</v></c><c><v>7</v></c></row><row><c t="s"><v>1</v></c><c><v>42</v></c></row>'
+                   '</sheetData></worksheet>')
+    with zipfile.ZipFile(d / "charla.pptx", "w") as z:
+        z.writestr("ppt/slides/slide1.xml", '<p:sld xmlns:p="p" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+                   '<a:p><a:r><a:t>Diapositiva sobre IA local</a:t></a:r></a:p></p:sld>')
+    Image.new("RGB", (3000, 2000), (200, 30, 30)).save(d / "foto.jpg")
+    Image.new("RGB", (600, 800), "white").save(d / "escaneado.pdf")  # PDF sin texto (imagen)
+
+
+def test_document_extraction(tmp_path):
+    from g3g3ai import documents as D
+    _make_docs(tmp_path)
+    assert "1234 euros" in D.extract_text(tmp_path / "informe.docx")
+    x = D.extract_text(tmp_path / "datos.xlsx")
+    assert "Hoja1" in x and "Konkr | 42" in x
+    assert "IA local" in D.extract_text(tmp_path / "charla.pptx")
+    assert D.extract_text(tmp_path / "escaneado.pdf").strip() == ""
+    assert len(D.pdf_page_images(tmp_path / "escaneado.pdf")) == 1
+    media, b64 = D.image_data_url(tmp_path / "foto.jpg")
+    import base64, io
+    from PIL import Image
+    assert media == "image/jpeg" and max(Image.open(io.BytesIO(base64.b64decode(b64))).size) <= 1568
+
+
+def test_attachments_vision_and_description(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    _make_docs(home)
+    models = tmp / "models" / "org__repo"
+    (models / "mmproj-model-f16.gguf").write_bytes(b"GGUF")  # proyector de visión junto al modelo
+    load_model(client, h)
+    st = client.get("/api/llama/status", headers=h).json()
+    assert st["vision"] and "--mmproj" in " ".join(client.get("/api/llama/logs", headers=h).json()["lines"])
+    # Documento de Word: va como texto
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "resume", "attachments": [str(home / "informe.docx")]}))
+    assert evs[-1]["type"] == "done"
+    cid = evs[0]["conversation_id"]
+    conv = client.get(f"/api/conversations/{cid}", headers=h).json()
+    assert "1234 euros" in conv["messages"][0]["meta"]["expanded"]
+    # Foto con un modelo con visión: llega como imagen
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "qué ves", "attachments": [str(home / "foto.jpg")]}))
+    assert "VEO 1 IMAGEN" in "".join(e["text"] for e in evs if e["type"] == "content")
+    # Foto con un modelo SIN visión (tipo DeepSeek): la describe el local y llega como texto
+    port = cfg["llama_port"]
+    s = client.get("/api/settings", headers=h).json()
+    s["providers"].append({"id": "sinvision", "name": "Sin visión", "type": "openai", "enabled": True,
+                           "base_url": f"http://127.0.0.1:{port}/v1", "api_key": "x", "vision": False})
+    client.put("/api/settings", headers=h, json=s)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "y esta", "provider": "sinvision", "model": "m",
+                                                         "attachments": [str(home / "escaneado.pdf")]}))
+    assert any(e["type"] == "status" and "Describiendo" in e["text"] for e in evs)
+    cid2 = evs[0]["conversation_id"]
+    msg = client.get(f"/api/conversations/{cid2}", headers=h).json()["messages"][0]
+    assert msg["meta"]["attachments"][0]["kind"] == "pdf_scan"
+    assert "VEO 1 IMAGEN" in next(iter(msg["meta"]["descriptions"].values()))["text"]
+    # Segunda vez: usa la descripción guardada (no vuelve a describir)
+    evs = sse(client.post("/api/chat", headers=h, json={"conversation_id": cid2, "message": "más",
+                                                         "provider": "sinvision", "model": "m"}))
+    assert not any(e["type"] == "status" for e in evs)
+
+
+def test_long_conversation_is_summarized(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    port = cfg["llama_port"]
+    s = client.get("/api/settings", headers=h).json()
+    s["providers"].append({"id": "api", "name": "API", "type": "openai", "enabled": True,
+                           "base_url": f"http://127.0.0.1:{port}/v1", "api_key": "x"})
+    s["context_budget"] = 400
+    client.put("/api/settings", headers=h, json=s)
+    cid, compacted = None, []
+    for i in range(8):
+        evs = sse(client.post("/api/chat", headers=h, json={"conversation_id": cid, "provider": "api", "model": "m",
+                                                             "message": f"mensaje {i} " + "relleno " * 60}))
+        cid = evs[0]["conversation_id"]
+        compacted += [e for e in evs if e["type"] == "compacted"]
+    assert compacted
+    conv = client.get(f"/api/conversations/{cid}", headers=h).json()
+    assert conv["summary"] and conv["summary_upto"]
+    # Regenerar algo anterior al resumen lo descarta
+    first = conv["messages"][0]["id"]
+    conv = client.delete(f"/api/conversations/{cid}/messages/{first}", headers=h).json()
+    assert conv["summary"] is None

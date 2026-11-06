@@ -61,6 +61,10 @@ DEFAULTS: dict = {
     "blocked_paths": [],  # se rellena con default_blocked() al crear la configuración
     # Aislamiento de comandos (Linux: bubblewrap). "auto" = usarlo si está disponible.
     "command_sandbox": "auto",
+    # Visión: modelo que describe imágenes a los modelos que no las ven ("" = el local si tiene visión)
+    "vision_fallback": "",
+    # Contexto máximo (tokens aprox.) que se envía a modelos por API antes de resumir lo antiguo
+    "context_budget": 60000,
     # Memoria entre conversaciones
     "memory_enabled": True,     # usar los recuerdos como contexto
     "memory_auto": True,        # la IA puede guardar recuerdos por su cuenta (se ve en el chat)

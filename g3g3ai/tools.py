@@ -21,6 +21,7 @@ from typing import AsyncIterator, Awaitable, Callable
 import httpx
 
 from . import sandbox, web
+from .documents import DocumentError
 from .files import FileAccessError, Files
 
 READ_LIMIT_FOR_AI = 30_000
@@ -206,7 +207,7 @@ class ToolContext:
             if name in MEMORY_TOOLS:
                 return self._memory(name, args)
             return await asyncio.to_thread(self._run_sync, name, args)
-        except (FileAccessError, web.WebError) as e:
+        except (FileAccessError, DocumentError, web.WebError) as e:
             return f"Error: {e}"
         except httpx.HTTPError as e:
             return f"Error de red: {e}"
@@ -224,7 +225,17 @@ class ToolContext:
                 lines.append(("[D] " if e["is_dir"] else "    ") + e["name"] + ("" if e["is_dir"] else f"  ({e['size']} B)"))
             return "\n".join(lines)
         if name == "read_file":
-            res = f.read_text(a["path"], 2_000_000)
+            from . import documents as D
+            path = f.resolve(a["path"])
+            kind = D.kind_of(path)
+            if kind == "image":
+                return (f"{path} es una imagen. Pide al usuario que la adjunte al chat (📎) para verla "
+                        "con un modelo con visión.")
+            if kind == "document":
+                text = D.extract_text(path) or "(documento sin texto: puede ser un PDF escaneado; adjúntalo al chat)"
+                res = {"path": str(path), "content": text}
+            else:
+                res = f.read_text(a["path"], 2_000_000)
             lines = res["content"].splitlines()
             start = max(int(a.get("start_line") or 1), 1)
             maxl = int(a.get("max_lines") or 0)
