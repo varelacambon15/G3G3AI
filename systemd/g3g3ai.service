@@ -1,0 +1,15 @@
+[Unit]
+Description=G3G3AI - cliente de IA local y API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_DIR@
+ExecStart=@VENV@/bin/python -m g3g3ai
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#14161a">
+<title>G3G3AI</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="login" class="overlay hidden">
+  <form id="login-form" class="card login-card">
+    <h1>G3G3AI</h1>
+    <p>Introduce la contraseña que aparece en el Konkr (Ajustes → Acceso remoto).</p>
+    <input id="login-token" type="password" placeholder="Contraseña" autocomplete="current-password" required>
+    <button class="primary" type="submit">Entrar</button>
+    <p id="login-error" class="error"></p>
+  </form>
+</div>
+
+<header class="topbar">
+  <button id="menu-btn" class="icon-btn" title="Conversaciones" aria-label="Conversaciones">☰</button>
+  <span class="brand">G3G3AI</span>
+  <nav class="tabs">
+    <button data-view="chat" class="active">Chat</button>
+    <button data-view="models">Modelos</button>
+    <button data-view="files">Archivos</button>
+    <button data-view="settings">Ajustes</button>
+  </nav>
+  <span id="status-pill" class="pill" title="Estado del modelo local">—</span>
+</header>
+
+<main>
+  <!-- CHAT -->
+  <section id="view-chat" class="view active">
+    <aside id="sidebar">
+      <button id="new-chat" class="primary wide">+ Nueva conversación</button>
+      <ul id="conv-list"></ul>
+    </aside>
+    <div class="chat-main">
+      <div id="messages"><div class="empty-state">
+        <h2>¿En qué te ayudo?</h2>
+        <p>Elige un modelo abajo. Los modelos locales se descargan y cargan en <b>Modelos</b>.</p>
+      </div></div>
+      <div class="composer">
+        <div class="composer-bar">
+          <select id="model-select" title="Modelo"></select>
+          <label class="toggle" title="Permite que la IA lea los archivos del dispositivo">
+            <input type="checkbox" id="tools-toggle"> <span>📁 Archivos IA</span>
+          </label>
+          <button id="system-btn" class="ghost small" title="Instrucciones del sistema para esta conversación">⚙ Sistema</button>
+        </div>
+        <div id="attachments" class="chips"></div>
+        <div class="composer-row">
+          <button id="attach-btn" class="icon-btn" title="Adjuntar archivo">📎</button>
+          <textarea id="input" rows="1" placeholder="Escribe un mensaje…  (Enter envía, Mayús+Enter nueva línea)"></textarea>
+          <button id="send-btn" class="primary">Enviar</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MODELOS -->
+  <section id="view-models" class="view">
+    <div class="page">
+      <div class="card">
+        <h2>Modelo cargado</h2>
+        <div id="llama-status"></div>
+        <details><summary>Registro de llama-server</summary><pre id="llama-logs" class="logs"></pre></details>
+      </div>
+      <div class="card">
+        <h2>Mis modelos <small id="disk-free"></small></h2>
+        <div class="row params">
+          <label>Contexto <input id="p-ctx" type="number" min="512" step="512"></label>
+          <label>Hilos <input id="p-threads" type="number" min="0" placeholder="auto"></label>
+          <label>Capas GPU <input id="p-ngl" type="number" min="0"></label>
+        </div>
+        <ul id="local-models" class="list"></ul>
+      </div>
+      <div class="card">
+        <h2>Descargar modelos (Hugging Face)</h2>
+        <form id="hub-search" class="row">
+          <input id="hub-q" placeholder="Buscar: qwen3 4b, gemma 3, llama 3.2…" required>
+          <button class="primary">Buscar</button>
+        </form>
+        <div class="suggestions">Sugerencias para 8 GB de RAM:
+          <button class="link" data-q="Qwen3-4B GGUF">Qwen3 4B</button>
+          <button class="link" data-q="gemma-3-4b-it GGUF">Gemma 3 4B</button>
+          <button class="link" data-q="Llama-3.2-3B-Instruct GGUF">Llama 3.2 3B</button>
+          <button class="link" data-q="Qwen2.5-Coder-3B GGUF">Qwen2.5 Coder 3B</button>
+          <button class="link" data-q="Phi-4-mini GGUF">Phi-4 mini</button>
+        </div>
+        <div id="downloads"></div>
+        <ul id="hub-results" class="list"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ARCHIVOS -->
+  <section id="view-files" class="view">
+    <div class="page">
+      <div class="card">
+        <div class="row files-toolbar">
+          <button id="files-up" class="ghost small">⬆ Subir nivel</button>
+          <input id="files-path" class="grow">
+          <button id="files-go" class="ghost small">Ir</button>
+        </div>
+        <div class="row files-toolbar">
+          <label class="ghost small btn-like">⤴ Subir archivos aquí<input id="files-upload" type="file" multiple hidden></label>
+          <button id="files-mkdir" class="ghost small">+ Carpeta</button>
+          <label class="toggle"><input type="checkbox" id="files-hidden"> ocultos</label>
+          <form id="files-search-form" class="row grow"><input id="files-search" class="grow" placeholder="Buscar por nombre…"></form>
+        </div>
+        <ul id="files-list" class="list files"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- AJUSTES -->
+  <section id="view-settings" class="view">
+    <div class="page">
+      <div class="card">
+        <h2>Acceso remoto (móvil / portátil)</h2>
+        <div id="access-info"></div>
+      </div>
+      <div class="card">
+        <h2>Proveedores API</h2>
+        <div id="providers-edit"></div>
+        <button id="add-provider" class="ghost small">+ Añadir proveedor compatible con OpenAI</button>
+      </div>
+      <div class="card">
+        <h2>General</h2>
+        <form id="settings-form" class="form-grid"></form>
+      </div>
+      <div class="row end">
+        <button id="logout" class="ghost">Cerrar sesión</button>
+        <button id="save-settings" class="primary">Guardar ajustes</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Selector de archivos para adjuntar -->
+<dialog id="picker">
+  <div class="dialog-head"><b>Adjuntar archivo</b><button class="icon-btn" data-close>✕</button></div>
+  <div class="row">
+    <label class="primary btn-like">Desde este dispositivo<input id="picker-upload" type="file" multiple hidden></label>
+  </div>
+  <p class="muted">…o elige uno del Konkr:</p>
+  <div class="row"><button id="picker-up" class="ghost small">⬆</button><span id="picker-path" class="muted grow"></span></div>
+  <ul id="picker-list" class="list files"></ul>
+</dialog>
+
+<dialog id="preview">
+  <div class="dialog-head"><b id="preview-title"></b>
+    <span><button id="preview-attach" class="ghost small">📎 Adjuntar al chat</button>
+    <a id="preview-download" class="ghost small btn-like">⬇ Descargar</a>
+    <button class="icon-btn" data-close>✕</button></span></div>
+  <div id="preview-body"></div>
+</dialog>
+
+<dialog id="system-dialog">
+  <div class="dialog-head"><b>Instrucciones del sistema (esta conversación)</b><button class="icon-btn" data-close>✕</button></div>
+  <textarea id="system-text" rows="8"></textarea>
+  <div class="row end"><button id="system-reset" class="ghost">Usar predeterminadas</button><button id="system-save" class="primary">Aplicar</button></div>
+</dialog>
+
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

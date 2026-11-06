@@ -1,0 +1,9 @@
+{
+  "name": "G3G3AI",
+  "short_name": "G3G3AI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#14161a",
+  "theme_color": "#14161a",
+  "icons": [{ "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
