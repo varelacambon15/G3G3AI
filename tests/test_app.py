@@ -754,6 +754,8 @@ def _fake_steam(base):
 
 
 def test_steam_game_diagnostics_and_safe_edits(env, monkeypatch):
+    if sys.platform == "win32":
+        pytest.skip("Proton y los prefijos de Wine sólo existen en Linux/SteamOS")
     import asyncio
     client, cfg, home, tmp = env
     from g3g3ai import sandbox, steam

@@ -72,12 +72,17 @@ def available(cfg) -> bool:
     return (cfg["command_sandbox"] or "auto") != "off" and bwrap_path() is not None
 
 
-def wrap(command: str, cwd: Path, writable: list[Path], hidden: list[Path]) -> list[str]:
-    """Construye la orden bwrap: todo en sólo lectura salvo `writable`; `hidden` vacías."""
+def wrap(command: str, cwd: Path, writable: list[Path], hidden: list[Path],
+         readonly: list[Path] | None = None) -> list[str]:
+    """Construye la orden bwrap: todo en sólo lectura salvo `writable`; `hidden` vacías.
+    `readonly`: rutas que deben seguir visibles aunque estén bajo /tmp (que dentro es un tmpfs vacío)."""
     exe = bwrap_path()
     assert exe
     args = [exe, "--die-with-parent", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
             "--tmpfs", "/tmp"]
+    for r in readonly or []:
+        if r.exists() and str(r).startswith("/tmp"):
+            args += ["--ro-bind", str(r), str(r)]
     for w in writable:
         w.mkdir(parents=True, exist_ok=True)
         args += ["--bind", str(w), str(w)]

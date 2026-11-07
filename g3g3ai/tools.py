@@ -402,8 +402,11 @@ class ToolContext:
         if self.sandboxed and not a.get("packages"):
             import shlex
             hidden = self.files.blocked_dirs_and_files()
+            py = devtools.devenv_python(self.cfg)
+            # El Python de compilación (un entorno virtual) debe verse dentro del aislamiento
+            ro = [py.parent.parent] if py else []
             wrap = lambda cmd, cwd, tmp: sandbox.wrap(  # noqa: E731
-                shlex.join(cmd), cwd, self.files.write_roots + [self.workdir(), cwd, tmp], hidden)
+                shlex.join(cmd), cwd, self.files.write_roots + [self.workdir(), cwd, tmp], hidden, ro)
         try:
             exe, log = devtools.build(self.cfg, script, a.get("name"), bool(a.get("windowed")),
                                       a.get("packages") or [], icon, wrap)
