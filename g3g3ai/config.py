@@ -105,7 +105,7 @@ DEFAULTS: dict = {
     # Chat
     "default_system_prompt": "Eres un asistente útil. Responde en el idioma del usuario.",
     "temperature": 0.7,
-    "max_tokens": 2048,
+    "max_tokens": 8192,
     # Proveedores API externos.
     "providers": [
         {

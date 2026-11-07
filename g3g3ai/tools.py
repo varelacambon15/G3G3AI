@@ -209,7 +209,9 @@ class ToolContext:
             if "ask_local_model" in names:
                 parts.append("Para subtareas sencillas y voluminosas (resumir archivos largos, traducir, extraer) "
                              "puedes usar ask_local_model y ahorrar coste.")
-            parts.append("Trabaja paso a paso: inspecciona antes de modificar y verifica el resultado.")
+            parts.append("Trabaja paso a paso: inspecciona antes de modificar y verifica el resultado. "
+                         "No anuncies lo que vas a hacer («ahora leo…»): llama directamente a la herramienta. "
+                         "Termina tu respuesta sólo cuando la tarea esté hecha o necesites que el usuario decida algo.")
             from .steam import system_hint as steam_hint
             hint = steam_hint()
             if hint:

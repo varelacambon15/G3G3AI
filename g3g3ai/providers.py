@@ -19,6 +19,43 @@ from . import tools as T
 
 MAX_TOOL_STEPS = 25
 ANTHROPIC_MIN_TOKENS = 16000
+OPENAI_MIN_TOKENS = 8192      # los modelos que razonan gastan parte del límite antes de responder
+MAX_CONTINUATIONS = 3         # reanudaciones automáticas si la respuesta se corta por longitud
+MAX_NUDGES = 2                # avisos si el modelo anuncia una acción y termina sin hacerla
+CONTINUE_MSG = "Continúa exactamente donde lo dejaste (tu respuesta se cortó por el límite de longitud)."
+NUDGE_MSG = ("Continúa: haz ahora la acción que acabas de anunciar llamando a la herramienta correspondiente. "
+             "No describas el siguiente paso: ejecútalo. Termina sólo cuando la tarea esté hecha "
+             "o necesites que el usuario decida algo.")
+_ANNOUNCE = re.compile(
+    r"\b(ahora|a continuaci[oó]n|voy a|vamos a|paso a|procedo a|leo|reviso|compruebo|busco|miro|edito|abro|"
+    r"ejecuto|cambio|aplico|let me|now i|next,? i|i'll|i will)\b", re.I)
+
+
+def announces_action(text: str) -> bool:
+    """¿La respuesta termina anunciando un paso («Ahora leo X…») en vez de preguntar o concluir?"""
+    tail = (text or "").strip()[-240:]
+    if not tail or tail.endswith("?"):
+        return False
+    last = re.split(r"(?<=[.!])\s+", tail)[-1] or tail
+    return bool(_ANNOUNCE.search(last))
+
+
+def _merge_reasoning_details(acc: list, items: list) -> None:
+    """OpenRouter envía reasoning_details por trozos; se reconstruyen para devolverlos en el bucle de herramientas."""
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        idx = it.get("index", len(acc))
+        while len(acc) <= idx:
+            acc.append({})
+        cur = acc[idx]
+        for k, v in it.items():
+            if k == "index":
+                continue
+            if isinstance(v, str) and k in ("text", "summary", "data") and isinstance(cur.get(k), str):
+                cur[k] += v
+            else:
+                cur[k] = v
 KEEP_TOOL_OUTPUTS = 4          # resultados de herramientas recientes que se envían completos
 TOOL_BUDGET_CHARS = 120_000    # por encima, se recortan los resultados antiguos
 OMITTED = "[Salida anterior omitida para ahorrar contexto; vuelve a ejecutar la herramienta si la necesitas.]"
@@ -107,16 +144,19 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
     headers = {"Authorization": f"Bearer {p['api_key']}"} if p.get("api_key") else {}
     msgs = list(messages)
     local = p["base_url"].startswith(("http://127.0.0.1", "http://localhost"))
+    max_tokens = max(int(opts.get("max_tokens") or 0), OPENAI_MIN_TOKENS)
+    continuations = nudges = 0
+    used_tools = False
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), trust_env=not local) as c:
         for _ in range(MAX_TOOL_STEPS):
             _trim_openai(msgs)
             body = {"model": model, "messages": msgs, "stream": True,
-                    "temperature": opts.get("temperature"), "max_tokens": opts.get("max_tokens"),
+                    "temperature": opts.get("temperature"), "max_tokens": max_tokens,
                     "stream_options": {"include_usage": True}}
             body = {k: v for k, v in body.items() if v is not None}
             if ctx:
                 body["tools"] = ctx.openai_specs()
-            content, calls = "", {}
+            content, calls, finish, details = "", {}, None, []
             async with c.stream("POST", url, json=body, headers=headers) as r:
                 await _raise_for(r)
                 async for j in _sse(r):
@@ -130,7 +170,10 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                                "prompt_tokens": u.get("prompt_tokens")}
                     if not j.get("choices"):
                         continue
+                    finish = j["choices"][0].get("finish_reason") or finish
                     delta = j["choices"][0].get("delta") or {}
+                    if delta.get("reasoning_details"):
+                        _merge_reasoning_details(details, delta["reasoning_details"])
                     if delta.get("reasoning_content") or delta.get("reasoning"):
                         yield {"type": "reasoning", "text": delta.get("reasoning_content") or delta.get("reasoning")}
                     if delta.get("content"):
@@ -142,13 +185,34 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                         fn = tc.get("function") or {}
                         slot["name"] += fn.get("name") or ""
                         slot["args"] += fn.get("arguments") or ""
+            if finish == "length" and continuations < MAX_CONTINUATIONS:
+                # Cortada por longitud: las llamadas a medias no sirven; se pide que siga
+                continuations += 1
+                yield {"type": "status", "text": "↪ La respuesta se cortó por longitud; continúa automáticamente…"}
+                if content:
+                    msgs.append({"role": "assistant", "content": content})
+                msgs.append({"role": "user", "content": CONTINUE_MSG})
+                continue
             if not calls:
+                if ctx and used_tools and nudges < MAX_NUDGES and announces_action(content):
+                    nudges += 1
+                    yield {"type": "status", "text": "↪ El modelo anunció un paso sin hacerlo; se le pide que continúe…"}
+                    msgs.append({"role": "assistant", "content": content})
+                    msgs.append({"role": "user", "content": NUDGE_MSG})
+                    continue
+                if finish == "length":
+                    yield {"type": "content", "text": "\n\n[Respuesta cortada por el límite de longitud. "
+                                                      "Escribe «continúa» o sube «Máx. tokens» en Ajustes.]"}
                 return
+            used_tools = True
             ordered = [calls[i] for i in sorted(calls)]
-            msgs.append({"role": "assistant", "content": content or None, "tool_calls": [
+            assistant = {"role": "assistant", "content": content or None, "tool_calls": [
                 {"id": k["id"] or f"call_{i}", "type": "function",
                  "function": {"name": k["name"], "arguments": k["args"] or "{}"}}
-                for i, k in enumerate(ordered)]})
+                for i, k in enumerate(ordered)]}
+            if details:  # OpenRouter: devolver el razonamiento para que el modelo siga su hilo
+                assistant["reasoning_details"] = details
+            msgs.append(assistant)
             for i, k in enumerate(ordered):
                 sink: list[str] = []
                 async for ev in T.tool_events(ctx, k["name"], k["args"], sink):
@@ -165,6 +229,8 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
     system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
     msgs = [{"role": m["role"], "content": _anthropic_content(m["content"])}
             for m in messages if m["role"] in ("user", "assistant")]
+    continuations = nudges = 0
+    used_tools = False
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600)) as c:
         for _ in range(MAX_TOOL_STEPS):
             _trim_anthropic(msgs)
@@ -203,8 +269,23 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
                     elif t == "error":
                         raise ProviderError(j.get("error", {}).get("message", "error"))
             uses = [b for _, b in sorted(blocks.items()) if b.get("type") == "tool_use"]
+            text = "".join(b.get("text", "") for _, b in sorted(blocks.items()) if b.get("type") == "text")
+            if stop_reason == "max_tokens" and continuations < MAX_CONTINUATIONS:
+                continuations += 1
+                yield {"type": "status", "text": "↪ La respuesta se cortó por longitud; continúa automáticamente…"}
+                if text:
+                    msgs.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
+                msgs.append({"role": "user", "content": CONTINUE_MSG})
+                continue
             if stop_reason != "tool_use" or not uses:
+                if ctx and used_tools and nudges < MAX_NUDGES and announces_action(text):
+                    nudges += 1
+                    yield {"type": "status", "text": "↪ El modelo anunció un paso sin hacerlo; se le pide que continúe…"}
+                    msgs.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
+                    msgs.append({"role": "user", "content": NUDGE_MSG})
+                    continue
                 return
+            used_tools = True
             assistant_content = []
             for _, b in sorted(blocks.items()):
                 if b.get("type") == "text" and b.get("text"):

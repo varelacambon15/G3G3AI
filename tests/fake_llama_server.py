@@ -54,6 +54,23 @@ class H(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "m1", "function": {
                 "name": "memory_save", "arguments": json.dumps({"content": "Al usuario " + fact})}}]}}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        first_user = next((m["content"] for m in msgs if m["role"] == "user"), "")
+        if "texto largo" in str(first_user):  # simula un corte por longitud y su continuación
+            if "límite de longitud" in str(last["content"]):
+                self.chunk({"choices": [{"delta": {"content": "segunda parte."}, "finish_reason": "stop"}]})
+            else:
+                self.chunk({"choices": [{"delta": {"content": "primera parte, "}, "finish_reason": "length"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if "anuncia" in str(first_user) and req.get("tools"):  # usa una herramienta, anuncia otra y se para
+            if last["role"] == "user" and "acabas de anunciar" in str(last["content"]):
+                self.chunk({"choices": [{"delta": {"content": "Listo, ya lo he revisado."}, "finish_reason": "stop"}]})
+            elif last["role"] == "tool":
+                self.chunk({"choices": [{"delta": {"content": "He visto la carpeta. Ahora leo el archivo principal."},
+                                         "finish_reason": "stop"}]})
+            else:
+                self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "a1", "function": {
+                    "name": "list_dir", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if last["role"] == "user" and "página html" in str(last["content"]):
             text = ("Aquí tienes una **página** sencilla:\n\n```html\n<!doctype html><html><body style=\"font-family:sans-serif\">"
                     "<h1 style=\"color:#c2603f\">Hola desde G3G3AI</h1><button onclick=\"this.textContent='¡Pulsado!'\">Púlsame</button>"

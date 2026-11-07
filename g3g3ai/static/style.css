@@ -297,3 +297,6 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
   .msg.user .bubble { max-width: 92%; }
   .popover { min-width: min(300px, 86vw); }
 }
+
+/* El texto del chat siempre se puede seleccionar y copiar */
+#messages, #messages * { -webkit-user-select: text; user-select: text; }

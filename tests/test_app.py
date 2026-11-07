@@ -883,3 +883,26 @@ def test_anthropic_request_shape(monkeypatch):
     evs = asyncio.run(run())
     assert "temperature" not in sent and sent["max_tokens"] >= 16000
     assert any(e["type"] == "content" and e["text"] == "hola" for e in evs)
+
+
+def test_chat_does_not_stop_silently(env):
+    """Respuestas cortadas por longitud se reanudan solas; si el modelo anuncia un paso y se para, se le pide que siga."""
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "escribe un texto largo"}))
+    text = "".join(e["text"] for e in evs if e["type"] == "content")
+    assert text == "primera parte, segunda parte."
+    assert any(e["type"] == "status" and "longitud" in e["text"] for e in evs)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "anuncia y para", "use_tools": True}))
+    text = "".join(e["text"] for e in evs if e["type"] == "content")
+    assert "Ahora leo el archivo principal." in text and text.endswith("Listo, ya lo he revisado.")
+    assert any(e["type"] == "status" and "anunció" in e["text"] for e in evs)
+
+
+def test_announces_action():
+    from g3g3ai.providers import announces_action
+    assert announces_action("Ya tengo el flujo. Leo las partes que voy a editar: el selector y el HTML.")
+    assert announces_action("He leído providers.py. Ahora busco el resto de app.js")
+    assert not announces_action("Listo, he cambiado el selector y he probado que funciona.")
+    assert not announces_action("¿Quieres que lea también el HTML?")

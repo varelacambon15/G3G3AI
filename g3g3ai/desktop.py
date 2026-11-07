@@ -77,7 +77,8 @@ def main() -> None:
         try:
             import webview  # pywebview
 
-            webview.create_window("G3G3AI", url, width=1280, height=840, min_size=(380, 500))
+            # text_select=True: pywebview desactiva por defecto la selección de texto (no se podría copiar)
+            webview.create_window("G3G3AI", url, width=1280, height=840, min_size=(380, 500), text_select=True)
             webview.start()
             opened = True
         except Exception as e:  # noqa: BLE001

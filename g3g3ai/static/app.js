@@ -29,6 +29,21 @@ function toast(msg, ms = 3500) {
   const d = h("div", {}, msg); $("#toast").append(d); setTimeout(() => d.remove(), ms);
 }
 
+// Copiar al portapapeles: navigator.clipboard sólo existe en conexiones seguras (https o localhost);
+// al entrar por la IP de la red local o desde la app se usa el método clásico.
+async function copyText(text, okMsg = "Copiado") {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); toast(okMsg); return; }
+  } catch { /* se intenta el método clásico */ }
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.append(ta); ta.select(); ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  ta.remove();
+  toast(ok ? okMsg : "No se pudo copiar: selecciona el texto y usa Ctrl+C");
+}
+
 // --- API ---------------------------------------------------------------------------
 async function api(path, opts = {}) {
   const o = { headers: {}, ...opts };
@@ -403,13 +418,13 @@ function messageEl(m) {
       h("img", { src: fileUrl(a.path), alt: a.name, loading: "lazy", onclick: () => previewFile(a.path) }))));
     el.append(h("div", { class: "meta" },
       att.filter((a) => !imgs.includes(a)).map((a) => h("span", { class: "chip" }, (a.kind === "document" || a.kind === "pdf_scan" ? "📄 " : "📎 ") + a.name)),
-      h("button", { class: "act", title: "Copiar", onclick: () => { navigator.clipboard?.writeText(m.content); toast("Copiado"); } }, "⧉"),
+      h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, "⧉"),
       h("button", { class: "act", title: "Editar", onclick: () => editFrom(m) }, "✎")));
   } else {
     el.append(assistantInner(m.content, m.reasoning, m.meta?.tools, false, { images: m.meta?.images || [], files: m.meta?.files || [] }));
     const st = m.meta?.stats || {};
     el.append(h("div", { class: "meta" },
-      h("button", { class: "act", title: "Copiar", onclick: () => { navigator.clipboard?.writeText(m.content); toast("Copiado"); } }, "⧉"),
+      h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, "⧉"),
       h("button", { class: "act", title: "Volver a generar", onclick: () => regenerate(m) }, "↻"),
       h("span", { title: m.meta?.route || "" }, (m.meta?.provider === "local" ? "💻 " : m.meta?.provider === "imagen" ? "🎨 " : "☁ ") + (m.meta?.model || "")),
       m.meta?.route ? h("span", {}, "🔀 " + m.meta.route) : null,
@@ -421,7 +436,7 @@ $("#messages").addEventListener("click", (e) => {
   const pre = e.target.closest("pre");
   if (!pre) return;
   const code = pre.querySelector("code")?.textContent || "";
-  if (e.target.classList.contains("copy")) { navigator.clipboard?.writeText(code); toast("Código copiado"); }
+  if (e.target.classList.contains("copy")) copyText(code, "Código copiado");
   if (e.target.classList.contains("preview")) openArtifact(code, pre.querySelector("code")?.dataset.lang);
 });
 // --- Panel de vista previa (HTML / SVG en un iframe aislado) -----------------------------------

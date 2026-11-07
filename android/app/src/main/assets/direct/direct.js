@@ -15,6 +15,21 @@ const h = (tag, attrs = {}, ...kids) => {
 };
 function toast(msg, ms = 3000) { const d = h("div", {}, msg); $("#toast").append(d); setTimeout(() => d.remove(), ms); }
 
+// Copiar al portapapeles: navigator.clipboard sólo existe en conexiones seguras (https o localhost);
+// al entrar por la IP de la red local o desde la app se usa el método clásico.
+async function copyText(text, okMsg = "Copiado") {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); toast(okMsg); return; }
+  } catch { /* se intenta el método clásico */ }
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.append(ta); ta.select(); ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  ta.remove();
+  toast(ok ? okMsg : "No se pudo copiar: selecciona el texto y usa Ctrl+C");
+}
+
 // --- Markdown (copiado de la interfaz principal) ---------------------------------------
 const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function inlineMd(s) {
@@ -120,7 +135,7 @@ const PRESETS = [
 ];
 const S = {
   providers: store.get("providers", PRESETS),
-  settings: store.get("settings", { system: "Eres un asistente útil. Responde en el idioma del usuario.", temperature: 0.7, max_tokens: 2048 }),
+  settings: store.get("settings", { system: "Eres un asistente útil. Responde en el idioma del usuario.", temperature: 0.7, max_tokens: 8192 }),
   models: store.get("models", {}),
   convs: JSON.parse(localStorage.getItem("g3d:convs") || "[]"),
   current: null, attachments: [], streaming: null,
@@ -190,7 +205,7 @@ function messageEl(m) {
   } else {
     el.append(assistantBody(m.content, m.reasoning));
     el.append(h("div", { class: "meta" },
-      h("button", { onclick: () => { navigator.clipboard?.writeText(m.content); toast("Copiado"); } }, "⧉"),
+      h("button", { onclick: () => { copyText(m.content); } }, "⧉"),
       m.error ? h("span", { class: "error" }, m.error) : null, h("span", {}, m.model || "")));
   }
   return el;
@@ -208,7 +223,7 @@ function renderMessages() {
 }
 document.addEventListener("click", (e) => {
   if (e.target.classList?.contains("copy")) {
-    navigator.clipboard?.writeText(e.target.closest("pre").querySelector("code").textContent); toast("Código copiado");
+    copyText(e.target.closest("pre").querySelector("code").textContent, "Código copiado");
   }
 });
 
@@ -287,7 +302,9 @@ async function stream(p, model) {
         if (j.delta.type === "text_delta") msg.content += j.delta.text;
         else if (j.delta.type === "thinking_delta") msg.reasoning += j.delta.thinking;
       } else if (j.type === "error") msg.error = j.error?.message;
+      else if (j.type === "message_delta" && j.delta?.stop_reason === "max_tokens") msg.error = "Respuesta cortada por longitud: escribe «continúa».";
     } else {
+      if (j.choices?.[0]?.finish_reason === "length") msg.error = "Respuesta cortada por longitud: escribe «continúa».";
       const d = j.choices?.[0]?.delta || {};
       if (d.content) msg.content += d.content;
       if (d.reasoning_content || d.reasoning) msg.reasoning += d.reasoning_content || d.reasoning;
@@ -305,7 +322,7 @@ async function stream(p, model) {
     const messages = (st.system ? [{ role: "system", content: st.system }] : []).concat(apiMessages(p));
     req = request({ method: "POST", url: base + "/chat/completions", onLine,
       headers: { Authorization: "Bearer " + p.api_key, "content-type": "application/json" },
-      body: { model, messages, stream: true, temperature: Number(st.temperature), max_tokens: Number(st.max_tokens) || 2048 } });
+      body: { model, messages, stream: true, temperature: Number(st.temperature), max_tokens: Math.max(Number(st.max_tokens) || 0, 8192) } });
   }
   S.streaming = req.id;
   $("#send").textContent = "■"; $("#send").classList.add("stop");
