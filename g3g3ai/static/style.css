@@ -211,6 +211,12 @@ input.switch:checked::after { left: 18px; }
 .msg-images img { max-width: 200px; max-height: 200px; border-radius: 14px; object-fit: cover; cursor: zoom-in; border: 1px solid var(--border); }
 .gen-images { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .gen-images img { max-width: min(100%, 440px); border-radius: 14px; border: 1px solid var(--border); }
+.file-cards { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.file-card { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); background: var(--panel); border-radius: 12px; padding: 8px 14px 8px 10px; color: var(--text); text-decoration: none; max-width: 100%; }
+.file-card:hover { background: var(--hover); }
+.file-card .fi { font-size: 24px; }
+.file-card .fn { display: flex; flex-direction: column; font-size: 14px; overflow-wrap: anywhere; }
+.file-card small { color: var(--muted); font-size: 12px; }
 .route { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
 .route.warn { color: var(--warn); }
 .memory-note { font-size: 13px; color: var(--ok); background: color-mix(in srgb, var(--ok) 9%, transparent); border-radius: 9px; padding: 4px 10px; margin-bottom: 8px; display: inline-block; }

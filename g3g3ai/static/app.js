@@ -313,7 +313,8 @@ function renderMessages() {
       ["📄 Resume un documento", "Resume el documento que te adjunto en 5 puntos clave.", "attach"],
       ["🌐 Busca en la web", "Busca las últimas novedades sobre ", "web"],
       ["🎨 Crea una imagen", "/imagen ", null],
-      ["🛠 Organiza mis archivos", "Revisa mi carpeta de trabajo y propón cómo organizarla.", "agent"],
+      ["🎮 Arreglar un juego", "El juego … no arranca (o va mal). Diagnostica qué le pasa y propón cómo arreglarlo.", "agent"],
+      ["📗 Crear un Excel", "Crea un Excel con ", "agent"],
       ["💡 Explícame algo", "Explícame de forma sencilla cómo funciona ", null],
     ];
     box.append(h("div", { class: "empty-state" },
@@ -334,9 +335,10 @@ function approvalCard(a) {
   const args = a.args || {};
   const what = a.name === "run_command" ? h("pre", {}, (args.cwd ? `[${args.cwd}] ` : "") + "$ " + args.command)
     : a.name === "edit_file" ? h("pre", {}, `${args.path}\n--- antes\n${args.old_text}\n+++ después\n${args.new_text}`)
-    : a.name === "write_file" ? h("pre", {}, `${args.path}\n\n${String(args.content || "").slice(0, 3000)}`)
+    : a.name === "write_file" || a.name === "create_document" ? h("pre", {}, `${args.path}\n\n${String(args.content || "").slice(0, 3000)}`)
     : h("pre", {}, JSON.stringify(args, null, 2));
-  const title = { run_command: "ejecutar un comando", edit_file: "editar un archivo", write_file: "escribir un archivo" }[a.name] || a.name;
+  const title = { run_command: "ejecutar un comando", edit_file: "editar un archivo", write_file: "escribir un archivo",
+    create_document: "crear un documento" }[a.name] || a.name;
   const card = h("div", { class: "approval" + (a.state ? " " + a.state : "") + (a.dangerous ? " dangerous" : "") },
     h("b", {}, a.state === "approved" ? "✔ Permitido: " : a.state === "denied" ? "✕ Denegado: " : (a.dangerous ? "⛔ Atención: la IA quiere " : "⚠ La IA quiere ")), title,
     a.sandboxed === true ? h("span", { class: "badge ok", title: "El comando sólo puede escribir en las carpetas permitidas" }, "🛡 aislado") : null,
@@ -380,6 +382,11 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   const b = h("div", { class: "bubble" + (streaming ? " cursor" : "") });
   b.innerHTML = md(body);
   frag.append(b);
+  const fileIcon = (p) => ({ docx: "📘", doc: "📘", xlsx: "📗", xlsm: "📗", csv: "📗", pptx: "📙", pdf: "📕" }[String(p).split(".").pop().toLowerCase()] || "📄");
+  const outs = [...new Set(extra.files || [])];
+  if (outs.length) frag.append(h("div", { class: "file-cards" }, outs.map((p) =>
+    h("a", { class: "file-card", href: "/api/files/download?" + qs({ path: p }), title: p },
+      h("span", { class: "fi" }, fileIcon(p)), h("span", { class: "fn" }, baseName(p), h("small", {}, "Descargar")))))); 
   const imgs = extra.images || [];
   if (imgs.length) frag.append(h("div", { class: "gen-images" }, imgs.map((p) =>
     h("a", { href: fileUrl(p), target: "_blank", title: p }, h("img", { src: fileUrl(p), alt: "imagen generada", loading: "lazy" })))));
@@ -398,7 +405,7 @@ function messageEl(m) {
       h("button", { class: "act", title: "Copiar", onclick: () => { navigator.clipboard?.writeText(m.content); toast("Copiado"); } }, "⧉"),
       h("button", { class: "act", title: "Editar", onclick: () => editFrom(m) }, "✎")));
   } else {
-    el.append(assistantInner(m.content, m.reasoning, m.meta?.tools, false, { images: m.meta?.images || [] }));
+    el.append(assistantInner(m.content, m.reasoning, m.meta?.tools, false, { images: m.meta?.images || [], files: m.meta?.files || [] }));
     const st = m.meta?.stats || {};
     el.append(h("div", { class: "meta" },
       h("button", { class: "act", title: "Copiar", onclick: () => { navigator.clipboard?.writeText(m.content); toast("Copiado"); } }, "⧉"),
@@ -489,7 +496,7 @@ async function send(text, attachments, isContinue = false) {
   const ctrl = new AbortController(); S.streaming = ctrl;
   setSending(true);
   let content = "", reasoning = "", tools = [], errorMsg = null, raf = 0;
-  const extra = { route: null, fallbacks: [], images: [] };
+  const extra = { route: null, fallbacks: [], images: [], files: [] };
   const paint = () => {
     raf = 0;
     const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -524,6 +531,7 @@ async function send(text, attachments, isContinue = false) {
         else if (ev.type === "route") extra.route = ev;
         else if (ev.type === "status") extra.status = ev.text;
         else if (ev.type === "image") extra.images.push(ev.path);
+        else if (ev.type === "file") extra.files.push(ev.path);
         else if (ev.type === "compacted") extra.compacted = ev.messages;
         else if (ev.type === "route_fallback") extra.fallbacks.push(ev.message);
         else if (ev.type === "error") errorMsg = ev.message;
@@ -892,6 +900,7 @@ const FIELDS = [
   ["ai_write", "Agente: escribir/editar archivos", "perm"],
   ["ai_commands", "Agente: ejecutar comandos", "perm", "«Preguntar» muestra cada acción para que la apruebes (también desde el móvil). Con aislamiento activo, los comandos sólo pueden escribir en las carpetas modificables; sin él, siempre se pide confirmación. Los comandos peligrosos se bloquean."],
   ["agent_workdir", "Carpeta de trabajo del agente", "text", "Debe estar dentro de las carpetas que la IA puede modificar."],
+  ["ai_game_write", "🎮 La IA puede trabajar con los juegos de Steam", "checkbox", "Lee y, pidiendo permiso cada vez, modifica las carpetas de los juegos y sus prefijos de Proton. Antes de cambiar un archivo guarda una copia «.g3g3ai-original»."],
   ["write_roots", "Carpetas que la IA puede modificar (una por línea)", "lines", "Añade aquí tus proyectos. Fuera de estas carpetas la IA sólo puede leer."],
   ["blocked_paths", "Rutas protegidas (una por línea)", "lines", "Nadie puede verlas desde G3G3AI, ni la IA ni la interfaz. Sin barra = patrón de nombre (p.ej. .env, *.pem)."],
   ["command_sandbox", "Aislamiento de comandos", "sandbox"],

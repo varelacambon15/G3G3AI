@@ -15,7 +15,12 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
-DOC_EXT = {".pdf", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp"}
+WORD_EXT = {".docx", ".docm", ".dotx", ".dotm"}
+EXCEL_EXT = {".xlsx", ".xlsm", ".xltx", ".xltm"}
+PPT_EXT = {".pptx", ".pptm", ".potx", ".ppsx"}
+DOC_EXT = {".pdf", ".xls", ".odt", ".ods", ".odp"} | WORD_EXT | EXCEL_EXT | PPT_EXT
+MACRO_EXT = {".xlsm", ".xltm", ".xls", ".docm", ".dotm", ".pptm"}
+VBA_LIMIT = 40_000
 MAX_IMAGE_SIDE = 1568      # px; suficiente para leer texto y barato en tokens
 MAX_PDF_IMAGE_PAGES = 4
 TEXT_LIMIT = 60_000
@@ -118,15 +123,73 @@ def _xlsx(z: zipfile.ZipFile) -> str:
             cells = []
             for c in row.iter(f"{ns}c"):
                 v = c.find(f"{ns}v")
+                f = c.find(f"{ns}f")
                 if c.get("t") == "s" and v is not None:
-                    cells.append(shared[int(v.text)] if v.text and int(v.text) < len(shared) else "")
+                    val = shared[int(v.text)] if v.text and int(v.text) < len(shared) else ""
                 elif c.get("t") == "inlineStr":
-                    cells.append("".join(t.text or "" for t in c.iter(f"{ns}t")))
+                    val = "".join(t.text or "" for t in c.iter(f"{ns}t"))
                 else:
-                    cells.append(v.text if v is not None and v.text else "")
+                    val = v.text if v is not None and v.text else ""
+                if f is not None and f.text:  # fórmula: se muestra junto a su último valor calculado
+                    val = f"{c.get('r', '')}: ={f.text} → {val}" if val else f"{c.get('r', '')}: ={f.text}"
+                cells.append(val)
             if any(cells):
                 out.append(" | ".join(cells))
     return "\n".join(out)
+
+
+def _xls(path: Path) -> str:
+    """Excel antiguo (.xls, formato binario de Excel 97-2003)."""
+    try:
+        import xlrd
+    except ImportError as e:
+        raise DocumentError("Falta xlrd para leer .xls (pip install xlrd).") from e
+    try:
+        book = xlrd.open_workbook(str(path))
+    except Exception as e:  # noqa: BLE001
+        raise DocumentError(f"No se pudo leer {path.name}: {e}") from e
+    out = []
+    for sh in book.sheets():
+        out.append(f"--- Hoja {sh.name} ---")
+        for r in range(sh.nrows):
+            cells = []
+            for c in sh.row(r):
+                v = c.value
+                if c.ctype == xlrd.XL_CELL_NUMBER and float(v).is_integer():
+                    v = int(v)
+                elif c.ctype == xlrd.XL_CELL_DATE:
+                    try:
+                        v = xlrd.xldate.xldate_as_datetime(v, book.datemode).isoformat(sep=" ")
+                    except Exception:  # noqa: BLE001
+                        pass
+                cells.append(str(v) if v not in ("", None) else "")
+            if any(cells):
+                out.append(" | ".join(cells))
+            if sum(len(x) for x in out) > TEXT_LIMIT:
+                break
+    return "\n".join(out)
+
+
+def vba_macros(path: Path) -> str:
+    """Código de las macros VBA (Excel/Word/PowerPoint con macros). Sólo se lee, nunca se ejecuta."""
+    try:
+        from oletools.olevba import VBA_Parser
+    except ImportError:
+        return ""
+    try:
+        parser = VBA_Parser(str(path))
+        if not parser.detect_vba_macros():
+            return ""
+        parts = []
+        for _, _, name, code in parser.extract_macros():
+            code = (code or "").strip()
+            if code and not re.fullmatch(r"(Attribute [^\n]*\n?)*", code + "\n"):
+                parts.append(f"' ===== Módulo: {name} =====\n{code}")
+        parser.close()
+        text = "\n\n".join(parts)
+        return text[:VBA_LIMIT] + ("\n[... macros recortadas ...]" if len(text) > VBA_LIMIT else "")
+    except Exception as e:  # noqa: BLE001 — archivos dañados o protegidos
+        return f"(No se pudieron leer las macros: {e})"
 
 
 def _odf(z: zipfile.ZipFile) -> str:
@@ -178,9 +241,24 @@ def extract_text(path: Path) -> str:
     ext = path.suffix.lower()
     if ext == ".pdf":
         return _pdf_text(path)[:TEXT_LIMIT]
-    try:
-        with zipfile.ZipFile(path) as z:
-            fn = {".docx": _docx, ".pptx": _pptx, ".xlsx": _xlsx}.get(ext, _odf)
-            return fn(z)[:TEXT_LIMIT]
-    except (zipfile.BadZipFile, KeyError) as e:
-        raise DocumentError(f"No se pudo leer {path.name}: formato no válido") from e
+    if ext == ".xls":
+        text = _xls(path)[:TEXT_LIMIT]
+    else:
+        try:
+            with zipfile.ZipFile(path) as z:
+                if ext in WORD_EXT:
+                    text = _docx(z)
+                elif ext in PPT_EXT:
+                    text = _pptx(z)
+                elif ext in EXCEL_EXT:
+                    text = _xlsx(z)
+                else:
+                    text = _odf(z)
+                text = text[:TEXT_LIMIT]
+        except (zipfile.BadZipFile, KeyError) as e:
+            raise DocumentError(f"No se pudo leer {path.name}: formato no válido") from e
+    if ext in MACRO_EXT:
+        macros = vba_macros(path)
+        if macros:
+            text += f"\n\n--- Macros VBA (sólo lectura, no se ejecutan) ---\n{macros}"
+    return text

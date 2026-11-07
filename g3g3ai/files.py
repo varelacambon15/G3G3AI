@@ -51,6 +51,18 @@ class Files:
     def write_roots(self) -> list[Path]:
         return _expand(self.cfg["write_roots"])
 
+    @property
+    def game_roots(self) -> list[Path]:
+        """Carpetas de juegos de Steam (steamapps/common y compatdata de cada biblioteca), si está activado."""
+        from .steam import game_write_roots
+        try:
+            return [p.resolve() for p in game_write_roots(self.cfg) if p.is_dir()]
+        except OSError:
+            return []
+
+    def is_game_path(self, p: Path) -> bool:
+        return any(is_under(p, r) for r in self.game_roots)
+
     def _blocked(self) -> tuple[list[Path], list[str]]:
         paths, patterns = [], []
         for b in self.cfg["blocked_paths"] or []:
@@ -75,12 +87,12 @@ class Files:
         return any(fnmatch.fnmatch(name, pat) for pat in patterns)
 
     def can_ai_write(self, p: Path) -> bool:
-        return any(is_under(p, r) for r in self.write_roots) and not self.is_blocked(p)
+        return any(is_under(p, r) for r in self.write_roots + self.game_roots) and not self.is_blocked(p)
 
     # Resolución -------------------------------------------------------------------
     def resolve(self, path: str | None, scope: str = "read") -> Path:
         """scope: "read" (carpetas visibles), "ai_write" (carpetas modificables por la IA)."""
-        roots = self.write_roots if scope == "ai_write" else self.roots
+        roots = (self.write_roots + self.game_roots) if scope == "ai_write" else (self.roots + self.game_roots)
         if not roots:
             raise FileAccessError("No hay carpetas configuradas para esta operación.")
         if not path:

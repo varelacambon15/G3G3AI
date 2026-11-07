@@ -367,6 +367,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         async def gen():
             content, reasoning, trace, stats, route = "", "", [], {}, None
             made: list[str] = []
+            out_files: list[str] = []
             yield sse({"type": "start", "conversation_id": cid})
             if direct_image is not None:  # «/imagen …»: sin pasar por el modelo de texto
                 yield sse({"type": "status", "text": "🎨 Generando imagen…"})
@@ -409,6 +410,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                                 trace.append(ev)
                             elif ev["type"] == "image":
                                 made.append(ev["path"])
+                            elif ev["type"] == "file":
+                                out_files.append(ev["path"])
                             elif ev["type"] == "stats":
                                 stats.update({k: v for k, v in ev.items() if v is not None and k != "type"})
                             yield sse(ev)
@@ -424,7 +427,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                     meta = {"provider": route["provider"] if route else pid,
                             "model": route["model"] if route else model,
                             "route": route.get("reason") if route else None,
-                            "stats": stats, "tools": trace or None, "images": made or None}
+                            "stats": stats, "tools": trace or None, "images": made or None,
+                            "files": out_files or None}
                     stats["message_id"] = db.add_message(cid, "assistant", content, reasoning or None, meta)
             yield sse({"type": "done", **stats})
 

@@ -22,7 +22,7 @@ import httpx
 
 from . import sandbox, web
 from .documents import DocumentError
-from .files import FileAccessError, Files
+from .files import FileAccessError, Files, is_under
 
 READ_LIMIT_FOR_AI = 30_000
 OUTPUT_LIMIT = 20_000
@@ -35,10 +35,11 @@ PENDING: dict[str, asyncio.Future] = {}
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 FILE_TOOLS = {"list_dir", "read_file", "search_files"}
-WRITE_TOOLS = {"write_file", "edit_file"}
+WRITE_TOOLS = {"write_file", "edit_file", "create_document"}
 COMMAND_TOOLS = {"run_command"}
 WEB_TOOLS = {"web_search", "fetch_url"}
 MEMORY_TOOLS = {"memory_save", "memory_delete"}
+GAME_TOOLS = {"steam_games", "game_diagnostics"}
 
 
 def _schema(props: dict, required: list[str] | None = None) -> dict:
@@ -59,6 +60,16 @@ ALL_SPECS = {
                               "path": {"type": "string", "description": "Carpeta donde buscar (opcional)"}}, ["query"])),
     "write_file": ("Crea o sobrescribe un archivo de texto completo (sólo en las carpetas modificables).",
                    _schema({"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"])),
+    "create_document": ("Crea un documento Word (.docx), Excel (.xlsx), PowerPoint (.pptx) o PDF (.pdf); el formato sale "
+                        "de la extensión de path. Para .docx y .pdf, content es Markdown (títulos #, listas, tablas |, "
+                        "**negrita**). Para .xlsx, content es JSON {\"sheets\": [{\"name\": \"Hoja1\", \"rows\": "
+                        "[[\"Producto\", \"Total\"], [\"A\", \"=B3*2\"]], \"number_formats\": {\"B\": \"0.00\"}}]} "
+                        "(las celdas con = son fórmulas; la primera fila es el encabezado). Para .pptx, content es JSON "
+                        "{\"title\": \"...\", \"slides\": [{\"title\": \"...\", \"bullets\": [\"...\"], \"notes\": \"...\"}]}. "
+                        "El archivo se ofrece al usuario para descargar.",
+                        _schema({"path": {"type": "string", "description": "Ruta del archivo, p.ej. informe.docx"},
+                                 "content": {"type": "string", "description": "Markdown o JSON según el formato"}},
+                                ["path", "content"])),
     "edit_file": ("Reemplaza un fragmento exacto de texto en un archivo (old_text debe aparecer una sola vez).",
                   _schema({"path": {"type": "string"}, "old_text": {"type": "string"},
                            "new_text": {"type": "string"}}, ["path", "old_text", "new_text"])),
@@ -66,7 +77,16 @@ ALL_SPECS = {
                     "Úsalo para compilar, probar, instalar o inspeccionar el sistema.",
                     _schema({"command": {"type": "string"},
                              "cwd": {"type": "string", "description": "Carpeta de trabajo (opcional)"},
-                             "timeout": {"type": "integer", "description": "Segundos, por defecto 120"}}, ["command"])),
+                             "timeout": {"type": "integer", "description": "Segundos, por defecto 120"},
+                             "unsandboxed": {"type": "boolean", "description":
+                                             "true sólo si el comando necesita escribir fuera de las carpetas permitidas "
+                                             "(p.ej. flatpak install --user, cambiar ~/.config). Siempre pide permiso."}},
+                            ["command"])),
+    "steam_games": ("Lista los juegos de Steam instalados (appid, tamaño, versión de Proton forzada).",
+                    _schema({"query": {"type": "string", "description": "Filtro por nombre (opcional)"}})),
+    "game_diagnostics": ("Diagnostica un juego de Steam: carpeta, Proton, opciones de lanzamiento, prefijo de Wine, "
+                         "registros de Proton/Steam y archivos de configuración y volcados recientes.",
+                         _schema({"game": {"type": "string", "description": "Nombre o appid del juego"}}, ["game"])),
     "web_search": ("Busca en internet. Devuelve títulos, enlaces y resúmenes. Úsalo para información actual "
                    "o que no conozcas; después lee las páginas relevantes con fetch_url.",
                    _schema({"query": {"type": "string"},
@@ -103,6 +123,7 @@ class ToolContext:
         self.source = source
         self.image_gen = image_gen  # async (prompt, size) -> Path
         self.generated: list[str] = []
+        self.files_out: list[str] = []  # archivos creados para ofrecer al usuario
         # Herramientas que el usuario permitió «siempre» en esta conversación
         self.session_allow = session_allow if session_allow is not None else set()
 
@@ -119,9 +140,11 @@ class ToolContext:
         if self.agent:
             out += ["list_dir", "read_file", "search_files"]
             if self.mode("write_file") != "off" and self.files.write_roots:
-                out += ["write_file", "edit_file"]
+                out += ["write_file", "edit_file", "create_document"]
             if self.mode("run_command") != "off":
                 out.append("run_command")
+            if self._steam_present():
+                out += ["steam_games", "game_diagnostics"]
             if self.local_chat:
                 out.append("ask_local_model")
         if self.web:
@@ -138,6 +161,12 @@ class ToolContext:
 
     def anthropic_specs(self) -> list[dict]:
         return [{"name": n, "description": ALL_SPECS[n][0], "input_schema": ALL_SPECS[n][1]} for n in self.names()]
+
+    def _steam_present(self) -> bool:
+        if not hasattr(self, "_steam"):
+            from .steam import steam_roots
+            self._steam = bool(steam_roots(self.cfg))
+        return self._steam
 
     @property
     def sandboxed(self) -> bool:
@@ -161,6 +190,10 @@ class ToolContext:
                 parts.append("Para subtareas sencillas y voluminosas (resumir archivos largos, traducir, extraer) "
                              "puedes usar ask_local_model y ahorrar coste.")
             parts.append("Trabaja paso a paso: inspecciona antes de modificar y verifica el resultado.")
+            from .steam import system_hint as steam_hint
+            hint = steam_hint()
+            if hint:
+                parts.append(hint)
         if self.memory is not None:
             from .memory import SAVE_GUIDE
             parts.append(SAVE_GUIDE)
@@ -184,7 +217,9 @@ class ToolContext:
         """Devuelve (error, avisos_fuertes, avisos_suaves). Los fuertes obligan a preguntar siempre."""
         try:
             if name in WRITE_TOOLS:
-                self.files.resolve(args.get("path"), "ai_write")
+                p = self.files.resolve(args.get("path"), "ai_write")
+                if self.files.is_game_path(p) and not any(is_under(p, r) for r in self.files.write_roots):
+                    return None, ["modifica archivos de un juego (se guarda una copia de seguridad del original)"], []
             if name == "run_command":
                 cmd = str(args.get("command", ""))
                 if not cmd.strip():
@@ -195,6 +230,8 @@ class ToolContext:
                             "No se puede ejecutar desde G3G3AI."), [], []
                 if args.get("cwd"):
                     self.files.resolve(args["cwd"])
+                if self.sandboxed and args.get("unsandboxed"):
+                    reasons = reasons + ["se ejecuta FUERA del aislamiento: puede modificar cualquier archivo de tu usuario"]
                 soft = [] if self.sandboxed else [
                     "sin aislamiento: el comando puede modificar cualquier archivo de tu usuario"]
                 return None, reasons, soft
@@ -217,6 +254,12 @@ class ToolContext:
                 return await web.fetch(str(args.get("url", "")).strip())
             if name in MEMORY_TOOLS:
                 return self._memory(name, args)
+            if name == "steam_games":
+                from .steam import games_summary
+                return await asyncio.to_thread(games_summary, self.cfg, args.get("query", ""))
+            if name == "game_diagnostics":
+                from .steam import diagnose
+                return await asyncio.to_thread(diagnose, self.cfg, str(args.get("game", "")))
             if name == "generate_image":
                 from .images import ImageError
                 try:
@@ -268,9 +311,21 @@ class ToolContext:
         if name == "search_files":
             res = f.search(a["query"], a.get("path"))
             return "\n".join(("[D] " if r["is_dir"] else "") + r["path"] for r in res) or "Sin resultados."
+        if name in WRITE_TOOLS:
+            self._backup_if_game(f.resolve(a["path"], "ai_write"))
         if name == "write_file":
             res = f.write_text(a["path"], a.get("content", ""), scope="ai_write")
+            self.files_out.append(res["path"])
             return f"Guardado {res['path']} ({res['bytes']} bytes)"
+        if name == "create_document":
+            from . import office
+            p = f.resolve(a["path"], "ai_write")
+            try:
+                office.create(p, a.get("content", ""))
+            except (office.OfficeError, ValueError, KeyError, TypeError) as e:
+                return f"Error al crear el documento: {e}"
+            self.files_out.append(str(p))
+            return f"Documento creado: {p} ({p.stat().st_size} bytes). El usuario ya puede descargarlo."
         if name == "edit_file":
             p = f.resolve(a["path"], "ai_write")
             text = p.read_text("utf-8")
@@ -284,6 +339,14 @@ class ToolContext:
         if name == "run_command":
             return self._run_command(a)
         return f"Error: herramienta desconocida {name}"
+
+    def _backup_if_game(self, p: Path) -> None:
+        """Antes de tocar un archivo de un juego, guarda una copia del original (sólo la primera vez)."""
+        if p.is_file() and self.files.is_game_path(p):
+            bak = p.with_name(p.name + ".g3g3ai-original")
+            if not bak.exists():
+                import shutil
+                shutil.copy2(p, bak)
 
     def _memory(self, name: str, a: dict) -> str:
         from .memory import MemoryRejected
@@ -307,7 +370,7 @@ class ToolContext:
         timeout = min(int(a.get("timeout") or 120), 1800)
         kw = dict(cwd=cwd, capture_output=True, text=True, errors="replace", timeout=timeout,
                   creationflags=NO_WINDOW, stdin=subprocess.DEVNULL)
-        if self.sandboxed:
+        if self.sandboxed and not a.get("unsandboxed"):
             home = Path.home()
             caches = [home / ".cache", home / ".npm"]  # escribibles pero temporales
             hidden = self.files.blocked_dirs_and_files()
@@ -324,7 +387,7 @@ class ToolContext:
         out = (r.stdout or "") + (("\n[stderr]\n" + r.stderr) if r.stderr else "")
         if len(out) > OUTPUT_LIMIT:
             out = "[... salida recortada ...]\n" + out[-OUTPUT_LIMIT:]
-        tag = " (aislado)" if self.sandboxed else ""
+        tag = " (aislado)" if self.sandboxed and not a.get("unsandboxed") else ""
         return f"Código de salida{tag}: {r.returncode}\n{out}"
 
 
@@ -378,6 +441,8 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
     yield {"type": "tool_result", "name": name, "result": result[:TOOL_RESULT_PREVIEW]}
     while ctx.generated:
         yield {"type": "image", "path": ctx.generated.pop(0)}
+    while ctx.files_out:
+        yield {"type": "file", "path": ctx.files_out.pop(0)}
     sink.append(result)
 
 

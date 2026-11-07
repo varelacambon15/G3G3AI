@@ -673,3 +673,133 @@ def test_sync_between_two_devices(tmp_path):
     finally:
         server.should_exit = True
         th.join(5)
+
+
+# --- Excel avanzado y creación de documentos -------------------------------------------------
+def test_excel_variants_and_document_creation(env):
+    import asyncio
+    import openpyxl
+    client, cfg, home, tmp = env
+    from g3g3ai import documents as D
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext, tool_events
+    wb = openpyxl.Workbook()
+    wb.active.append(["A", "B", "Suma"])
+    wb.active.append([2, 3, "=A2+B2"])
+    wb.save(home / "libro.xlsm")
+    text = D.extract_text(home / "libro.xlsm")
+    assert "C2: =A2+B2" in text
+    xlwt = pytest.importorskip("xlwt")
+    book = xlwt.Workbook()
+    sh = book.add_sheet("Antiguo")
+    sh.write(0, 0, "Precio"); sh.write(1, 0, 12.5); sh.write(2, 0, 3)
+    book.save(str(home / "viejo.xls"))
+    assert "Antiguo" in D.extract_text(home / "viejo.xls") and "12.5" in D.extract_text(home / "viejo.xls")
+
+    cfg.data.update(ai_write="auto")
+    ctx = ToolContext(Files(cfg), cfg)
+    assert "create_document" in ctx.names()
+
+    async def run(path, content):
+        evs, sink = [], []
+        async for ev in tool_events(ctx, "create_document", {"path": path, "content": content}, sink):
+            evs.append(ev)
+        return evs, sink[0]
+
+    evs, res = asyncio.run(run(str(home / "informe.docx"), "# Título\n\nTexto con **negrita**.\n\n| a | b |\n|---|---|\n| 1 | 2 |"))
+    assert "Documento creado" in res and any(e["type"] == "file" for e in evs)
+    assert "negrita" in D.extract_text(home / "informe.docx")
+    spec = '{"sheets": [{"name": "Datos", "rows": [["x", "y"], [1, "=A2*2"]]}]}'
+    evs, res = asyncio.run(run(str(home / "datos.xlsx"), spec))
+    assert openpyxl.load_workbook(home / "datos.xlsx")["Datos"]["B2"].value == "=A2*2"
+    evs, res = asyncio.run(run(str(home / "charla.pptx"), '{"slides": [{"title": "Hola", "bullets": ["uno"]}]}'))
+    assert "Hola" in D.extract_text(home / "charla.pptx")
+    evs, res = asyncio.run(run(str(home / "nota.pdf"), "# PDF\n\nCanción y ñandú"))
+    assert (home / "nota.pdf").read_bytes().startswith(b"%PDF")
+    evs, res = asyncio.run(run(str(home / "x.odt"), "hola"))
+    assert res.startswith("Error")
+    evs, res = asyncio.run(run(str(tmp / "fuera.docx"), "hola"))  # fuera de las carpetas modificables
+    assert res.startswith("Error") and not (tmp / "fuera.docx").exists()
+
+
+# --- Juegos de Steam --------------------------------------------------------------------
+def _fake_steam(base):
+    root = base / "Steam"
+    (root / "steamapps" / "common" / "Elden Ring" / "Game").mkdir(parents=True)
+    (root / "steamapps" / "common" / "Proton 9.0").mkdir(parents=True)
+    (root / "steamapps" / "common" / "Elden Ring" / "Game" / "settings.ini").write_text("[video]\nfullscreen=1\n")
+    (root / "steamapps" / "appmanifest_1245620.acf").write_text(
+        '"AppState"\n{\n\t"appid"\t\t"1245620"\n\t"name"\t\t"ELDEN RING"\n\t"StateFlags"\t\t"4"\n'
+        '\t"installdir"\t\t"Elden Ring"\n\t"SizeOnDisk"\t\t"52000000000"\n}\n')
+    (root / "steamapps" / "libraryfolders.vdf").write_text(
+        f'"libraryfolders"\n{{\n\t"0"\n\t{{\n\t\t"path"\t\t"{root}"\n\t}}\n}}\n')
+    pfx = root / "steamapps" / "compatdata" / "1245620"
+    cfgdir = pfx / "pfx" / "drive_c" / "users" / "steamuser" / "AppData" / "Roaming" / "EldenRing"
+    cfgdir.mkdir(parents=True)
+    (cfgdir / "GraphicsConfig.xml").write_text("<Config><Quality>High</Quality></Config>")
+    (pfx / "version").write_text("GE-Proton9-20")
+    (root / "config").mkdir()
+    (root / "config" / "config.vdf").write_text(
+        '"InstallConfigStore"\n{\n\t"Software"\n\t{\n\t\t"Valve"\n\t\t{\n\t\t\t"Steam"\n\t\t\t{\n'
+        '\t\t\t\t"ConnectCache"\n\t\t\t\t{\n\t\t\t\t\t"abc"\t\t"TOKEN-SECRETO-DE-SESION"\n\t\t\t\t}\n'
+        '\t\t\t\t"CompatToolMapping"\n\t\t\t\t{\n\t\t\t\t\t"1245620"\n\t\t\t\t\t{\n\t\t\t\t\t\t"name"\t\t"GE-Proton9-20"\n'
+        '\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n')
+    lc = root / "userdata" / "123" / "config"
+    lc.mkdir(parents=True)
+    (lc / "localconfig.vdf").write_text(
+        '"UserLocalConfigStore"\n{\n\t"Software"\n\t{\n\t\t"Valve"\n\t\t{\n\t\t\t"Steam"\n\t\t\t{\n\t\t\t\t"apps"\n'
+        '\t\t\t\t{\n\t\t\t\t\t"1245620"\n\t\t\t\t\t{\n\t\t\t\t\t\t"LaunchOptions"\t\t"PROTON_LOG=1 %command%"\n'
+        '\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n')
+    return root
+
+
+def test_steam_game_diagnostics_and_safe_edits(env, monkeypatch):
+    import asyncio
+    client, cfg, home, tmp = env
+    from g3g3ai import sandbox, steam
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext, tool_events
+    root = _fake_steam(tmp)
+    monkeypatch.setattr(steam, "HOME", home)
+    (home / "steam-1245620.log").write_text("info: ok\nerr:module:import_dll Library d3d12.dll not found\nmás info\n")
+    cfg.data.update(steam_dir=str(root), ai_write="auto", ai_commands="ask")
+    assert steam.parse_vdf('"a" { "B" "1" "c" { "d" "x\\\\y" } }') == {"a": {"b": "1", "c": {"d": "x\\y"}}}
+    games = steam.list_games(cfg)
+    assert [(g["name"], g["compat_tool"]) for g in games] == [("ELDEN RING", "GE-Proton9-20")]
+    ctx = ToolContext(Files(cfg), cfg)
+    assert {"steam_games", "game_diagnostics"} <= set(ctx.names())
+    out = asyncio.run(ctx.run("game_diagnostics", {"game": "elden"}))
+    assert "GE-Proton9-20" in out and "PROTON_LOG=1 %command%" in out
+    assert "d3d12.dll not found" in out and "GraphicsConfig.xml" in out and "settings.ini" in out
+    assert "TOKEN-SECRETO" not in out  # de config.vdf sólo se lee la sección de Proton
+    # La IA puede leer y modificar archivos del juego (fuera de sus carpetas normales) siempre con permiso + copia
+    ini = root / "steamapps" / "common" / "Elden Ring" / "Game" / "settings.ini"
+    err, strong, _ = ctx.precheck("edit_file", {"path": str(ini)})
+    assert err is None and strong and "juego" in strong[0]
+
+    async def edit():
+        from g3g3ai.tools import PENDING, resolve_approval
+        async def approve():
+            while not PENDING:
+                await asyncio.sleep(0.01)
+            resolve_approval(next(iter(PENDING)), "yes")
+        t = asyncio.create_task(approve())
+        evs, sink = [], []
+        async for ev in tool_events(ctx, "edit_file", {"path": str(ini), "old_text": "fullscreen=1",
+                                                       "new_text": "fullscreen=0"}, sink):
+            evs.append(ev)
+        t.cancel()
+        return evs, sink[0]
+    evs, res = asyncio.run(edit())
+    assert any(e["type"] == "approval" and e["dangerous"] for e in evs)  # siempre pregunta, aunque esté en Automático
+    assert res.startswith("Editado") and "fullscreen=0" in ini.read_text()
+    assert "fullscreen=1" in (ini.parent / "settings.ini.g3g3ai-original").read_text()
+    # Desactivado: los juegos vuelven a ser intocables
+    cfg.data.update(ai_game_write=False)
+    err, _, _ = ToolContext(Files(cfg), cfg).precheck("edit_file", {"path": str(ini)})
+    assert err and "Error" in err
+    # Comandos fuera del aislamiento: siempre preguntan, con aviso
+    monkeypatch.setattr(sandbox, "available", lambda cfg: True)
+    _, strong, _ = ToolContext(Files(cfg), cfg).precheck("run_command", {"command": "flatpak install --user x", "unsandboxed": True})
+    assert any("FUERA del aislamiento" in w for w in strong)
+

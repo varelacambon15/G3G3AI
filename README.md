@@ -143,6 +143,46 @@ Cuando una conversación no cabe en el contexto (el del modelo local, o «Contex
 **Qué no:** las carpetas, los modelos locales, el puerto y la contraseña de cada equipo. Los archivos adjuntos y las imágenes tampoco se copian: en el otro equipo se verá el texto de la conversación.
 **Seguridad:** todo viaja cifrado y autenticado con la clave (AES + HMAC). Un equipo sin la clave no puede leer ni enviar nada. Si el mismo dato cambia en los dos equipos, gana el cambio más reciente.
 
+### Juegos de Steam: diagnosticar y arreglar
+
+En el modo 🛠 Agente, la IA tiene dos herramientas:
+- **`steam_games`:** lista los juegos instalados, con su appid, tamaño y versión de Proton.
+- **`game_diagnostics`:** reúne lo necesario para saber por qué un juego no funciona:
+  - carpeta del juego y versión de Proton (forzada, y la que creó el prefijo);
+  - opciones de lanzamiento y prefijo de Wine (`compatdata`);
+  - errores del registro de Proton (`~/steam-<appid>.log`) y líneas de los registros de Steam;
+  - archivos de configuración, registros y volcados recientes del juego y de su prefijo.
+
+**Cómo usarlo:** «El juego X no arranca, mira qué le pasa». Si no hay registro de Proton, te pedirá que añadas `PROTON_LOG=1 %command%` a las opciones de lanzamiento y lo abras una vez.
+
+**Al arreglarlo:**
+- La IA puede modificar archivos del juego y de su prefijo, pero **siempre te pide permiso**, aunque los permisos estén en «Automático».
+- Antes del primer cambio guarda una copia del original (`archivo.g3g3ai-original`).
+- Se desactiva en Ajustes → «La IA puede trabajar con los juegos de Steam».
+- De `config.vdf` (que contiene datos de tu sesión de Steam) solo se lee la sección de Proton.
+
+**Comandos para Konsole:**
+- Los comandos van aislados.
+- Si uno necesita escribir fuera de las carpetas permitidas (por ejemplo `flatpak install --user`), la IA puede pedir ejecutarlo **fuera del aislamiento**. Esos comandos siempre piden permiso, con aviso.
+- La IA sabe que SteamOS tiene el sistema de solo lectura (usa Flatpak o la carpeta personal en vez de pacman) y que en ARM los juegos x86 pasan por una capa de traducción.
+
+### Excel y documentos de Office
+
+- **Leer:**
+  - Excel `.xlsx`, `.xlsm` (con macros), plantillas `.xltx` y `.xltm`, y el antiguo `.xls`, con todas las hojas y las **fórmulas** (`D2: =B2*C2`);
+  - el código de las **macros VBA**, que solo se lee y nunca se ejecuta;
+  - Word (`.docx`, `.docm`), PowerPoint (`.pptx`, `.pptm`) y PDF.
+- **Crear** (herramienta `create_document`):
+  - **Word** y **PDF** a partir de Markdown, con títulos, listas, tablas y negritas;
+  - **Excel** con varias hojas, **fórmulas que funcionan**, encabezado con formato, columnas ajustadas y formatos de número;
+  - **PowerPoint** con diapositivas, viñetas y notas.
+
+  Aparecen en el chat como una tarjeta para descargarlos (también desde el móvil). Se guardan en las carpetas modificables y respetan el permiso de escritura.
+
+### Crear programas (`.exe`)
+
+En el PC, con el modo agente, la IA puede escribir el código y compilarlo, pero solo con las herramientas que tengas instaladas. Por ejemplo, Python con `pip install pyinstaller` para crear un `.exe` a partir de un script, o un compilador de C/C++ o .NET. Para programas de cierta complejidad, usa un modelo potente por API.
+
 ## Modelos recomendados
 
 En la Konkr (8 GB de RAM), mejor modelos de 3–4B en versión Q4_K_M: **Qwen3 4B** (bueno con herramientas y en modo agente), **Gemma 3 4B**, **Llama 3.2 3B**, **Qwen2.5 Coder 3B**. En un PC con 16 GB o más y tarjeta gráfica puedes usar modelos de 7–14B.
@@ -170,6 +210,8 @@ g3g3ai/
   context.py    historial: imágenes/visión y resumen de conversaciones largas
   images.py     generación de imágenes (API y stable-diffusion.cpp)
   sync.py       sincronización cifrada entre equipos
+  office.py     creación de Word, Excel, PowerPoint y PDF
+  steam.py      diagnóstico de juegos de Steam/Proton
   providers.py  streaming OpenAI/Anthropic + bucle de herramientas
   llama.py      proceso llama-server
   engine.py     descarga de llama.cpp precompilado (Windows/macOS/Linux x64)
