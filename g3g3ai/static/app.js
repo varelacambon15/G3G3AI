@@ -70,7 +70,11 @@ function md(src) {
       flush(); const buf = []; i++;
       while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]);
       i++;
-      out += `<pre><button class="copy">copiar</button><code data-lang="${esc(fence[1])}">${esc(buf.join("\n"))}</code></pre>`;
+      const lang = (fence[1] || "").toLowerCase();
+      const canPreview = ["html", "svg", "xml"].includes(lang) || (lang === "" && /^\s*<(!doctype|html|svg)/i.test(buf.join("\n")));
+      out += `<pre><div class="code-head"><span class="lang">${esc(lang || "código")}</span>`
+        + (canPreview ? `<button class="preview">▶ Vista previa</button>` : "")
+        + `<button class="copy">Copiar</button></div><code data-lang="${esc(lang)}">${esc(buf.join("\n"))}</code></pre>`;
       continue;
     }
     let m;
@@ -130,18 +134,28 @@ $("#login-form").addEventListener("submit", async (e) => {
 });
 
 // --- Navegación ----------------------------------------------------------------------
+const isMobile = () => matchMedia("(max-width: 860px)").matches;
+function closeSide() { document.body.classList.remove("side-open"); }
 function setView(v) {
   S.view = v;
-  $$(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
+  $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
   $$(".view").forEach((s) => s.classList.toggle("active", s.id === "view-" + v));
-  $("#menu-btn").style.visibility = v === "chat" ? "visible" : "hidden";
+  $("#top-title").textContent = v === "chat" ? (S.conv?.title || "") : { models: "Modelos", files: "Archivos", settings: "Ajustes" }[v];
+  closeSide();
   if (v === "models") refreshModels();
   if (v === "files") loadFiles(S.filesPath);
   if (v === "settings") loadSettings();
   store.set("view", v);
 }
-$$(".tabs button").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
-$("#menu-btn").addEventListener("click", () => $("#sidebar").classList.toggle("open"));
+$$("[data-view]").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
+$("#menu-btn").addEventListener("click", () => {
+  if (isMobile()) document.body.classList.toggle("side-open");
+  else { document.body.classList.remove("side-collapsed"); store.set("collapsed", false); }
+});
+$("#side-collapse").addEventListener("click", () => { document.body.classList.add("side-collapsed"); store.set("collapsed", true); });
+$("#scrim").addEventListener("click", closeSide);
+$("#top-new").addEventListener("click", () => { setView("chat"); newChat(); });
+if (store.get("collapsed", false)) document.body.classList.add("side-collapsed");
 $$("dialog [data-close]").forEach((b) => b.addEventListener("click", () => b.closest("dialog").close()));
 
 // --- Estado general ----------------------------------------------------------------------
@@ -195,24 +209,71 @@ function updateAutoTitle() {
 }
 $("#auto-toggle").checked = store.get("auto", false);
 $("#auto-toggle").addEventListener("change", (e) => { store.set("auto", e.target.checked); updateAutoTitle(); });
-if (matchMedia("(pointer: coarse)").matches) $("#input").placeholder = "Escribe un mensaje…";
 $("#web-toggle").checked = store.get("web", false);
 $("#web-toggle").addEventListener("change", (e) => store.set("web", e.target.checked));
 $("#tools-toggle").checked = store.get("tools", false);
 $("#tools-toggle").addEventListener("change", (e) => store.set("tools", e.target.checked));
 
+// --- Menús «+» y herramientas --------------------------------------------------------------
+function togglePopover(menu, btn) {
+  const open = menu.classList.contains("hidden");
+  $$(".popover").forEach((p) => p.classList.add("hidden"));
+  $$(".round-btn").forEach((b) => b.classList.remove("open"));
+  if (open) { menu.classList.remove("hidden"); btn.classList.add("open"); }
+}
+$("#plus-btn").addEventListener("click", (e) => { e.stopPropagation(); togglePopover($("#plus-menu"), e.currentTarget); });
+$("#tools-btn").addEventListener("click", (e) => { e.stopPropagation(); togglePopover($("#tools-menu"), e.currentTarget); });
+$$(".popover").forEach((p) => p.addEventListener("click", (e) => e.stopPropagation()));
+$$("#plus-menu > button, #tools-menu > button").forEach((b) => b.addEventListener("click", () => {
+  $$(".popover").forEach((p) => p.classList.add("hidden")); $$(".round-btn").forEach((x) => x.classList.remove("open"));
+}));
+document.addEventListener("click", () => { $$(".popover").forEach((p) => p.classList.add("hidden")); $$(".round-btn").forEach((b) => b.classList.remove("open")); });
+function renderActiveTools() {
+  const box = $("#active-tools"); box.innerHTML = "";
+  const items = [["auto-toggle", "🔀 Auto"], ["web-toggle", "🌐 Web"], ["tools-toggle", "🛠 Agente"]];
+  let any = false;
+  for (const [id, label] of items) {
+    if (!$("#" + id).checked) continue;
+    any = true;
+    box.append(h("span", { title: "Pulsa para desactivar", onclick: () => { $("#" + id).checked = false; $("#" + id).dispatchEvent(new Event("change")); } }, label + " ✕"));
+  }
+  $("#tools-btn").classList.toggle("on", any);
+}
+["auto-toggle", "web-toggle", "tools-toggle"].forEach((id) => $("#" + id).addEventListener("change", renderActiveTools));
+
 // --- Conversaciones -------------------------------------------------------------------
+function dateGroup(ts) {
+  const d = new Date(ts * 1000), now = new Date();
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 86400000);
+  if (diff <= 0) return "Hoy";
+  if (diff === 1) return "Ayer";
+  if (diff < 7) return "Últimos 7 días";
+  if (diff < 30) return "Últimos 30 días";
+  return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+let convCache = [];
+$("#conv-search").addEventListener("input", () => renderConvList());
 async function loadConversations() {
-  const list = await api("/api/conversations"), ul = $("#conv-list");
+  convCache = await api("/api/conversations");
+  renderConvList();
+}
+function renderConvList() {
+  const ul = $("#conv-list"), q = $("#conv-search").value.trim().toLowerCase();
   ul.innerHTML = "";
+  let group = null;
+  const list = convCache.filter((c) => !q || c.title.toLowerCase().includes(q));
+  if (!list.length) ul.append(h("div", { class: "conv-group" }, q ? "Sin resultados" : "Aún no hay conversaciones"));
   for (const c of list) {
-    const li = h("li", { class: c.id === S.convId ? "active" : "", onclick: () => openConversation(c.id) },
+    const g = dateGroup(c.updated);
+    if (g !== group) { group = g; ul.append(h("div", { class: "conv-group" }, g)); }
+    const li = h("div", { class: "conv-item" + (c.id === S.convId ? " active" : ""), onclick: () => { setView("chat"); openConversation(c.id); } },
       h("span", { class: "t", title: c.title }, c.title),
       h("span", { class: "acts" },
         h("button", { title: "Renombrar", onclick: async (e) => {
           e.stopPropagation();
           const t = prompt("Nuevo título", c.title);
-          if (t) { await api(`/api/conversations/${c.id}`, { method: "PATCH", body: { title: t } }); loadConversations(); }
+          if (t) { await api(`/api/conversations/${c.id}`, { method: "PATCH", body: { title: t } }); loadConversations(); if (S.convId === c.id) $("#top-title").textContent = t; }
         } }, "✎"),
         h("button", { title: "Borrar", onclick: async (e) => {
           e.stopPropagation();
@@ -231,21 +292,39 @@ async function openConversation(id) {
     if ([...$("#model-select").options].some((o) => o.value === v)) $("#model-select").value = v;
   }
   renderMessages(); loadConversations();
-  $("#sidebar").classList.remove("open");
+  if (S.view === "chat") $("#top-title").textContent = S.conv.title;
+  closeSide();
 }
 function newChat() {
   S.convId = null; S.conv = null; S.system = undefined; store.set("conv", null);
-  renderMessages(); loadConversations(); $("#sidebar").classList.remove("open"); $("#input").focus();
+  renderMessages(); loadConversations(); closeSide(); $("#top-title").textContent = "";
+  if (!isMobile()) $("#input").focus();
 }
-$("#new-chat").addEventListener("click", newChat);
+$("#new-chat").addEventListener("click", () => { setView("chat"); newChat(); });
 
 // --- Mensajes -----------------------------------------------------------------------
 function renderMessages() {
   const box = $("#messages"); box.innerHTML = "";
   const msgs = S.conv?.messages || [];
   if (!msgs.length) {
-    box.append(h("div", { class: "empty-state" }, h("h2", {}, "¿En qué te ayudo?"),
-      h("p", {}, "Elige un modelo abajo. Los modelos locales se descargan y cargan en ", h("b", {}, "Modelos"), ".")));
+    const hr = new Date().getHours();
+    const hello = hr < 6 ? "Buenas noches" : hr < 13 ? "Buenos días" : hr < 21 ? "Buenas tardes" : "Buenas noches";
+    const ideas = [
+      ["📄 Resume un documento", "Resume el documento que te adjunto en 5 puntos clave.", "attach"],
+      ["🌐 Busca en la web", "Busca las últimas novedades sobre ", "web"],
+      ["🎨 Crea una imagen", "/imagen ", null],
+      ["🛠 Organiza mis archivos", "Revisa mi carpeta de trabajo y propón cómo organizarla.", "agent"],
+      ["💡 Explícame algo", "Explícame de forma sencilla cómo funciona ", null],
+    ];
+    box.append(h("div", { class: "empty-state" },
+      h("h1", { class: "greeting" }, h("span", { class: "logo" }, "✦"), hello),
+      h("p", {}, S.status?.llama?.model ? "Modelo local listo: " + S.status.llama.model : "Elige un modelo abajo o carga uno local en Modelos."),
+      h("div", { class: "suggest" }, ideas.map(([label, text, mode]) => h("button", { onclick: () => {
+        input.value = text; input.focus(); input.dispatchEvent(new Event("input"));
+        if (mode === "web") { $("#web-toggle").checked = true; $("#web-toggle").dispatchEvent(new Event("change")); }
+        if (mode === "agent") { $("#tools-toggle").checked = true; $("#tools-toggle").dispatchEvent(new Event("change")); }
+        if (mode === "attach") $("#attach-btn").click();
+      } }, label)))));
     return;
   }
   for (const m of msgs) box.append(messageEl(m));
@@ -316,24 +395,47 @@ function messageEl(m) {
       h("img", { src: fileUrl(a.path), alt: a.name, loading: "lazy", onclick: () => previewFile(a.path) }))));
     el.append(h("div", { class: "meta" },
       att.filter((a) => !imgs.includes(a)).map((a) => h("span", { class: "chip" }, (a.kind === "document" || a.kind === "pdf_scan" ? "📄 " : "📎 ") + a.name)),
-      h("button", { onclick: () => editFrom(m) }, "✎ editar")));
+      h("button", { class: "act", title: "Copiar", onclick: () => { navigator.clipboard?.writeText(m.content); toast("Copiado"); } }, "⧉"),
+      h("button", { class: "act", title: "Editar", onclick: () => editFrom(m) }, "✎")));
   } else {
     el.append(assistantInner(m.content, m.reasoning, m.meta?.tools, false, { images: m.meta?.images || [] }));
     const st = m.meta?.stats || {};
     el.append(h("div", { class: "meta" },
-      h("span", { title: m.meta?.route || "" }, (m.meta?.provider === "local" ? "💻 " : "☁ ") + (m.meta?.model || "")),
+      h("button", { class: "act", title: "Copiar", onclick: () => { navigator.clipboard?.writeText(m.content); toast("Copiado"); } }, "⧉"),
+      h("button", { class: "act", title: "Volver a generar", onclick: () => regenerate(m) }, "↻"),
+      h("span", { title: m.meta?.route || "" }, (m.meta?.provider === "local" ? "💻 " : m.meta?.provider === "imagen" ? "🎨 " : "☁ ") + (m.meta?.model || "")),
       m.meta?.route ? h("span", {}, "🔀 " + m.meta.route) : null,
-      st.tokens_per_second ? h("span", {}, `${st.tokens_per_second.toFixed(1)} tok/s`) : null,
-      st.tokens ? h("span", {}, `${st.tokens} tokens`) : null,
-      h("button", { onclick: () => { navigator.clipboard?.writeText(m.content); toast("Copiado"); } }, "⧉ copiar"),
-      h("button", { onclick: () => regenerate(m) }, "↻ regenerar")));
+      st.tokens_per_second ? h("span", {}, `${st.tokens_per_second.toFixed(1)} tok/s`) : null));
   }
   return el;
 }
 $("#messages").addEventListener("click", (e) => {
-  if (e.target.classList.contains("copy")) {
-    navigator.clipboard?.writeText(e.target.nextElementSibling.textContent); toast("Código copiado");
-  }
+  const pre = e.target.closest("pre");
+  if (!pre) return;
+  const code = pre.querySelector("code")?.textContent || "";
+  if (e.target.classList.contains("copy")) { navigator.clipboard?.writeText(code); toast("Código copiado"); }
+  if (e.target.classList.contains("preview")) openArtifact(code, pre.querySelector("code")?.dataset.lang);
+});
+// --- Panel de vista previa (HTML / SVG en un iframe aislado) -----------------------------------
+function openArtifact(code, lang) {
+  const isSvg = lang === "svg" || /^\s*<svg/i.test(code);
+  const doc = isSvg ? `<!doctype html><meta charset="utf-8"><body style="margin:0;display:grid;place-items:center;min-height:100vh;background:#fff">${code}</body>` : code;
+  $("#artifact-frame").srcdoc = doc;
+  $("#artifact-src").textContent = code;
+  $("#artifact-title").textContent = isSvg ? "Vista previa (SVG)" : "Vista previa (HTML)";
+  $("#artifact-frame").classList.remove("hidden"); $("#artifact-src").classList.add("hidden");
+  $("#artifact-code").textContent = "Código";
+  $("#artifact").classList.remove("hidden");
+  $("#artifact-open").onclick = () => {
+    const url = URL.createObjectURL(new Blob([doc], { type: "text/html" }));
+    window.open(url, "_blank", "noopener");
+  };
+}
+$("#artifact-close").addEventListener("click", () => $("#artifact").classList.add("hidden"));
+$("#artifact-code").addEventListener("click", () => {
+  const showCode = !$("#artifact-frame").classList.contains("hidden");
+  $("#artifact-frame").classList.toggle("hidden", showCode); $("#artifact-src").classList.toggle("hidden", !showCode);
+  $("#artifact-code").textContent = showCode ? "Vista previa" : "Código";
 });
 async function editFrom(m) {
   if (S.streaming) return;
@@ -351,6 +453,11 @@ async function regenerate(m) {
 }
 
 // --- Envío con streaming -----------------------------------------------------------------
+function setSending(on) {
+  const b = $("#send-btn");
+  b.textContent = on ? "■" : "↑"; b.classList.toggle("stop", on);
+  b.title = on ? "Detener" : "Enviar"; b.dataset.state = on ? "sending" : "idle";
+}
 const input = $("#input");
 input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; });
 input.addEventListener("keydown", (e) => {
@@ -380,7 +487,7 @@ async function send(text, attachments, isContinue = false) {
   box.append(el); box.scrollTop = box.scrollHeight;
 
   const ctrl = new AbortController(); S.streaming = ctrl;
-  $("#send-btn").textContent = "Detener"; $("#send-btn").classList.add("danger");
+  setSending(true);
   let content = "", reasoning = "", tools = [], errorMsg = null, raf = 0;
   const extra = { route: null, fallbacks: [], images: [] };
   const paint = () => {
@@ -427,7 +534,7 @@ async function send(text, attachments, isContinue = false) {
     if (e.name !== "AbortError") errorMsg = e.message;
   } finally {
     S.streaming = null;
-    $("#send-btn").textContent = "Enviar"; $("#send-btn").classList.remove("danger");
+    setSending(false);
     if (errorMsg) toast("Error: " + errorMsg, 7000);
     if (S.convId) { await new Promise((r) => setTimeout(r, 150)); await openConversation(S.convId).catch(() => {}); }
     else el.remove();
@@ -814,6 +921,7 @@ async function loadSettings() {
   const pe = $("#providers-edit"); pe.innerHTML = "";
   S.settings.providers.forEach((p, idx) => pe.append(providerBox(p, idx)));
   loadMemory();
+  renderSync();
 
   const f = $("#settings-form"); f.innerHTML = "";
   for (let [key, label, type, hint] of FIELDS) {
@@ -850,6 +958,76 @@ async function loadSettings() {
     if (hint) f.append(h("div", { class: "hint" }, hint));
   }
 }
+// --- Sincronización entre equipos -------------------------------------------------------------
+async function renderSync() {
+  const box = $("#sync-box"); box.innerHTML = "";
+  const st = await api("/api/sync/status");
+  box.append(h("p", { class: "muted" }, "Pon la misma clave en todos tus equipos con G3G3AI (Konkr, PC…) y añade la dirección del otro. "
+    + "Se sincronizan conversaciones, memoria y proveedores API (con sus claves). Cada equipo conserva sus carpetas, modelos locales y contraseña. "
+    + `Todo viaja cifrado con la clave. Se sincroniza cada ${Math.round(st.interval / 60)} min.`));
+  const keyRow = h("div", { class: "row" });
+  if (st.has_key) {
+    const shown = h("span", { class: "sync-key" }, "••••-••••-••••-••••-••••-••••");
+    keyRow.append(h("b", {}, "Clave:"), shown,
+      h("button", { class: "ghost small", onclick: async (e) => {
+        const { key } = await api("/api/sync/key"); shown.textContent = key; e.target.remove();
+      } }, "Mostrar"),
+      h("button", { class: "ghost small", onclick: () => { keyRow.replaceWith(keyEditor()); } }, "Cambiar"));
+    box.append(keyRow);
+  } else box.append(keyEditor());
+
+  box.append(h("h3", { style: "font-size:15px;margin:16px 0 6px" }, "Equipos"));
+  const ul = h("ul", { class: "list" });
+  const peers = st.peers || [];
+  if (!peers.length) ul.append(h("li", { class: "muted" }, "Ninguno todavía. Añade la dirección del otro equipo (la ves en su Ajustes → Acceso remoto)."));
+  for (const p of peers) {
+    const s2 = st.status[p.url];
+    ul.append(h("li", {},
+      h("div", { class: "name" }, p.name || "Equipo (aún sin sincronizar)", h("div", { class: "sub" }, p.url)),
+      s2 ? h("span", { class: "badge " + (s2.ok ? "ok" : "bad"), title: s2.message || "" },
+        s2.ok ? `✔ ${new Date(s2.when * 1000).toLocaleTimeString()} · ↓${s2.received} ↑${s2.sent}` : "✕ " + s2.message)
+        : h("span", { class: "badge" }, "pendiente"),
+      h("button", { class: "ghost small", onclick: async () => {
+        await api("/api/settings", { method: "PUT", body: { sync_peers: peers.filter((x) => x.url !== p.url) } }); renderSync();
+      } }, "Quitar")));
+  }
+  box.append(ul);
+  const add = h("input", { class: "grow", placeholder: "http://192.168.1.50:8800" });
+  box.append(h("form", { class: "row", onsubmit: async (e) => {
+    e.preventDefault();
+    let url = add.value.trim(); if (!url) return;
+    if (!/^https?:\/\//.test(url)) url = "http://" + url;
+    if (!/:\d+(\/|$)/.test(url.replace(/^https?:\/\//, ""))) url = url.replace(/\/$/, "") + ":8800";
+    await api("/api/settings", { method: "PUT", body: { sync_peers: [...peers, { url: url.replace(/\/$/, "") }] } });
+    renderSync();
+  } }, add, h("button", { class: "ghost small" }, "Añadir equipo")));
+  for (const [label, s2] of Object.entries(st.status).filter(([k]) => k.startsWith("recibido de")))
+    box.append(h("p", { class: "muted", style: "font-size:13px" }, `↔ ${label}: ${new Date(s2.when * 1000).toLocaleString()}`));
+  box.append(h("div", { class: "row end" }, h("button", { class: "primary small", disabled: !st.has_key || !peers.length, onclick: async (e) => {
+    e.target.disabled = true; e.target.textContent = "Sincronizando…";
+    try { await api("/api/sync/now", { method: "POST" }); toast("Sincronización terminada"); S.models = {}; await loadProviders(); loadConversations(); }
+    catch (err) { toast(err.message); }
+    renderSync();
+  } }, "🔄 Sincronizar ahora")));
+}
+function keyEditor() {
+  const inp = h("input", { class: "grow sync-key", placeholder: "Pega aquí la clave del otro equipo" });
+  return h("div", {},
+    h("div", { class: "row" },
+      h("button", { class: "primary small", onclick: async () => {
+        if (!confirm("¿Generar una clave nueva? Tendrás que ponerla también en tus otros equipos.")) return;
+        const { key } = await api("/api/sync/new-key", { method: "POST" });
+        prompt("Clave nueva. Cópiala y pégala en Ajustes → Sincronización de tus otros equipos:", key);
+        renderSync();
+      } }, "Generar clave nueva"),
+      h("span", { class: "muted" }, "o")),
+    h("form", { class: "row", style: "margin-top:8px", onsubmit: async (e) => {
+      e.preventDefault(); if (!inp.value.trim()) return;
+      await api("/api/settings", { method: "PUT", body: { sync_key: inp.value.trim().toUpperCase() } });
+      toast("Clave guardada"); renderSync();
+    } }, inp, h("button", { class: "ghost small" }, "Guardar clave")));
+}
+
 async function loadMemory() {
   const box = $("#memory-list"); box.innerHTML = "";
   const items = await api("/api/memory");
@@ -944,6 +1122,7 @@ async function init() {
   const last = store.get("conv", null);
   if (last) await openConversation(last).catch(newChat);
   setView(store.get("view", "chat"));
+  renderActiveTools(); setSending(false);
   setInterval(refreshStatus, 8000);
 }
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("/sw.js").catch(() => {});

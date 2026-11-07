@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="theme-color" content="#14161a">
+<meta name="theme-color" content="#f5f4ed" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1f1e1c" media="(prefers-color-scheme: dark)">
 <title>G3G3AI</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
@@ -13,161 +14,213 @@
 <body>
 <div id="login" class="overlay hidden">
   <form id="login-form" class="card login-card">
+    <div class="logo-big">✦</div>
     <h1>G3G3AI</h1>
-    <p>Introduce la contraseña que aparece en el Konkr (Ajustes → Acceso remoto).</p>
+    <p class="muted">Introduce la contraseña que aparece en el equipo (Ajustes → Acceso remoto).</p>
     <input id="login-token" type="password" placeholder="Contraseña" autocomplete="current-password" required>
     <button class="primary" type="submit">Entrar</button>
     <p id="login-error" class="error"></p>
   </form>
 </div>
 
-<header class="topbar">
-  <button id="menu-btn" class="icon-btn" title="Conversaciones" aria-label="Conversaciones">☰</button>
-  <span class="brand">G3G3AI</span>
-  <nav class="tabs">
-    <button data-view="chat" class="active">Chat</button>
-    <button data-view="models">Modelos</button>
-    <button data-view="files">Archivos</button>
-    <button data-view="settings">Ajustes</button>
-  </nav>
-  <span id="status-pill" class="pill" title="Estado del modelo local">—</span>
-</header>
-
-<main>
-  <!-- CHAT -->
-  <section id="view-chat" class="view active">
-    <aside id="sidebar">
-      <button id="new-chat" class="primary wide">+ Nueva conversación</button>
-      <ul id="conv-list"></ul>
-    </aside>
-    <div class="chat-main">
-      <div id="messages"><div class="empty-state">
-        <h2>¿En qué te ayudo?</h2>
-        <p>Elige un modelo abajo. Los modelos locales se descargan y cargan en <b>Modelos</b>.</p>
-      </div></div>
-      <div class="composer">
-        <div class="composer-bar">
-          <select id="model-select" title="Modelo"></select>
-          <label class="toggle" id="auto-label">
-            <input type="checkbox" id="auto-toggle"> <span>🔀 Auto</span>
-          </label>
-          <label class="toggle" title="Permite a la IA buscar en internet y leer páginas web">
-            <input type="checkbox" id="web-toggle"> <span>🌐 Web</span>
-          </label>
-          <label class="toggle" title="Modo agente: la IA puede leer archivos y, según tus permisos, editarlos y ejecutar comandos">
-            <input type="checkbox" id="tools-toggle"> <span>🛠 Agente</span>
-          </label>
-          <button id="system-btn" class="ghost small" title="Instrucciones del sistema para esta conversación">⚙ Sistema</button>
-        </div>
-        <div id="attachments" class="chips"></div>
-        <div class="composer-row">
-          <button id="attach-btn" class="icon-btn" title="Adjuntar archivo o documento">📎</button>
-          <button id="camera-btn" class="icon-btn" title="Hacer o elegir una foto">📷</button>
-          <input id="camera-input" type="file" accept="image/*" capture="environment" hidden>
-          <button id="image-btn" class="icon-btn" title="Generar una imagen">🎨</button>
-          <textarea id="input" rows="1" placeholder="Escribe un mensaje…  (Enter envía, Mayús+Enter nueva línea)"></textarea>
-          <button id="send-btn" class="primary">Enviar</button>
-        </div>
-      </div>
+<div class="app">
+  <!-- Barra lateral -->
+  <aside id="sidebar">
+    <div class="side-head">
+      <span class="brand"><span class="logo">✦</span> G3G3AI</span>
+      <button id="side-collapse" class="icon-btn" title="Ocultar barra lateral" aria-label="Ocultar barra lateral">⟨</button>
     </div>
-  </section>
-
-  <!-- MODELOS -->
-  <section id="view-models" class="view">
-    <div class="page">
-      <div class="card">
-        <h2>Modelo cargado</h2>
-        <div id="llama-status"></div>
-        <details><summary>Registro de llama-server</summary><pre id="llama-logs" class="logs"></pre></details>
-      </div>
-      <div class="card">
-        <h2>Mis modelos <small id="disk-free"></small></h2>
-        <div class="row params">
-          <label>Contexto <input id="p-ctx" type="number" min="512" step="512"></label>
-          <label>Hilos <input id="p-threads" type="number" min="0" placeholder="auto"></label>
-          <label>Capas GPU <input id="p-ngl" type="number" min="0"></label>
-        </div>
-        <ul id="local-models" class="list"></ul>
-      </div>
-      <div class="card">
-        <h2>🎨 Generación de imágenes</h2>
-        <div id="image-engine"></div>
-      </div>
-      <div class="card">
-        <h2>Descargar modelos (Hugging Face)</h2>
-        <form id="hub-search" class="row">
-          <input id="hub-q" placeholder="Buscar: qwen3 4b, gemma 3, llama 3.2…" required>
-          <button class="primary">Buscar</button>
-        </form>
-        <div class="suggestions">Sugerencias para 8 GB de RAM:
-          <button class="link" data-q="Qwen3-4B GGUF">Qwen3 4B</button>
-          <button class="link" data-q="gemma-3-4b-it GGUF">Gemma 3 4B</button>
-          <button class="link" data-q="Llama-3.2-3B-Instruct GGUF">Llama 3.2 3B</button>
-          <button class="link" data-q="Qwen2.5-Coder-3B GGUF">Qwen2.5 Coder 3B</button>
-          <button class="link" data-q="Phi-4-mini GGUF">Phi-4 mini</button>
-          <br>Con visión (fotos y documentos escaneados):
-          <button class="link" data-q="gemma-3-4b-it GGUF">Gemma 3 4B</button>
-          <button class="link" data-q="Qwen2.5-VL-3B-Instruct GGUF">Qwen2.5-VL 3B</button>
-          <br>Para generar imágenes en local:
-          <button class="link" data-q="sd-turbo gguf">SD Turbo</button>
-          <button class="link" data-q="sdxl-turbo gguf">SDXL Turbo</button>
-        </div>
-        <div id="downloads"></div>
-        <ul id="hub-results" class="list"></ul>
-      </div>
+    <button id="new-chat" class="new-chat"><span class="plus">＋</span> Nueva conversación</button>
+    <nav class="tabs side-nav">
+      <button data-view="chat" class="active"><span class="ico">💬</span> Chats</button>
+      <button data-view="models"><span class="ico">🧩</span> Modelos</button>
+      <button data-view="files"><span class="ico">📁</span> Archivos</button>
+    </nav>
+    <div class="side-search"><input id="conv-search" type="search" placeholder="Buscar conversaciones…"></div>
+    <div id="conv-list" class="conv-list"></div>
+    <div class="side-foot">
+      <button data-view="settings" class="foot-btn tabs-like"><span class="ico">⚙</span> Ajustes</button>
+      <span id="status-pill" class="pill" title="Estado del modelo local">—</span>
     </div>
-  </section>
+  </aside>
+  <div id="scrim" class="scrim"></div>
 
-  <!-- ARCHIVOS -->
-  <section id="view-files" class="view">
-    <div class="page">
-      <div class="card">
-        <div class="row files-toolbar">
-          <button id="files-up" class="ghost small">⬆ Subir nivel</button>
-          <input id="files-path" class="grow">
-          <button id="files-go" class="ghost small">Ir</button>
-        </div>
-        <div class="row files-toolbar">
-          <label class="ghost small btn-like">⤴ Subir archivos aquí<input id="files-upload" type="file" multiple hidden></label>
-          <button id="files-mkdir" class="ghost small">+ Carpeta</button>
-          <label class="toggle"><input type="checkbox" id="files-hidden"> ocultos</label>
-          <form id="files-search-form" class="row grow"><input id="files-search" class="grow" placeholder="Buscar por nombre…"></form>
-        </div>
-        <ul id="files-list" class="list files"></ul>
-      </div>
-    </div>
-  </section>
+  <div class="main">
+    <header class="topbar">
+      <button id="menu-btn" class="icon-btn" title="Mostrar barra lateral" aria-label="Mostrar barra lateral">☰</button>
+      <span id="top-title" class="top-title"></span>
+      <button id="top-new" class="icon-btn" title="Nueva conversación" aria-label="Nueva conversación">✎</button>
+    </header>
 
-  <!-- AJUSTES -->
-  <section id="view-settings" class="view">
-    <div class="page">
-      <div class="card">
-        <h2>Acceso remoto (móvil / portátil)</h2>
-        <div id="access-info"></div>
-      </div>
-      <div class="card">
-        <h2>🧠 Memoria</h2>
-        <p class="muted">Lo que la IA recuerda de ti entre conversaciones. Puedes editarlo o borrarlo cuando quieras. Los interruptores están en «General».</p>
-        <form id="memory-add" class="row"><input id="memory-new" class="grow" placeholder="Añadir un recuerdo, p.ej. «Prefiere respuestas cortas»"><button class="primary small">Añadir</button></form>
-        <ul id="memory-list" class="list"></ul>
-        <div class="row end"><button id="memory-clear" class="ghost small">Borrar todo</button></div>
-      </div>
-      <div class="card">
-        <h2>Proveedores API</h2>
-        <div id="providers-edit"></div>
-        <button id="add-provider" class="ghost small">+ Añadir proveedor compatible con OpenAI</button>
-      </div>
-      <div class="card">
-        <h2>General</h2>
-        <form id="settings-form" class="form-grid"></form>
-      </div>
-      <div class="row end">
-        <button id="logout" class="ghost">Cerrar sesión</button>
-        <button id="save-settings" class="primary">Guardar ajustes</button>
-      </div>
-    </div>
-  </section>
-</main>
+    <main>
+      <!-- CHAT -->
+      <section id="view-chat" class="view active">
+        <div class="chat-main">
+          <div id="messages"></div>
+          <div class="composer-wrap">
+            <div class="composer">
+              <div id="attachments" class="chips"></div>
+              <textarea id="input" rows="1" placeholder="¿En qué puedo ayudarte?"></textarea>
+              <div class="composer-row">
+                <div class="left-tools">
+                  <div class="menu-anchor">
+                    <button id="plus-btn" class="round-btn" title="Añadir" aria-label="Añadir">＋</button>
+                    <div id="plus-menu" class="popover hidden">
+                      <button id="attach-btn"><span class="ico">📎</span> Adjuntar archivo o documento</button>
+                      <button id="camera-btn"><span class="ico">📷</span> Hacer o elegir una foto</button>
+                      <button id="image-btn"><span class="ico">🎨</span> Generar una imagen</button>
+                    </div>
+                  </div>
+                  <input id="camera-input" type="file" accept="image/*" capture="environment" hidden>
+                  <div class="menu-anchor">
+                    <button id="tools-btn" class="round-btn" title="Herramientas" aria-label="Herramientas">⚙︎</button>
+                    <div id="tools-menu" class="popover hidden">
+                      <label class="switch-row" id="auto-label">
+                        <span><b>🔀 Auto</b><small>Elige local o API según la tarea</small></span>
+                        <input type="checkbox" id="auto-toggle" class="switch">
+                      </label>
+                      <label class="switch-row">
+                        <span><b>🌐 Búsqueda web</b><small>Buscar en internet y leer páginas</small></span>
+                        <input type="checkbox" id="web-toggle" class="switch">
+                      </label>
+                      <label class="switch-row">
+                        <span><b>🛠 Agente</b><small>Archivos y comandos (con tu permiso)</small></span>
+                        <input type="checkbox" id="tools-toggle" class="switch">
+                      </label>
+                      <button id="system-btn"><span class="ico">📝</span> Instrucciones de esta conversación</button>
+                    </div>
+                  </div>
+                  <div id="active-tools" class="active-tools"></div>
+                </div>
+                <div class="right-tools">
+                  <select id="model-select" title="Modelo" aria-label="Modelo"></select>
+                  <button id="send-btn" class="send-btn" title="Enviar" aria-label="Enviar">↑</button>
+                </div>
+              </div>
+            </div>
+            <div class="composer-hint">La IA puede equivocarse. Revisa la información importante.</div>
+          </div>
+        </div>
+        <!-- Panel de vista previa (HTML / SVG) -->
+        <aside id="artifact" class="artifact hidden">
+          <div class="artifact-head">
+            <b id="artifact-title">Vista previa</b>
+            <span>
+              <button id="artifact-code" class="ghost small">Código</button>
+              <button id="artifact-open" class="ghost small" title="Abrir en una pestaña">↗</button>
+              <button id="artifact-close" class="icon-btn" aria-label="Cerrar">✕</button>
+            </span>
+          </div>
+          <iframe id="artifact-frame" sandbox="allow-scripts allow-forms allow-modals" title="Vista previa"></iframe>
+          <pre id="artifact-src" class="hidden"></pre>
+        </aside>
+      </section>
+
+      <!-- MODELOS -->
+      <section id="view-models" class="view">
+        <div class="page">
+          <h1 class="page-title">Modelos</h1>
+          <div class="card">
+            <h2>Modelo cargado</h2>
+            <div id="llama-status"></div>
+            <details><summary>Registro de llama-server</summary><pre id="llama-logs" class="logs"></pre></details>
+          </div>
+          <div class="card">
+            <h2>Mis modelos <small id="disk-free"></small></h2>
+            <div class="row params">
+              <label>Contexto <input id="p-ctx" type="number" min="512" step="512"></label>
+              <label>Hilos <input id="p-threads" type="number" min="0" placeholder="auto"></label>
+              <label>Capas GPU <input id="p-ngl" type="number" min="0"></label>
+            </div>
+            <ul id="local-models" class="list"></ul>
+          </div>
+          <div class="card">
+            <h2>🎨 Generación de imágenes</h2>
+            <div id="image-engine"></div>
+          </div>
+          <div class="card">
+            <h2>Descargar modelos (Hugging Face)</h2>
+            <form id="hub-search" class="row">
+              <input id="hub-q" class="grow" placeholder="Buscar: qwen3 4b, gemma 3, llama 3.2…" required>
+              <button class="primary">Buscar</button>
+            </form>
+            <div class="suggestions">Sugerencias para 8 GB de RAM:
+              <button class="link" data-q="Qwen3-4B GGUF">Qwen3 4B</button>
+              <button class="link" data-q="gemma-3-4b-it GGUF">Gemma 3 4B</button>
+              <button class="link" data-q="Llama-3.2-3B-Instruct GGUF">Llama 3.2 3B</button>
+              <button class="link" data-q="Qwen2.5-Coder-3B GGUF">Qwen2.5 Coder 3B</button>
+              <button class="link" data-q="Phi-4-mini GGUF">Phi-4 mini</button>
+              <br>Con visión (fotos y documentos escaneados):
+              <button class="link" data-q="gemma-3-4b-it GGUF">Gemma 3 4B</button>
+              <button class="link" data-q="Qwen2.5-VL-3B-Instruct GGUF">Qwen2.5-VL 3B</button>
+              <br>Para generar imágenes en local:
+              <button class="link" data-q="sd-turbo gguf">SD Turbo</button>
+              <button class="link" data-q="sdxl-turbo gguf">SDXL Turbo</button>
+            </div>
+            <div id="downloads"></div>
+            <ul id="hub-results" class="list"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ARCHIVOS -->
+      <section id="view-files" class="view">
+        <div class="page">
+          <h1 class="page-title">Archivos</h1>
+          <div class="card">
+            <div class="row files-toolbar">
+              <button id="files-up" class="ghost small">⬆ Subir nivel</button>
+              <input id="files-path" class="grow">
+              <button id="files-go" class="ghost small">Ir</button>
+            </div>
+            <div class="row files-toolbar">
+              <label class="ghost small btn-like">⤴ Subir archivos aquí<input id="files-upload" type="file" multiple hidden></label>
+              <button id="files-mkdir" class="ghost small">+ Carpeta</button>
+              <label class="toggle"><input type="checkbox" id="files-hidden"> ocultos</label>
+              <form id="files-search-form" class="row grow"><input id="files-search" class="grow" placeholder="Buscar por nombre…"></form>
+            </div>
+            <ul id="files-list" class="list files"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- AJUSTES -->
+      <section id="view-settings" class="view">
+        <div class="page">
+          <h1 class="page-title">Ajustes</h1>
+          <div class="card">
+            <h2>📱 Acceso remoto (móvil / portátil)</h2>
+            <div id="access-info"></div>
+          </div>
+          <div class="card">
+            <h2>🔄 Sincronización entre equipos</h2>
+            <div id="sync-box"></div>
+          </div>
+          <div class="card">
+            <h2>🧠 Memoria</h2>
+            <p class="muted">Lo que la IA recuerda de ti entre conversaciones. Puedes editarlo o borrarlo cuando quieras. Los interruptores están en «General».</p>
+            <form id="memory-add" class="row"><input id="memory-new" class="grow" placeholder="Añadir un recuerdo, p.ej. «Prefiere respuestas cortas»"><button class="primary small">Añadir</button></form>
+            <ul id="memory-list" class="list"></ul>
+            <div class="row end"><button id="memory-clear" class="ghost small">Borrar todo</button></div>
+          </div>
+          <div class="card">
+            <h2>☁ Proveedores API</h2>
+            <div id="providers-edit"></div>
+            <button id="add-provider" class="ghost small">+ Añadir proveedor u otro equipo</button>
+          </div>
+          <div class="card">
+            <h2>General</h2>
+            <form id="settings-form" class="form-grid"></form>
+          </div>
+          <div class="row end sticky-save">
+            <button id="logout" class="ghost">Cerrar sesión</button>
+            <button id="save-settings" class="primary">Guardar ajustes</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
 
 <!-- Selector de archivos para adjuntar -->
 <dialog id="picker">
@@ -175,7 +228,7 @@
   <div class="row">
     <label class="primary btn-like">Desde este dispositivo<input id="picker-upload" type="file" multiple hidden></label>
   </div>
-  <p class="muted">…o elige uno del Konkr:</p>
+  <p class="muted">…o elige uno del equipo:</p>
   <div class="row"><button id="picker-up" class="ghost small">⬆</button><span id="picker-path" class="muted grow"></span></div>
   <ul id="picker-list" class="list files"></ul>
 </dialog>
@@ -189,7 +242,7 @@
 </dialog>
 
 <dialog id="system-dialog">
-  <div class="dialog-head"><b>Instrucciones del sistema (esta conversación)</b><button class="icon-btn" data-close>✕</button></div>
+  <div class="dialog-head"><b>Instrucciones de esta conversación</b><button class="icon-btn" data-close>✕</button></div>
   <textarea id="system-text" rows="8"></textarea>
   <div class="row end"><button id="system-reset" class="ghost">Usar predeterminadas</button><button id="system-save" class="primary">Aplicar</button></div>
 </dialog>

@@ -54,6 +54,13 @@ class H(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "m1", "function": {
                 "name": "memory_save", "arguments": json.dumps({"content": "Al usuario " + fact})}}]}}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if last["role"] == "user" and "página html" in str(last["content"]):
+            text = ("Aquí tienes una **página** sencilla:\n\n```html\n<!doctype html><html><body style=\"font-family:sans-serif\">"
+                    "<h1 style=\"color:#c2603f\">Hola desde G3G3AI</h1><button onclick=\"this.textContent='¡Pulsado!'\">Púlsame</button>"
+                    "</body></html>\n```\n\n| Parte | Qué hace |\n|---|---|\n| h1 | Título |\n| button | Botón |\n\n- Uno\n- Dos")
+            for w in text.split(" "):
+                self.chunk({"choices": [{"delta": {"content": w + " "}}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if last["role"] == "user" and "qué sabes" in last["content"]:
             system = msgs[0]["content"] if msgs[0]["role"] == "system" else ""
             mem = system.split("Memoria", 1)[1][:300] if "Memoria" in system else "nada"

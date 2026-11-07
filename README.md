@@ -14,7 +14,8 @@ Cliente de IA al estilo de LM Studio para tu **Konkr Pocket Fit** (SteamOS ARM) 
 - 🗜 **Conversaciones largas**: cuando no caben en el contexto, lo antiguo se resume solo, y en las tareas largas del agente se recortan las salidas viejas de las herramientas.
 - 🎨 **Generación de imágenes**: por API (OpenAI, Gemini, OpenRouter…) o en local con stable-diffusion.cpp. Escribe `/imagen descripción` o pídeselo a la IA.
 - 🧠 **Memoria entre conversaciones**: recuerda datos duraderos sobre ti (preferencias, proyectos…). Cada recuerdo nuevo se ve en el chat y puedes editarlos o borrarlos en Ajustes → Memoria.
-- 🔗 **Konkr ↔ PC**: cada equipo puede usar el modelo local del otro (Ajustes → Añadir proveedor → «Otro equipo con G3G3AI»).
+- 🔄 **Sincronización Konkr ↔ PC**: con una clave común se sincronizan conversaciones, memoria y APIs. Además, cada equipo puede usar el modelo local del otro (Ajustes → Añadir proveedor → «Otro equipo con G3G3AI»).
+- ✦ **Interfaz cuidada**: barra lateral con búsqueda y conversaciones por fecha, compositor con menú «+» y herramientas, vista previa de HTML/SVG en un panel lateral, modo claro y oscuro.
 - 📱 **Desde el móvil**: interfaz web protegida con contraseña, instalable como app.
 - 📁 Explorador de archivos, subida y descarga, adjuntos en el chat.
 
@@ -132,6 +133,16 @@ Cuando una conversación no cabe en el contexto (el del modelo local, o «Contex
 - **Por API** (Ajustes → 🎨 Imágenes): elige el proveedor y el modelo. Por ejemplo, OpenAI con `gpt-image-1`, Gemini con `imagen-3.0-generate-002` u OpenRouter con `google/gemini-2.5-flash-image`.
 - **En local** (Modelos → 🎨 Generación de imágenes): instala stable-diffusion.cpp (en el PC, con un botón; en la Konkr, con `./install.sh --with-sd`), descarga un modelo de imagen GGUF (por ejemplo, SD Turbo) y pulsa 🎨 en él. En la Konkr, cuenta con bastante espera por imagen y calidad modesta. En un PC con tarjeta gráfica va mucho mejor.
 
+### Sincronizar la Konkr y el PC
+
+1. En uno de los equipos: **Ajustes → 🔄 Sincronización → Generar clave nueva**. Copia la clave (6 grupos de 4 letras y números).
+2. En el otro equipo: pega la clave en el mismo sitio y pulsa **Guardar clave**.
+3. En cualquiera de los dos, añade la dirección del otro (por ejemplo `192.168.1.50`, la ves en su *Ajustes → Acceso remoto*) y pulsa **Sincronizar ahora**. A partir de ahí se sincronizan solos cada 2 minutos.
+
+**Qué se sincroniza:** conversaciones, memoria, proveedores API **con sus claves** (si configuras DeepSeek en el PC, aparece en la Konkr), modo Auto, instrucciones, permisos del agente y ajustes de imágenes y búsqueda web.
+**Qué no:** las carpetas, los modelos locales, el puerto y la contraseña de cada equipo. Los archivos adjuntos y las imágenes tampoco se copian: en el otro equipo se verá el texto de la conversación.
+**Seguridad:** todo viaja cifrado y autenticado con la clave (AES + HMAC). Un equipo sin la clave no puede leer ni enviar nada. Si el mismo dato cambia en los dos equipos, gana el cambio más reciente.
+
 ## Modelos recomendados
 
 En la Konkr (8 GB de RAM), mejor modelos de 3–4B en versión Q4_K_M: **Qwen3 4B** (bueno con herramientas y en modo agente), **Gemma 3 4B**, **Llama 3.2 3B**, **Qwen2.5 Coder 3B**. En un PC con 16 GB o más y tarjeta gráfica puedes usar modelos de 7–14B.
@@ -158,6 +169,7 @@ g3g3ai/
   documents.py  lectura de PDF, Office e imágenes
   context.py    historial: imágenes/visión y resumen de conversaciones largas
   images.py     generación de imágenes (API y stable-diffusion.cpp)
+  sync.py       sincronización cifrada entre equipos
   providers.py  streaming OpenAI/Anthropic + bucle de herramientas
   llama.py      proceso llama-server
   engine.py     descarga de llama.cpp precompilado (Windows/macOS/Linux x64)
