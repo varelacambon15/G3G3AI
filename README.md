@@ -61,7 +61,8 @@ En Linux x64 también hay un binario `G3G3AI-linux-x64` en Releases/Actions.
 
 ### Android
 
-- **Como cliente** (lo recomendado): abre en el navegador la dirección que aparece en Ajustes → Acceso remoto, y usa «Añadir a pantalla de inicio».
+- **App (APK):** se conecta a tu Konkr o PC, y además tiene un **💬 Chat directo con API** para usar DeepSeek, Claude, OpenAI… desde el móvil sin ningún equipo encendido. Las claves se importan de un equipo con un toque. Ver `android/README.md`.
+- **Como cliente web** (sin instalar nada): abre en el navegador la dirección que aparece en Ajustes → Acceso remoto, y usa «Añadir a pantalla de inicio».
 - **Como servidor** (experimental): con [Termux](https://f-droid.org/packages/com.termux/) y `bash android/termux-install.sh`. Funciona con modelos pequeños (1–3B). Android puede cerrar Termux en segundo plano.
 
 ## Uso

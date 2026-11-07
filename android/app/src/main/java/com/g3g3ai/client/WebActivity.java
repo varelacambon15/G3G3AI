@@ -42,11 +42,14 @@ public class WebActivity extends Activity {
     private String baseUrl;
     private ValueCallback<Uri[]> fileCallback;
     private Uri cameraUri;
+    private boolean direct;
+    private NativeBridge bridge;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        baseUrl = getIntent().getStringExtra("url");
+        direct = getIntent().getBooleanExtra("direct", false);
+        baseUrl = direct ? "file:///android_asset/direct" : getIntent().getStringExtra("url");
         String token = getIntent().getStringExtra("token");
 
         FrameLayout root = new FrameLayout(this);
@@ -62,7 +65,8 @@ public class WebActivity extends Activity {
         ws.setDomStorageEnabled(true);
         ws.setDatabaseEnabled(true);
         ws.setMediaPlaybackRequiresUserGesture(false);
-        ws.setAllowFileAccess(false);
+        // El chat directo es una página empaquetada en la APK (file:///android_asset)
+        ws.setAllowFileAccess(direct);
         ws.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         ws.setUserAgentString(ws.getUserAgentString() + " G3G3AI-Android/0.5");
         CookieManager.getInstance().setAcceptCookie(true);
@@ -73,7 +77,8 @@ public class WebActivity extends Activity {
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
                 Uri u = req.getUrl();
                 Uri base = Uri.parse(baseUrl);
-                boolean sameServer = u.getHost() != null && u.getHost().equals(base.getHost()) && u.getPort() == base.getPort();
+                boolean sameServer = direct ? "file".equals(u.getScheme())
+                        : u.getHost() != null && u.getHost().equals(base.getHost()) && u.getPort() == base.getPort();
                 if (sameServer || "blob".equals(u.getScheme()) || "data".equals(u.getScheme())) return false;
                 // Enlaces externos (fuentes de la búsqueda web, etc.) en el navegador
                 try {
@@ -112,7 +117,12 @@ public class WebActivity extends Activity {
 
         web.setDownloadListener((url, userAgent, contentDisposition, mimeType, length) -> download(url, userAgent, contentDisposition, mimeType));
 
-        if (savedInstanceState != null) {
+        if (direct) {
+            // El puente con las claves API sólo existe para la página local, nunca para un servidor
+            bridge = new NativeBridge(this, web);
+            web.addJavascriptInterface(bridge, "G3Native");
+            web.loadUrl("file:///android_asset/direct/index.html");
+        } else if (savedInstanceState != null) {
             web.restoreState(savedInstanceState);
         } else {
             String first = baseUrl + "/";
@@ -269,6 +279,7 @@ public class WebActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (bridge != null) bridge.shutdown();
         if (web != null) web.destroy();
         super.onDestroy();
     }

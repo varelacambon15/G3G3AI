@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>G3G3AI · Chat directo</title>
+<link rel="stylesheet" href="direct.css">
+</head>
+<body>
+<header class="top">
+  <button id="menu" class="icon" aria-label="Conversaciones">☰</button>
+  <div class="title"><b>Chat directo</b><small id="subtitle">sin equipo · con tus claves API</small></div>
+  <button id="settings-btn" class="icon" aria-label="Ajustes">⚙</button>
+</header>
+
+<aside id="drawer" class="drawer">
+  <button id="new-chat" class="new"><span>＋</span> Nueva conversación</button>
+  <div id="convs"></div>
+  <p class="foot">Las conversaciones se guardan sólo en este móvil.</p>
+</aside>
+<div id="scrim" class="scrim"></div>
+
+<main id="messages"></main>
+
+<div class="composer-wrap">
+  <div class="composer">
+    <div id="attachments" class="chips"></div>
+    <textarea id="input" rows="1" placeholder="Escribe un mensaje…"></textarea>
+    <div class="row">
+      <button id="photo" class="round" title="Añadir foto" aria-label="Añadir foto">📷</button>
+      <input id="photo-input" type="file" accept="image/*" hidden>
+      <select id="model" aria-label="Modelo"></select>
+      <button id="send" class="send" aria-label="Enviar">↑</button>
+    </div>
+  </div>
+</div>
+
+<section id="settings" class="panel hidden">
+  <div class="panel-head"><b>Ajustes del chat directo</b><button id="settings-close" class="icon">✕</button></div>
+  <div class="panel-body">
+    <div class="card">
+      <h3>Importar APIs de un equipo</h3>
+      <p class="muted">Copia los proveedores y sus claves desde la Konkr o el PC (deben estar encendidos y en la misma red).</p>
+      <div id="servers"></div>
+    </div>
+    <div class="card">
+      <h3>Proveedores</h3>
+      <div id="providers"></div>
+      <button id="add-provider" class="ghost">+ Añadir API compatible con OpenAI</button>
+    </div>
+    <div class="card">
+      <h3>General</h3>
+      <label>Instrucciones del sistema<textarea id="system" rows="3"></textarea></label>
+      <label>Temperatura <input id="temperature" type="number" step="0.1" min="0" max="2"></label>
+      <label>Máx. tokens por respuesta <input id="max-tokens" type="number" min="64" step="64"></label>
+    </div>
+    <p class="muted small">Las claves se guardan en el almacenamiento privado de esta app y sólo se envían al proveedor correspondiente.</p>
+    <button id="settings-save" class="primary">Guardar</button>
+  </div>
+</section>
+
+<div id="toast"></div>
+<script src="direct.js"></script>
+</body>
+</html>

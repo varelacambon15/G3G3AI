@@ -840,3 +840,14 @@ def test_build_exe_tool(env):
     # Sin entorno de compilación la herramienta no se ofrece
     cfg.data.update(devenv_python=str(tmp / "no-existe"))
     assert "build_exe" not in ToolContext(Files(cfg), cfg).names()
+
+
+def test_providers_export_requires_auth(env):
+    client, cfg, home, tmp = env
+    assert client.get("/api/providers/export").status_code == 401
+    h = auth(cfg)
+    s = client.get("/api/settings", headers=h).json()
+    next(p for p in s["providers"] if p["id"] == "deepseek").update(enabled=True, api_key="sk-ds")
+    client.put("/api/settings", headers=h, json=s)
+    out = client.get("/api/providers/export", headers=h).json()
+    assert [(p["id"], p["api_key"]) for p in out["providers"]] == [("deepseek", "sk-ds")]

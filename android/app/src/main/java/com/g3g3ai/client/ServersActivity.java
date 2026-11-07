@@ -39,6 +39,25 @@ public class ServersActivity extends Activity {
         intro.setTextSize(14);
         root.addView(intro);
 
+        TextView direct = button("💬 Chat directo con API (sin equipo)");
+        direct.setBackgroundColor(Color.parseColor("#1F1E1D"));
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        dlp.topMargin = dp(14);
+        direct.setLayoutParams(dlp);
+        direct.setOnClickListener(v -> {
+            Intent i = new Intent(this, WebActivity.class);
+            i.putExtra("direct", true);
+            startActivity(i);
+        });
+        root.addView(direct);
+        TextView hint = new TextView(this);
+        hint.setText("Habla directamente con DeepSeek, Claude, OpenAI… con tus claves (puedes importarlas de un equipo).");
+        hint.setTextColor(Color.parseColor("#75716A"));
+        hint.setTextSize(12);
+        hint.setPadding(0, dp(4), 0, 0);
+        root.addView(hint);
+
         listBox = new LinearLayout(this);
         listBox.setOrientation(LinearLayout.VERTICAL);
         listBox.setPadding(0, dp(14), 0, dp(14));

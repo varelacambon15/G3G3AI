@@ -202,6 +202,13 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             out.append({k: p.get(k) for k in ("id", "name", "type", "enabled")})
         return out
 
+    @app.get("/api/providers/export")
+    async def providers_export():
+        """Proveedores API con sus claves, para el «Chat directo» de la app de Android (requiere la contraseña)."""
+        return {"providers": [p for p in cfg["providers"] if p.get("enabled") and p.get("api_key")],
+                "system": cfg["default_system_prompt"], "temperature": cfg["temperature"],
+                "max_tokens": cfg["max_tokens"]}
+
     @app.get("/api/providers/{pid}/models")
     async def provider_models(pid: str):
         if pid == LOCAL_PROVIDER:

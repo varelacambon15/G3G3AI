@@ -1,6 +1,15 @@
 # G3G3AI para Android (versión de prueba)
 
-App cliente: se conecta a G3G3AI en tu Konkr o tu PC (la IA se ejecuta allí).
+Dos formas de uso:
+
+1. **Conectar a un equipo** (Konkr o PC con G3G3AI): todas las funciones, incluidos modelos locales,
+   agente, búsqueda web y archivos.
+2. **💬 Chat directo con API**: sin equipo encendido. La app habla directamente con DeepSeek, Claude, OpenAI,
+   Gemini, OpenRouter, Groq o cualquier API compatible con OpenAI. Respuestas en streaming, razonamiento,
+   varias conversaciones guardadas en el móvil, instrucciones del sistema y fotos para modelos con visión.
+   Las claves se guardan en el almacenamiento privado de la app; con **Importar** se copian de un equipo
+   guardado (endpoint `/api/providers/export`, protegido con su contraseña). Sin agente, búsqueda web ni modelos locales.
+   El puente que hace las peticiones con las claves sólo existe para esta página empaquetada en la APK.
 
 - Lista de equipos (nombre, dirección y contraseña). Abre el último usado al iniciar.
 - Cámara y selector de archivos para adjuntar fotos y documentos.
