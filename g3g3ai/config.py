@@ -77,6 +77,8 @@ DEFAULTS: dict = {
     "sd_steps": 4,              # 1-4 para modelos «turbo»; 20+ para modelos normales
     "sd_cfg": 1.0,              # 1.0 para «turbo»; ~7 para modelos normales
     "sd_max_side": 512,         # límite de tamaño en local (la Konkr tarda mucho con imágenes grandes)
+    # Python del entorno de compilación (vacío = el de G3G3AI en la carpeta de datos)
+    "devenv_python": "",
     # Juegos de Steam: la IA puede leer y (siempre pidiendo permiso) modificar carpetas de juegos y prefijos de Proton
     "ai_game_write": True,
     "steam_dir": "",            # vacío = autodetectar

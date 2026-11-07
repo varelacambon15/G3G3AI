@@ -803,3 +803,38 @@ def test_steam_game_diagnostics_and_safe_edits(env, monkeypatch):
     _, strong, _ = ToolContext(Files(cfg), cfg).precheck("run_command", {"command": "flatpak install --user x", "unsandboxed": True})
     assert any("FUERA del aislamiento" in w for w in strong)
 
+
+
+def test_build_exe_tool(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext, tool_events
+    fake = _fake_exe(tmp, "python-dev", Path(__file__).parent / "fake_python.py")
+    cfg.data.update(devenv_python=str(fake), ai_commands="auto", agent_workdir=str(home))
+    ctx = ToolContext(Files(cfg), cfg, session_allow={"build_exe"})
+    assert "build_exe" in ctx.names()
+    assert "build_exe" in ctx.system_hint() and "PyInstaller" in ctx.system_hint()
+    (home / "app.py").write_text("print('hola')\n")
+    (home / "roto.py").write_text("syntax error (\n")
+
+    async def build(args):
+        evs, sink = [], []
+        async for ev in tool_events(ctx, "build_exe", args, sink):
+            evs.append(ev)
+        return evs, sink[0]
+
+    evs, res = asyncio.run(build({"script": str(home / "app.py"), "name": "Mi App"}))
+    assert res.startswith("Ejecutable creado") and any(e["type"] == "file" for e in evs)
+    exe = next(e["path"] for e in evs if e["type"] == "file")
+    assert Path(exe).parent == home / "dist" and Path(exe).name.startswith("Mi_App")
+    evs, res = asyncio.run(build({"script": str(home / "roto.py")}))
+    assert res.startswith("Error") and "SyntaxError" in res
+    # Instalar paquetes de internet siempre pide permiso, aunque se haya permitido «siempre»
+    _, strong, _ = ctx.precheck("build_exe", {"script": str(home / "app.py"), "packages": ["requests"]})
+    assert strong and "paquetes" in strong[0]
+    err, _, _ = ctx.precheck("build_exe", {"script": str(tmp / "fuera.py")})
+    assert err
+    # Sin entorno de compilación la herramienta no se ofrece
+    cfg.data.update(devenv_python=str(tmp / "no-existe"))
+    assert "build_exe" not in ToolContext(Files(cfg), cfg).names()

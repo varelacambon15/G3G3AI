@@ -36,7 +36,7 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 FILE_TOOLS = {"list_dir", "read_file", "search_files"}
 WRITE_TOOLS = {"write_file", "edit_file", "create_document"}
-COMMAND_TOOLS = {"run_command"}
+COMMAND_TOOLS = {"run_command", "build_exe"}
 WEB_TOOLS = {"web_search", "fetch_url"}
 MEMORY_TOOLS = {"memory_save", "memory_delete"}
 GAME_TOOLS = {"steam_games", "game_diagnostics"}
@@ -82,6 +82,16 @@ ALL_SPECS = {
                                              "true sólo si el comando necesita escribir fuera de las carpetas permitidas "
                                              "(p.ej. flatpak install --user, cambiar ~/.config). Siempre pide permiso."}},
                             ["command"])),
+    "build_exe": ("Compila un script de Python a un único ejecutable (.exe en Windows, binario en Linux) con PyInstaller. "
+                  "Escribe antes el script con write_file en una carpeta modificable. El ejecutable se ofrece al usuario "
+                  "para descargar.",
+                  _schema({"script": {"type": "string", "description": "Ruta del .py principal"},
+                           "name": {"type": "string", "description": "Nombre del ejecutable (sin extensión)"},
+                           "windowed": {"type": "boolean", "description": "true para programas con ventana (sin consola)"},
+                           "packages": {"type": "array", "items": {"type": "string"},
+                                        "description": "Paquetes de pip que necesita el script (p.ej. requests)"},
+                           "icon": {"type": "string", "description": "Ruta de un .ico (opcional)"}},
+                          ["script"])),
     "steam_games": ("Lista los juegos de Steam instalados (appid, tamaño, versión de Proton forzada).",
                     _schema({"query": {"type": "string", "description": "Filtro por nombre (opcional)"}})),
     "game_diagnostics": ("Diagnostica un juego de Steam: carpeta, Proton, opciones de lanzamiento, prefijo de Wine, "
@@ -143,6 +153,9 @@ class ToolContext:
                 out += ["write_file", "edit_file", "create_document"]
             if self.mode("run_command") != "off":
                 out.append("run_command")
+                from .devtools import devenv_python
+                if devenv_python(self.cfg):
+                    out.append("build_exe")
             if self._steam_present():
                 out += ["steam_games", "game_diagnostics"]
             if self.local_chat:
@@ -186,6 +199,13 @@ class ToolContext:
                 parts.append(f"Los comandos se ejecutan con {shell} en {self.workdir()} salvo que indiques cwd"
                              + (" dentro de un entorno aislado donde el resto del sistema es de sólo lectura."
                                 if self.sandboxed else "."))
+            if "run_command" in names:
+                from .devtools import summary as dev_summary
+                parts.append(f"Herramientas de programación instaladas: {dev_summary(self.cfg)}.")
+                if "build_exe" in names:
+                    parts.append("Para crear un programa ejecutable escribe el script de Python y compílalo con build_exe "
+                                 + ("(genera un .exe de Windows)." if sys.platform == "win32" else
+                                    "(en este equipo genera un binario de Linux; los .exe de Windows se crean en un PC con Windows)."))
             if "ask_local_model" in names:
                 parts.append("Para subtareas sencillas y voluminosas (resumir archivos largos, traducir, extraer) "
                              "puedes usar ask_local_model y ahorrar coste.")
@@ -220,6 +240,13 @@ class ToolContext:
                 p = self.files.resolve(args.get("path"), "ai_write")
                 if self.files.is_game_path(p) and not any(is_under(p, r) for r in self.files.write_roots):
                     return None, ["modifica archivos de un juego (se guarda una copia de seguridad del original)"], []
+            if name == "build_exe":
+                script = self.files.resolve(args.get("script"), "ai_write")
+                if script.suffix.lower() != ".py" or not script.is_file():
+                    return f"Error: {script} no es un script de Python existente.", [], []
+                strong = [f"instala paquetes de internet: {', '.join(args['packages'])}"] if args.get("packages") else []
+                soft = [] if self.sandboxed else ["compila y ejecuta código sin aislamiento"]
+                return None, strong, soft
             if name == "run_command":
                 cmd = str(args.get("command", ""))
                 if not cmd.strip():
@@ -338,6 +365,8 @@ class ToolContext:
             return f"Editado {p}"
         if name == "run_command":
             return self._run_command(a)
+        if name == "build_exe":
+            return self._build_exe(a)
         return f"Error: herramienta desconocida {name}"
 
     def _backup_if_game(self, p: Path) -> None:
@@ -364,6 +393,25 @@ class ToolContext:
             return f"No existe el recuerdo {a.get('id')}."
         except MemoryRejected as e:
             return f"No guardado: {e}"
+
+    def _build_exe(self, a: dict) -> str:
+        from . import devtools
+        script = self.files.resolve(a["script"], "ai_write")
+        icon = self.files.resolve(a["icon"]) if a.get("icon") else None
+        wrap = None
+        if self.sandboxed and not a.get("packages"):
+            import shlex
+            hidden = self.files.blocked_dirs_and_files()
+            wrap = lambda cmd, cwd, tmp: sandbox.wrap(  # noqa: E731
+                shlex.join(cmd), cwd, self.files.write_roots + [self.workdir(), cwd, tmp], hidden)
+        try:
+            exe, log = devtools.build(self.cfg, script, a.get("name"), bool(a.get("windowed")),
+                                      a.get("packages") or [], icon, wrap)
+        except RuntimeError as e:
+            return f"Error: {e}"
+        self.files_out.append(str(exe))
+        size = exe.stat().st_size / 1e6
+        return f"Ejecutable creado: {exe} ({size:.1f} MB). El usuario ya puede descargarlo.\n\nÚltimas líneas:\n{log[-1500:]}"
 
     def _run_command(self, a: dict) -> str:
         cwd = self.files.resolve(a["cwd"]) if a.get("cwd") else self.workdir()

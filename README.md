@@ -179,9 +179,16 @@ En el modo 🛠 Agente, la IA tiene dos herramientas:
 
   Aparecen en el chat como una tarjeta para descargarlos (también desde el móvil). Se guardan en las carpetas modificables y respetan el permiso de escritura.
 
-### Crear programas (`.exe`)
+### Crear programas (`.exe`) en el PC
 
-En el PC, con el modo agente, la IA puede escribir el código y compilarlo, pero solo con las herramientas que tengas instaladas. Por ejemplo, Python con `pip install pyinstaller` para crear un `.exe` a partir de un script, o un compilador de C/C++ o .NET. Para programas de cierta complejidad, usa un modelo potente por API.
+1. En **Ajustes → 🧰 Herramientas de programación** verás qué hay instalado: Python, Git, Node.js, .NET, compiladores de C/C++ y Rust.
+2. Pulsa **Preparar** en «Entorno para crear ejecutables». Crea un entorno de Python propio de G3G3AI con PyInstaller, sin tocar el Python del sistema. En Windows, si no tienes Python, lo instala con `winget`, solo para tu usuario. Git, Node.js y .NET también se instalan con un botón.
+3. En el chat, con 🛠 Agente: «Hazme un programa que…». La IA escribe el script y lo compila con la herramienta `build_exe`. El `.exe` aparece en el chat para descargarlo y queda en `G3G3AI-trabajo/dist`.
+
+**Permisos:**
+- Compilar ejecuta código, así que pide permiso igual que los comandos.
+- Si el programa necesita librerías de internet (`pip`), **siempre** te lo pregunta.
+- En Linux y la Konkr, `build_exe` crea ejecutables de Linux. Los `.exe` de Windows se crean en el PC con Windows.
 
 ## Modelos recomendados
 
@@ -212,6 +219,7 @@ g3g3ai/
   sync.py       sincronización cifrada entre equipos
   office.py     creación de Word, Excel, PowerPoint y PDF
   steam.py      diagnóstico de juegos de Steam/Proton
+  devtools.py   herramientas de programación y compilación de ejecutables
   providers.py  streaming OpenAI/Anthropic + bucle de herramientas
   llama.py      proceso llama-server
   engine.py     descarga de llama.cpp precompilado (Windows/macOS/Linux x64)

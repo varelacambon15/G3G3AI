@@ -29,7 +29,7 @@ from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
 from .engine import EngineInstaller
 from . import documents as D
-from . import images
+from . import devtools, images
 from .context import HistoryBuilder
 from .sync import INTERVAL as SYNC_INTERVAL, Sync, SyncError, new_key as new_sync_key
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
@@ -519,6 +519,19 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     @app.get("/api/engine/status")
     async def engine_status(kind: str = "llama"):
         return engine_of(kind).state
+
+    # --- Herramientas de programación ------------------------------------------------------------
+    devinst = devtools.DevEnvInstaller(cfg)
+
+    @app.get("/api/devtools")
+    async def devtools_info(refresh: bool = False):
+        info = await asyncio.to_thread(devtools.detect, cfg, refresh)
+        return {"tools": info, "installable": list(devtools.WINGET) if sys.platform == "win32" else [],
+                "devenv": str(devtools.DEVENV), "state": devinst.state}
+
+    @app.post("/api/devtools/install")
+    async def devtools_install(body: dict):
+        return devinst.start(str(body.get("what", "")))
 
     # --- Imágenes -----------------------------------------------------------------------
     @app.get("/api/images/status")

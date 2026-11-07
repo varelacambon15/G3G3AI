@@ -333,11 +333,12 @@ function renderMessages() {
 }
 function approvalCard(a) {
   const args = a.args || {};
-  const what = a.name === "run_command" ? h("pre", {}, (args.cwd ? `[${args.cwd}] ` : "") + "$ " + args.command)
+  const what = a.name === "build_exe" ? h("pre", {}, `${args.script}` + (args.packages?.length ? `\npaquetes: ${args.packages.join(", ")}` : "") + (args.windowed ? "\n(con ventana)" : ""))
+    : a.name === "run_command" ? h("pre", {}, (args.cwd ? `[${args.cwd}] ` : "") + "$ " + args.command)
     : a.name === "edit_file" ? h("pre", {}, `${args.path}\n--- antes\n${args.old_text}\n+++ después\n${args.new_text}`)
     : a.name === "write_file" || a.name === "create_document" ? h("pre", {}, `${args.path}\n\n${String(args.content || "").slice(0, 3000)}`)
     : h("pre", {}, JSON.stringify(args, null, 2));
-  const title = { run_command: "ejecutar un comando", edit_file: "editar un archivo", write_file: "escribir un archivo",
+  const title = { run_command: "ejecutar un comando", edit_file: "editar un archivo", write_file: "escribir un archivo", build_exe: "compilar un programa",
     create_document: "crear un documento" }[a.name] || a.name;
   const card = h("div", { class: "approval" + (a.state ? " " + a.state : "") + (a.dangerous ? " dangerous" : "") },
     h("b", {}, a.state === "approved" ? "✔ Permitido: " : a.state === "denied" ? "✕ Denegado: " : (a.dangerous ? "⛔ Atención: la IA quiere " : "⚠ La IA quiere ")), title,
@@ -382,7 +383,7 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   const b = h("div", { class: "bubble" + (streaming ? " cursor" : "") });
   b.innerHTML = md(body);
   frag.append(b);
-  const fileIcon = (p) => ({ docx: "📘", doc: "📘", xlsx: "📗", xlsm: "📗", csv: "📗", pptx: "📙", pdf: "📕" }[String(p).split(".").pop().toLowerCase()] || "📄");
+  const fileIcon = (p) => ({ docx: "📘", doc: "📘", xlsx: "📗", xlsm: "📗", csv: "📗", pptx: "📙", pdf: "📕", exe: "⚙️", py: "🐍" }[String(p).split(".").pop().toLowerCase()] || "📄");
   const outs = [...new Set(extra.files || [])];
   if (outs.length) frag.append(h("div", { class: "file-cards" }, outs.map((p) =>
     h("a", { class: "file-card", href: "/api/files/download?" + qs({ path: p }), title: p },
@@ -931,6 +932,7 @@ async function loadSettings() {
   S.settings.providers.forEach((p, idx) => pe.append(providerBox(p, idx)));
   loadMemory();
   renderSync();
+  renderDevtools();
 
   const f = $("#settings-form"); f.innerHTML = "";
   for (let [key, label, type, hint] of FIELDS) {
@@ -967,6 +969,41 @@ async function loadSettings() {
     if (hint) f.append(h("div", { class: "hint" }, hint));
   }
 }
+// --- Herramientas de programación --------------------------------------------------------------
+let devTimer = null;
+async function renderDevtools(refresh = false) {
+  const box = $("#devtools-box"); if (!box) return;
+  const d = await api("/api/devtools" + (refresh ? "?refresh=true" : ""));
+  box.innerHTML = "";
+  const win = d.tools.platform === "win32";
+  box.append(h("p", { class: "muted" }, "Con el modo 🛠 Agente, la IA puede escribir programas y compilarlos. "
+    + (win ? "Para crear .exe necesita el entorno de compilación (Python + PyInstaller, aparte del sistema)."
+           : "En este equipo crea ejecutables de Linux; los .exe de Windows se crean en el PC con Windows.")));
+  const names = [["pyinstaller", "Entorno para crear ejecutables (PyInstaller)"], ["python", "Python"], ["git", "Git"],
+    ["node", "Node.js"], ["dotnet", ".NET SDK"], ["gcc", "GCC (C/C++)"], ["cl", "MSVC (C/C++)"], ["cargo", "Rust"]];
+  const ul = h("ul", { class: "list" });
+  for (const [k, label] of names) {
+    if (k === "cl" && !win) continue;
+    const v = d.tools[k];
+    const canInstall = !v && (k === "pyinstaller" || d.installable.includes(k));
+    ul.append(h("li", {},
+      h("span", { class: "name" }, label),
+      h("span", { class: "badge " + (v ? "ok" : "") }, v ? "✔ " + v : "no instalado"),
+      canInstall ? h("button", { class: k === "pyinstaller" ? "primary small" : "ghost small", disabled: d.state.status === "running",
+        onclick: async () => { await api("/api/devtools/install", { method: "POST", body: { what: k } }); renderDevtools(); } },
+        k === "pyinstaller" ? "Preparar" : "Instalar") : null));
+  }
+  box.append(ul);
+  const st = d.state;
+  if (st.status !== "idle") {
+    box.append(h("p", {}, st.status === "running" ? `⏳ Instalando ${st.what}…` : st.status === "done" ? `✔ ${st.what} instalado` : `✕ Error: ${st.error}`));
+    box.append(h("details", { open: st.status !== "done" }, h("summary", {}, "Registro"), h("pre", { class: "logs" }, (st.log || []).join("\n"))));
+  }
+  box.append(h("div", { class: "row end" }, h("button", { class: "ghost small", onclick: () => renderDevtools(true) }, "Volver a comprobar")));
+  clearTimeout(devTimer);
+  if (st.status === "running" && S.view === "settings") devTimer = setTimeout(() => renderDevtools(true), 2500);
+}
+
 // --- Sincronización entre equipos -------------------------------------------------------------
 async function renderSync() {
   const box = $("#sync-box"); box.innerHTML = "";
