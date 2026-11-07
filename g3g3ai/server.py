@@ -29,7 +29,7 @@ from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
 from .engine import EngineInstaller
 from . import documents as D
-from . import devtools, images
+from . import devtools, hardware, images
 from .context import HistoryBuilder
 from .sync import INTERVAL as SYNC_INTERVAL, Sync, SyncError, new_key as new_sync_key
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
@@ -526,6 +526,24 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     @app.get("/api/engine/status")
     async def engine_status(kind: str = "llama"):
         return engine_of(kind).state
+
+    # --- Hardware y recomendación --------------------------------------------------------------
+    hw_cache: dict = {}
+
+    @app.get("/api/hardware")
+    async def hardware_info(refresh: bool = False):
+        if refresh or "hw" not in hw_cache:
+            hw_cache["hw"] = await asyncio.to_thread(hardware.detect)
+        hw = hw_cache["hw"]
+        return {"hardware": hw, "recommendation": hardware.recommend(hw)}
+
+    @app.post("/api/hardware/apply")
+    async def hardware_apply():
+        if "hw" not in hw_cache:
+            hw_cache["hw"] = await asyncio.to_thread(hardware.detect)
+        rec = hardware.recommend(hw_cache["hw"])
+        cfg.update_public(rec["settings"])
+        return {"applied": rec["settings"]}
 
     # --- Herramientas de programación ------------------------------------------------------------
     devinst = devtools.DevEnvInstaller(cfg)

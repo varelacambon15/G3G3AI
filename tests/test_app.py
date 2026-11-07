@@ -906,3 +906,32 @@ def test_announces_action():
     assert announces_action("He leído providers.py. Ahora busco el resto de app.js")
     assert not announces_action("Listo, he cambiado el selector y he probado que funciona.")
     assert not announces_action("¿Quieres que lea también el HTML?")
+
+
+def test_hardware_recommendations(env):
+    """Recomendaciones para los equipos del usuario y endpoints."""
+    from g3g3ai import hardware as H
+    G = H.GB
+    konkr = {"arch": "arm64", "ram": int(7.3 * G), "steamos": True, "cpu": {"cores": 8, "flags": ["asimddp", "i8mm"]},
+             "gpus": [{"name": "Qualcomm Adreno", "vendor": "qualcomm", "dedicated": False, "vram": 0}]}
+    laptop = {"arch": "x64", "ram": 24 * G, "cpu": {"name": "i5-11300H", "cores": 4, "flags": ["avx2", "avx512f"]},
+              "gpus": [{"name": "Intel Iris Xe", "vendor": "intel", "dedicated": False, "vram": 0}]}
+    xeon = {"arch": "x64", "ram": 8 * G, "cpu": {"name": "Xeon", "cores": 8, "flags": ["avx"]},
+            "gpus": [{"name": "AMD Radeon RX 580", "vendor": "amd", "dedicated": True, "vram": 4 * G}]}
+    r = H.recommend(konkr)
+    assert r["main"]["tier"] == "3–4B" and r["main"]["where"] == "cpu" and r["settings"]["llama_gpu_layers"] == 0
+    r = H.recommend(laptop)
+    assert r["main"]["tier"].startswith("MoE") and r["engine"] == "cpu" and r["settings"]["llama_threads"] == 4
+    assert any("AVX-512" in n for n in r["notes"])
+    r = H.recommend(xeon)
+    assert r["main"]["where"] == "gpu" and r["engine"] == "vulkan" and r["settings"]["llama_gpu_layers"] == 99
+    assert "q8_0" in r["settings"]["llama_extra_args"] and any("AVX2" in n for n in r["notes"])
+    assert H._gpu_kind("AMD Radeon(TM) Graphics") == ("amd", False)
+    assert H._gpu_kind("NVIDIA GeForce RTX 3060") == ("nvidia", True)
+    # Endpoints: detecta este equipo y aplica los ajustes recomendados
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    d = client.get("/api/hardware", headers=h).json()
+    assert d["hardware"]["ram"] > 0 and d["recommendation"]["settings"]["llama_threads"] >= 1
+    applied = client.post("/api/hardware/apply", headers=h).json()["applied"]
+    assert cfg["llama_threads"] == applied["llama_threads"] and cfg["llama_ctx"] == applied["llama_ctx"]

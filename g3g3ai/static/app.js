@@ -679,6 +679,32 @@ function renderLlamaStatus() {
   if (mem?.total) box.append(h("p", { class: "muted" }, `RAM disponible: ${fmtSize(mem.available)} de ${fmtSize(mem.total)}`));
   $("#disk-free").textContent = S.status.disk_free ? `· ${fmtSize(S.status.disk_free)} libres` : "";
 }
+let hwShown = false;
+async function renderHardware(refresh = false) {
+  const box = $("#hw-box"); if (!box || (hwShown && !refresh)) return;
+  let d;
+  try { d = await api("/api/hardware" + (refresh ? "?refresh=true" : "")); } catch (e) { box.textContent = e.message; return; }
+  hwShown = true;
+  const r = d.recommendation, sm = r.summary;
+  const where = { gpu: "entero en la gráfica (rápido)", cpu: "en el procesador", mixto: "repartido entre gráfica y procesador" }[r.main.where];
+  box.innerHTML = "";
+  box.append(h("p", { class: "muted" }, `${sm.cpu} · ${sm.cores} núcleos · ${sm.ram_gb} GB de RAM · gráfica: ${sm.gpu}` + (sm.vram_gb ? ` (${sm.vram_gb} GB)` : "")));
+  box.append(h("p", {}, "Modelo ideal: ", h("b", {}, r.main.tier), ` en ${r.quant}, ${where}. Motor: `, h("b", {}, r.engine === "vulkan" ? "Vulkan (gráfica)" : "CPU"), "."));
+  const st = r.settings;
+  box.append(h("p", { class: "muted" }, `Ajustes: contexto ${st.llama_ctx} · hilos ${st.llama_threads} · capas GPU ${st.llama_gpu_layers}` + (st.llama_extra_args ? ` · ${st.llama_extra_args}` : "")));
+  if (r.notes.length) box.append(h("ul", { class: "warnings-list" }, r.notes.map((n) => h("li", {}, n))));
+  if (r.images) box.append(h("p", { class: "muted" }, "🎨 " + r.images));
+  const searchBtn = (q, label) => h("button", { class: "ghost small", onclick: () => { $("#hub-q").value = q; hubSearch(q); $("#hub-q").scrollIntoView({ behavior: "smooth", block: "center" }); } }, label);
+  box.append(h("div", { class: "row" },
+    h("button", { class: "primary small", onclick: async () => {
+      await api("/api/hardware/apply", { method: "POST" }); S.settings = null;
+      $("#p-ctx").value = st.llama_ctx; $("#p-threads").value = st.llama_threads; $("#p-ngl").value = st.llama_gpu_layers;
+      toast("Ajustes aplicados ✔ (se usan al cargar el próximo modelo)");
+    } }, "Aplicar ajustes"),
+    r.main.searches.map((q) => searchBtn(q, "🔎 " + q)),
+    searchBtn(r.vision_search, "👁 con visión"),
+    h("button", { class: "ghost small", onclick: () => renderHardware(true) }, "Volver a analizar")));
+}
 async function renderImageEngine() {
   const box = $("#image-engine"); box.innerHTML = "";
   const st = await api("/api/images/status");
@@ -750,6 +776,7 @@ async function refreshModels() {
       } }, "🗑")));
   }
   renderImageEngine();
+  renderHardware();
   const logs = await api("/api/llama/logs");
   $("#llama-logs").textContent = logs.lines.join("\n");
   refreshDownloads();

@@ -191,6 +191,14 @@ En el modo 🛠 Agente, la IA tiene dos herramientas:
 - Si el programa necesita librerías de internet (`pip`), **siempre** te lo pregunta.
 - En Linux y la Konkr, `build_exe` crea ejecutables de Linux. Los `.exe` de Windows se crean en el PC con Windows.
 
+### 🧭 Recomendación según tu equipo
+
+En **Modelos → Recomendado para este equipo**, G3G3AI detecta el procesador (núcleos, AVX2, AVX-512, dotprod/i8mm), la RAM y las gráficas con su memoria (NVIDIA, AMD, Intel integrada, Adreno), y propone:
+- el tamaño de modelo que encaja (3–4B, 7–8B, 12–14B, MoE «A3B» o 27–32B) y si conviene cargarlo en la gráfica o en el procesador;
+- el motor que debes instalar (CPU o Vulkan);
+- contexto, hilos, capas GPU y argumentos extra. **Aplicar ajustes** los guarda con un clic;
+- búsquedas en Hugging Face para encontrar esos modelos, y avisos (procesador sin AVX2, gráfica AMD sin ROCm, modelos MoE que van justos de RAM…).
+
 ## Modelos recomendados
 
 En la Konkr (8 GB de RAM), mejor modelos de 3–4B en versión Q4_K_M: **Qwen3 4B** (bueno con herramientas y en modo agente), **Gemma 3 4B**, **Llama 3.2 3B**, **Qwen2.5 Coder 3B**. En un PC con 16 GB o más y tarjeta gráfica puedes usar modelos de 7–14B.
@@ -221,6 +229,7 @@ g3g3ai/
   office.py     creación de Word, Excel, PowerPoint y PDF
   steam.py      diagnóstico de juegos de Steam/Proton
   devtools.py   herramientas de programación y compilación de ejecutables
+  hardware.py   detección del hardware y recomendación de modelo y ajustes
   providers.py  streaming OpenAI/Anthropic + bucle de herramientas
   llama.py      proceso llama-server
   engine.py     descarga de llama.cpp precompilado (Windows/macOS/Linux x64)
