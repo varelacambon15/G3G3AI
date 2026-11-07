@@ -28,6 +28,12 @@ CREATE TABLE IF NOT EXISTS messages (
     created REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conv_id, id);
+CREATE TABLE IF NOT EXISTS tombstones (
+    kind TEXT NOT NULL,
+    uid TEXT NOT NULL,
+    deleted REAL NOT NULL,
+    PRIMARY KEY (kind, uid)
+);
 """
 
 
@@ -39,11 +45,15 @@ class DB:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
-        for col in ("summary TEXT", "summary_upto INTEGER"):  # columnas añadidas en v0.4
+        for table, col in (("conversations", "summary TEXT"), ("conversations", "summary_upto INTEGER"),
+                           ("messages", "uid TEXT")):  # columnas añadidas en versiones posteriores
             try:
-                self.conn.execute(f"ALTER TABLE conversations ADD COLUMN {col}")
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:
                 pass
+        # Identificador global de cada mensaje (para sincronizar entre equipos)
+        for (mid,) in self.conn.execute("SELECT id FROM messages WHERE uid IS NULL").fetchall():
+            self.conn.execute("UPDATE messages SET uid=? WHERE id=?", (uuid.uuid4().hex, mid))
         self.conn.commit()
         self.lock = threading.Lock()
 
@@ -75,7 +85,7 @@ class DB:
             return None
         conv = dict(row)
         msgs = self._q(
-            "SELECT id, role, content, reasoning, meta, created FROM messages WHERE conv_id=? ORDER BY id", (cid,)
+            "SELECT id, uid, role, content, reasoning, meta, created FROM messages WHERE conv_id=? ORDER BY id", (cid,)
         ).fetchall()
         conv["messages"] = [
             {**dict(m), "meta": json.loads(m["meta"]) if m["meta"] else None} for m in msgs
@@ -93,14 +103,19 @@ class DB:
         )
 
     def delete_conversation(self, cid: str) -> None:
+        self._q("DELETE FROM messages WHERE conv_id=?", (cid,))
         self._q("DELETE FROM conversations WHERE id=?", (cid,))
+        self.tombstone("conversation", cid)
+
+    def tombstone(self, kind: str, uid: str, when: float | None = None) -> None:
+        self._q("INSERT OR REPLACE INTO tombstones (kind, uid, deleted) VALUES (?,?,?)", (kind, uid, when or time.time()))
 
     # Mensajes ---------------------------------------------------------------
     def add_message(self, cid: str, role: str, content: str, reasoning: str | None = None, meta: dict | None = None) -> int:
         now = time.time()
         cur = self._q(
-            "INSERT INTO messages (conv_id, role, content, reasoning, meta, created) VALUES (?,?,?,?,?,?)",
-            (cid, role, content, reasoning, json.dumps(meta, ensure_ascii=False) if meta else None, now),
+            "INSERT INTO messages (conv_id, uid, role, content, reasoning, meta, created) VALUES (?,?,?,?,?,?,?)",
+            (cid, uuid.uuid4().hex, role, content, reasoning, json.dumps(meta, ensure_ascii=False) if meta else None, now),
         )
         self._q("UPDATE conversations SET updated=? WHERE id=?", (now, cid))
         return cur.lastrowid
@@ -108,6 +123,7 @@ class DB:
     def delete_messages_from(self, cid: str, message_id: int) -> None:
         """Borra un mensaje y todos los posteriores (para editar/regenerar)."""
         self._q("DELETE FROM messages WHERE conv_id=? AND id>=?", (cid, message_id))
+        self._q("UPDATE conversations SET updated=? WHERE id=?", (time.time(), cid))
         # Si el resumen cubría mensajes borrados, se descarta
         self._q("UPDATE conversations SET summary=NULL, summary_upto=NULL WHERE id=? AND summary_upto>=?",
                 (cid, message_id))

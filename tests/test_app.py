@@ -589,3 +589,87 @@ def test_image_generation_local_sd(env):
     cfg.data.update(sd_model="")
     r = client.post("/api/images/generate", headers=h, json={"prompt": "x"})
     assert r.status_code == 400 and "modelo" in r.json()["detail"]
+
+
+# --- Sincronización entre equipos --------------------------------------------------------
+def test_sync_between_two_devices(tmp_path):
+    """Dos G3G3AI (p.ej. Konkr y PC) con la misma clave se intercambian conversaciones, memoria y APIs."""
+    import threading
+    import uvicorn
+    from fastapi.testclient import TestClient
+    from g3g3ai.config import Config
+    from g3g3ai.server import create_app
+
+    def device(name):
+        d = tmp_path / name
+        cfg = Config(d / "config.json")
+        cfg.data.update(localhost_without_token=False, autoload_last_model=False, file_roots=[str(d)],
+                        write_roots=[str(d)], models_dir=str(d / "models"), llama_port=free_port())
+        cfg.save()
+        return cfg, create_app(cfg, data_dir=d)
+
+    cfg_pc, app_pc = device("pc")
+    cfg_konkr, app_konkr = device("konkr")
+    port = free_port()
+    server = uvicorn.Server(uvicorn.Config(app_konkr, host="127.0.0.1", port=port, log_level="warning"))
+    th = threading.Thread(target=server.run, daemon=True)
+    th.start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.05)
+    try:
+        with TestClient(app_pc) as pc, TestClient(app_konkr) as konkr:
+            hp, hk = auth(cfg_pc), auth(cfg_konkr)
+            # En el PC: una API configurada, un recuerdo y una conversación
+            s = pc.get("/api/settings", headers=hp).json()
+            next(p for p in s["providers"] if p["id"] == "deepseek").update(enabled=True, api_key="sk-deepseek-secreta")
+            pc.put("/api/settings", headers=hp, json=s)
+            pc.post("/api/memory", headers=hp, json={"content": "Usa una Konkr Pocket Fit"})
+            conv = app_pc.state.db.create_conversation(title="Plan del proyecto")
+            app_pc.state.db.add_message(conv["id"], "user", "hola desde el PC")
+            # Clave: se genera en el PC y se pega en la Konkr
+            key = pc.post("/api/sync/new-key", headers=hp).json()["key"]
+            assert len(key.replace("-", "")) == 24
+            sk = konkr.get("/api/settings", headers=hk).json()
+            sk["sync_key"] = key
+            konkr.put("/api/settings", headers=hk, json=sk)
+            sp = pc.get("/api/settings", headers=hp).json()
+            sp["sync_peers"] = [{"url": f"http://127.0.0.1:{port}"}]
+            pc.put("/api/settings", headers=hp, json=sp)
+            st = pc.post("/api/sync/now", headers=hp).json()
+            assert st[f"http://127.0.0.1:{port}"]["ok"], st
+            # En la Konkr aparece todo, incluida la clave API
+            assert cfg_konkr.provider("deepseek")["api_key"] == "sk-deepseek-secreta"
+            assert cfg_konkr.provider("deepseek")["enabled"] is True
+            assert [m["content"] for m in konkr.get("/api/memory", headers=hk).json()] == ["Usa una Konkr Pocket Fit"]
+            convs = konkr.get("/api/conversations", headers=hk).json()
+            assert [c["title"] for c in convs] == ["Plan del proyecto"]
+            msgs = konkr.get(f"/api/conversations/{conv['id']}", headers=hk).json()["messages"]
+            assert msgs[0]["content"] == "hola desde el PC"
+            # Lo propio de cada equipo no se sincroniza
+            assert cfg_konkr["file_roots"] != cfg_pc["file_roots"] and cfg_konkr["token"] != cfg_pc["token"]
+            # Cambios en la Konkr vuelven al PC: mensaje nuevo y borrado de un recuerdo
+            time.sleep(0.01)
+            app_konkr.state.db.add_message(conv["id"], "assistant", "respuesta desde la Konkr")
+            mid = konkr.get("/api/memory", headers=hk).json()[0]["id"]
+            konkr.delete(f"/api/memory/{mid}", headers=hk)
+            pc.post("/api/sync/now", headers=hp)
+            msgs = pc.get(f"/api/conversations/{conv['id']}", headers=hp).json()["messages"]
+            assert [m["content"] for m in msgs] == ["hola desde el PC", "respuesta desde la Konkr"]
+            assert pc.get("/api/memory", headers=hp).json() == []
+            # Borrar la conversación en el PC la borra en la Konkr
+            pc.delete(f"/api/conversations/{conv['id']}", headers=hp)
+            pc.post("/api/sync/now", headers=hp)
+            assert konkr.get("/api/conversations", headers=hk).json() == []
+            # Con otra clave no se puede sincronizar
+            sk = konkr.get("/api/settings", headers=hk).json()
+            sk["sync_key"] = "OTRA-CLAVE-DIST-INTA-1234-5678"
+            konkr.put("/api/settings", headers=hk, json=sk)
+            st = pc.post("/api/sync/now", headers=hp).json()
+            assert not st[f"http://127.0.0.1:{port}"]["ok"] and "clave" in st[f"http://127.0.0.1:{port}"]["message"]
+            # Y sin clave nadie puede leer nada (la petición va cifrada)
+            assert konkr.post("/api/sync/exchange", content=b"basura").status_code == 403
+    finally:
+        server.should_exit = True
+        th.join(5)

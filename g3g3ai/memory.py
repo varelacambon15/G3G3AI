@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 
 MAX_ITEM = 500          # caracteres por recuerdo
 MAX_PROMPT = 3500       # caracteres de memoria en el contexto
@@ -36,6 +37,12 @@ class Memory:
         self.db = db
         with db.lock:
             db.conn.executescript(SCHEMA)
+            try:
+                db.conn.execute("ALTER TABLE memories ADD COLUMN uid TEXT")
+            except Exception:  # noqa: BLE001 — ya existe
+                pass
+            for (mid,) in db.conn.execute("SELECT id FROM memories WHERE uid IS NULL").fetchall():
+                db.conn.execute("UPDATE memories SET uid=? WHERE id=?", (uuid.uuid4().hex, mid))
             db.conn.commit()
 
     def _check(self, content: str) -> str:
@@ -49,7 +56,7 @@ class Memory:
         return content
 
     def list(self) -> list[dict]:
-        rows = self.db._q("SELECT id, content, source, created, updated FROM memories ORDER BY updated DESC").fetchall()
+        rows = self.db._q("SELECT id, uid, content, source, created, updated FROM memories ORDER BY updated DESC").fetchall()
         return [dict(r) for r in rows]
 
     def add(self, content: str, source: str | None = None) -> dict:
@@ -58,8 +65,8 @@ class Memory:
             if m["content"].lower() == content.lower():
                 return m
         now = time.time()
-        cur = self.db._q("INSERT INTO memories (content, source, created, updated) VALUES (?,?,?,?)",
-                         (content, source, now, now))
+        cur = self.db._q("INSERT INTO memories (uid, content, source, created, updated) VALUES (?,?,?,?,?)",
+                         (uuid.uuid4().hex, content, source, now, now))
         return {"id": cur.lastrowid, "content": content}
 
     def update(self, mid: int, content: str) -> dict:
@@ -70,9 +77,16 @@ class Memory:
         return {"id": int(mid), "content": content}
 
     def delete(self, mid: int) -> bool:
-        return bool(self.db._q("DELETE FROM memories WHERE id=?", (int(mid),)).rowcount)
+        row = self.db._q("SELECT uid FROM memories WHERE id=?", (int(mid),)).fetchone()
+        if not row:
+            return False
+        self.db._q("DELETE FROM memories WHERE id=?", (int(mid),))
+        self.db.tombstone("memory", row["uid"])
+        return True
 
     def clear(self) -> None:
+        for m in self.list():
+            self.db.tombstone("memory", m["uid"])
         self.db._q("DELETE FROM memories")
 
     def prompt(self) -> str:

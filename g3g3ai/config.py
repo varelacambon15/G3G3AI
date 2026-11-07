@@ -7,6 +7,7 @@ import os
 import secrets
 import sys
 import threading
+import time
 from pathlib import Path
 
 APP = "g3g3ai"
@@ -76,6 +77,11 @@ DEFAULTS: dict = {
     "sd_steps": 4,              # 1-4 para modelos «turbo»; 20+ para modelos normales
     "sd_cfg": 1.0,              # 1.0 para «turbo»; ~7 para modelos normales
     "sd_max_side": 512,         # límite de tamaño en local (la Konkr tarda mucho con imágenes grandes)
+    # Sincronización entre equipos
+    "device_id": "",
+    "sync_key": "",             # clave común en todos los equipos que se sincronizan
+    "sync_peers": [],           # [{"url": "http://192.168.1.50:8800", "name": "..."}]
+    "settings_updated": 0,      # cuándo se cambiaron por última vez los ajustes comunes
     # Memoria entre conversaciones
     "memory_enabled": True,     # usar los recuerdos como contexto
     "memory_auto": True,        # la IA puede guardar recuerdos por su cuenta (se ve en el chat)
@@ -149,7 +155,7 @@ DEFAULTS: dict = {
     "config_version": CONFIG_VERSION,
 }
 
-SECRET_KEYS = {"token", "hf_token", "web_api_key"}
+SECRET_KEYS = {"token", "hf_token", "web_api_key", "sync_key"}
 
 
 def default_blocked() -> list[str]:
@@ -256,12 +262,17 @@ class Config:
 
     def update_public(self, incoming: dict) -> None:
         """Aplica cambios llegados de la interfaz, conservando secretos enmascarados."""
-        allowed = set(DEFAULTS) - {"last_model", "config_version"}
+        from .sync import SYNC_KEYS
+        allowed = set(DEFAULTS) - {"last_model", "config_version", "device_id", "settings_updated"}
+        before = {k: copy.deepcopy(self.data.get(k)) for k in SYNC_KEYS}
         for key, value in incoming.items():
             if key not in allowed:
                 continue
             if key in SECRET_KEYS and value == MASK:
                 continue
+            if key == "sync_peers":
+                old_peers = {p.get("url"): p for p in self.data.get("sync_peers", [])}
+                value = [{**old_peers.get(p.get("url"), {}), **p} for p in value if p.get("url")]
             if key == "providers":
                 old = {p["id"]: p for p in self.data.get("providers", [])}
                 merged = []
@@ -272,6 +283,8 @@ class Config:
                     merged.append(p)
                 value = merged
             self.data[key] = value
+        if any(self.data.get(k) != before[k] for k in SYNC_KEYS):
+            self.data["settings_updated"] = time.time()
         self.save()
 
     def provider(self, pid: str) -> dict | None:

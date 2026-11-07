@@ -15,7 +15,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
@@ -31,6 +31,7 @@ from .engine import EngineInstaller
 from . import documents as D
 from . import images
 from .context import HistoryBuilder
+from .sync import INTERVAL as SYNC_INTERVAL, Sync, SyncError, new_key as new_sync_key
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
 from .tools import ToolContext, resolve_approval
 
@@ -74,14 +75,15 @@ def lan_addresses() -> list[str]:
     return sorted(ip for ip in ips if not ip.startswith("127."))
 
 
-def create_app(cfg: Config | None = None) -> FastAPI:
+def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastAPI:
     cfg = cfg or Config()
-    db = DB(DATA_DIR / "g3g3ai.db")
+    db = DB((data_dir or DATA_DIR) / "g3g3ai.db")
     files = Files(cfg)
     hub = Hub(cfg)
     llama = LlamaManager(cfg)
     engines = {"llama": EngineInstaller(cfg, "llama"), "sd": EngineInstaller(cfg, "sd")}
     memory = Memory(db)
+    sync = Sync(cfg, db, memory)
     session_allow: dict[str, set] = {}  # conversación -> herramientas permitidas «siempre»
 
     @asynccontextmanager
@@ -89,7 +91,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         last = cfg["last_model"]
         if cfg["autoload_last_model"] and last and Path(last).is_file():
             await llama.load(last)
+        sync.start()
         yield
+        sync.stop()
         await llama.unload()
 
     app = FastAPI(title="G3G3AI", version=__version__, lifespan=lifespan)
@@ -109,7 +113,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     @app.middleware("http")
     async def auth_mw(request: Request, call_next):
         path = request.url.path
-        if (path.startswith("/api/") or path.startswith("/v1/")) and path != "/api/login":
+        if ((path.startswith("/api/") or path.startswith("/v1/"))
+                and path not in ("/api/login", "/api/sync/exchange")):  # la sincronización va cifrada con su clave
             if not authorized(request):
                 return JSONResponse({"detail": "No autorizado"}, status_code=401)
         response = await call_next(request)
@@ -453,6 +458,35 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     async def memory_clear():
         memory.clear()
         return {"ok": True}
+
+    # --- Sincronización entre equipos -----------------------------------------------------------
+    @app.post("/api/sync/exchange")
+    async def sync_exchange(request: Request):
+        try:
+            data = await asyncio.to_thread(sync.handle, await request.body())
+        except SyncError as e:
+            raise HTTPException(403, str(e)) from e
+        return Response(content=data, media_type="application/octet-stream")
+
+    @app.get("/api/sync/status")
+    async def sync_status():
+        return {"device_id": cfg["device_id"], "has_key": bool(cfg["sync_key"]),
+                "peers": [{k: p.get(k) for k in ("url", "name", "last_sent")} for p in cfg["sync_peers"] or []],
+                "status": sync.status, "interval": SYNC_INTERVAL}
+
+    @app.get("/api/sync/key")
+    async def sync_key():
+        return {"key": cfg["sync_key"]}
+
+    @app.post("/api/sync/new-key")
+    async def sync_new_key():
+        key = new_sync_key()
+        cfg.set("sync_key", key)
+        return {"key": key}
+
+    @app.post("/api/sync/now")
+    async def sync_now():
+        return await sync.sync_all()
 
     @app.post("/api/chat/approve")
     async def approve(body: dict):
