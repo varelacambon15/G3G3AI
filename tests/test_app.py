@@ -1,4 +1,5 @@
 import json
+import re
 import os
 import socket
 import sys
@@ -212,7 +213,7 @@ def test_agent_command_with_approval(env):
     assert approved == [200]
     assert any(e["type"] == "approval" and e["args"]["command"] == "echo hola-g3" for e in evs)
     res = next(e for e in evs if e["type"] == "tool_result")
-    assert "hola-g3" in res["result"] and "salida: 0" in res["result"]
+    assert "hola-g3" in res["result"] and re.search(r"salida( \(aislado\))?: 0", res["result"])
 
     # Con permisos desactivados la herramienta ni se ofrece
     cfg.data.update(ai_commands="off")
