@@ -199,6 +199,14 @@ En **Modelos → Recomendado para este equipo**, G3G3AI detecta el procesador (n
 - contexto, hilos, capas GPU y argumentos extra. **Aplicar ajustes** los guarda con un clic;
 - búsquedas en Hugging Face para encontrar esos modelos, y avisos (procesador sin AVX2, gráfica AMD sin ROCm, modelos MoE que van justos de RAM…).
 
+### 🦙 Ollama (motor alternativo, cómodo en el PC)
+
+En **Modelos → Ollama**:
+- **Instalar Ollama:** en Windows con `winget`, o con el instalador oficial si no hay winget. En macOS con Homebrew. En Linux se muestra el comando oficial (pide contraseña de administrador). En SteamOS no se recomienda: usa llama.cpp.
+- **Iniciar Ollama** si está instalado pero parado.
+- **Descargar modelos** por nombre (`qwen3:8b`, `gemma3:4b`…), con progreso y sugerencias según tu hardware, y **borrarlos**.
+- **Usar en el chat:** activa el proveedor «Ollama (local)» en el selector. Funciona con el modo Auto, el agente, la memoria y las fotos (con modelos con visión).
+
 ## Modelos recomendados
 
 En la Konkr (8 GB de RAM), mejor modelos de 3–4B en versión Q4_K_M: **Qwen3 4B** (bueno con herramientas y en modo agente), **Gemma 3 4B**, **Llama 3.2 3B**, **Qwen2.5 Coder 3B**. En un PC con 16 GB o más y tarjeta gráfica puedes usar modelos de 7–14B.
@@ -230,6 +238,7 @@ g3g3ai/
   steam.py      diagnóstico de juegos de Steam/Proton
   devtools.py   herramientas de programación y compilación de ejecutables
   hardware.py   detección del hardware y recomendación de modelo y ajustes
+  ollama.py     integración con Ollama (instalar, modelos, proveedor)
   providers.py  streaming OpenAI/Anthropic + bucle de herramientas
   llama.py      proceso llama-server
   engine.py     descarga de llama.cpp precompilado (Windows/macOS/Linux x64)

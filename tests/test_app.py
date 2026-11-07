@@ -399,7 +399,8 @@ def test_config_migration_v2_to_v3(tmp_path):
     p = tmp_path / "config.json"
     p.write_text(json.dumps({"config_version": 2, "token": "t", "agent_workdir": "/x/trabajo", "ai_write": "ask"}))
     c = Config(p)
-    assert c["write_roots"] == ["/x/trabajo"] and c["config_version"] == 3
+    assert c["write_roots"] == ["/x/trabajo"] and c["config_version"] == 4
+    assert c.provider("ollama")["base_url"] == "http://127.0.0.1:11434/v1"  # v4 añade Ollama
     assert "~/.ssh" in c["blocked_paths"] and ".env" in c["blocked_paths"]
     p.write_text(json.dumps({"config_version": 1, "token": "t", "allow_ai_file_write": True}))
     c = Config(p)
@@ -935,3 +936,90 @@ def test_hardware_recommendations(env):
     assert d["hardware"]["ram"] > 0 and d["recommendation"]["settings"]["llama_threads"] >= 1
     applied = client.post("/api/hardware/apply", headers=h).json()["applied"]
     assert cfg["llama_threads"] == applied["llama_threads"] and cfg["llama_ctx"] == applied["llama_ctx"]
+
+
+def _fake_ollama():
+    """Servidor Ollama simulado en un hilo: version, tags, pull (con progreso), delete y la API OpenAI."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    models = []
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _json(self, obj, code=200):
+            body = json.dumps(obj).encode()
+            self.send_response(code); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path == "/api/version":
+                return self._json({"version": "0.9.9"})
+            if self.path == "/api/tags":
+                return self._json({"models": [{"name": n, "size": 2_500_000_000,
+                                               "details": {"parameter_size": "4B", "quantization_level": "Q4_K_M"}} for n in models]})
+            if self.path == "/v1/models":
+                return self._json({"data": [{"id": n} for n in models]})
+            self._json({}, 404)
+
+        def _body(self):
+            return json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+
+        def do_POST(self):
+            req = self._body()
+            if self.path == "/api/pull":
+                self.send_response(200); self.send_header("Content-Type", "application/x-ndjson"); self.end_headers()
+                for line in ({"status": "pulling manifest"}, {"status": "downloading", "total": 100, "completed": 50},
+                             {"status": "downloading", "total": 100, "completed": 100}, {"status": "success"}):
+                    self.wfile.write((json.dumps(line) + "\n").encode())
+                models.append(req["model"])
+                return
+            if self.path == "/v1/chat/completions":
+                self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"hola desde ollama"},"finish_reason":"stop"}]}\n\n')
+                self.wfile.write(b"data: [DONE]\n\n")
+                return
+            self._json({}, 404)
+
+        def do_DELETE(self):
+            req = self._body()
+            if req.get("model") in models:
+                models.remove(req["model"])
+                return self._json({})
+            self._json({"error": "not found"}, 404)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, models
+
+
+def test_ollama_integration(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    cfg.data.update(ollama_url=f"http://127.0.0.1:{free_port()}")  # nada escuchando
+    d = client.get("/api/ollama", headers=h).json()
+    assert d["running"] is False and d["suggestions"]["models"]
+    srv, models = _fake_ollama()
+    try:
+        cfg.data.update(ollama_url=f"http://127.0.0.1:{srv.server_address[1]}")
+        d = client.get("/api/ollama", headers=h).json()
+        assert d["running"] and d["installed"] and d["version"] == "0.9.9" and d["models"] == []
+        client.post("/api/ollama/pull", headers=h, json={"name": "qwen3:4b"})
+        for _ in range(50):
+            d = client.get("/api/ollama", headers=h).json()
+            if d["job"]["status"] != "running":
+                break
+            time.sleep(0.05)
+        assert d["job"]["status"] == "done" and d["job"]["completed"] == 100
+        assert [m["name"] for m in d["models"]] == ["qwen3:4b"] and d["models"][0]["params"] == "4B"
+        assert client.post("/api/ollama/pull", headers=h, json={"name": "mal nombre; rm"}).status_code == 400
+        # Usarlo en el chat como proveedor
+        assert client.post("/api/ollama/enable", headers=h, json={"enabled": True}).json()["enabled"]
+        assert client.get("/api/providers/ollama/models", headers=h).json() == ["qwen3:4b"]
+        evs = sse(client.post("/api/chat", headers=h, json={"provider": "ollama", "model": "qwen3:4b", "message": "hola"}))
+        assert "hola desde ollama" in "".join(e["text"] for e in evs if e["type"] == "content")
+        assert client.delete("/api/ollama/models", params={"name": "qwen3:4b"}, headers=h).status_code == 200
+        assert client.get("/api/ollama", headers=h).json()["models"] == []
+    finally:
+        srv.shutdown()

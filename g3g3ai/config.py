@@ -12,7 +12,7 @@ from pathlib import Path
 
 APP = "g3g3ai"
 HOME = Path.home()
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 
 
 def _default_dirs() -> tuple[Path, Path]:
@@ -77,6 +77,8 @@ DEFAULTS: dict = {
     "sd_steps": 4,              # 1-4 para modelos «turbo»; 20+ para modelos normales
     "sd_cfg": 1.0,              # 1.0 para «turbo»; ~7 para modelos normales
     "sd_max_side": 512,         # límite de tamaño en local (la Konkr tarda mucho con imágenes grandes)
+    # Ollama (motor local alternativo)
+    "ollama_url": "http://127.0.0.1:11434",
     # Python del entorno de compilación (vacío = el de G3G3AI en la carpeta de datos)
     "devenv_python": "",
     # Juegos de Steam: la IA puede leer y (siempre pidiendo permiso) modificar carpetas de juegos y prefijos de Proton
@@ -108,6 +110,14 @@ DEFAULTS: dict = {
     "max_tokens": 8192,
     # Proveedores API externos.
     "providers": [
+        {
+            "id": "ollama",
+            "name": "Ollama (local)",
+            "type": "openai",
+            "base_url": "http://127.0.0.1:11434/v1",
+            "api_key": "",
+            "enabled": False,
+        },
         {
             "id": "deepseek",
             "name": "DeepSeek",
@@ -218,6 +228,10 @@ class Config:
         d = self.data
         if d.get("config_version", 1) >= CONFIG_VERSION:
             return False
+        if d.get("config_version", 1) < 4:  # v4: proveedor Ollama
+            have = {p.get("id") for p in d.get("providers", [])}
+            if "ollama" not in have:
+                d.setdefault("providers", []).insert(0, copy.deepcopy(DEFAULTS["providers"][0]))
         if "write_roots" not in self._stored_keys and d.get("agent_workdir"):
             # v3: la carpeta de trabajo del agente pasa a ser la carpeta modificable inicial
             d["write_roots"] = [d["agent_workdir"]]

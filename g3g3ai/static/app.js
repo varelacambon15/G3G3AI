@@ -705,6 +705,63 @@ async function renderHardware(refresh = false) {
     searchBtn(r.vision_search, "👁 con visión"),
     h("button", { class: "ghost small", onclick: () => renderHardware(true) }, "Volver a analizar")));
 }
+// --- Ollama -----------------------------------------------------------------------------------
+let ollamaTimer = null;
+async function renderOllama() {
+  const box = $("#ollama-box"); if (!box) return;
+  let d;
+  try { d = await api("/api/ollama"); } catch (e) { box.textContent = e.message; return; }
+  box.innerHTML = "";
+  const job = d.job;
+  const post = (url, body) => api(url, { method: "POST", body: body || {} });
+  box.append(h("p", { class: "muted" }, "Motor alternativo a llama.cpp: descarga modelos por su nombre (p.ej. qwen3:8b) y usa la gráfica automáticamente. Cómodo en el PC."));
+  if (!d.installed) {
+    box.append(h("p", {}, "Ollama no está instalado en este equipo."));
+    if (d.can_install) box.append(h("button", { class: "primary small", disabled: job.status === "running",
+      onclick: async () => { await post("/api/ollama/install"); renderOllama(); } }, "⬇ Instalar Ollama"));
+    else if (d.linux_command) box.append(h("p", {}, "En Linux se instala desde una terminal (pide la contraseña de administrador):", h("code", { class: "access-url" }, d.linux_command)));
+  } else if (!d.running) {
+    box.append(h("p", {}, "Ollama está instalado pero no está en marcha."),
+      h("button", { class: "primary small", onclick: async () => {
+        try { await post("/api/ollama/start"); toast("Iniciando Ollama…"); setTimeout(renderOllama, 2500); } catch (e) { toast(e.message); }
+      } }, "▶ Iniciar Ollama"));
+  } else {
+    box.append(h("div", { class: "row" },
+      h("span", { class: "grow" }, h("b", {}, "✔ Ollama en marcha"), h("span", { class: "muted" }, ` · versión ${d.version || "?"} · ${d.url}`)),
+      h("label", { class: "toggle", title: "Muestra los modelos de Ollama en el selector del chat" },
+        h("input", { type: "checkbox", checked: d.provider_enabled, onchange: async (e) => {
+          await post("/api/ollama/enable", { enabled: e.target.checked }); S.models = {}; await loadProviders();
+          toast(e.target.checked ? "Ollama aparece ahora en el selector de modelos" : "Ollama oculto del selector");
+        } }), "Usar en el chat")));
+    const ul = h("ul", { class: "list" });
+    if (!d.models.length) ul.append(h("li", { class: "muted" }, "Aún no hay modelos. Descarga uno abajo."));
+    for (const m of d.models) ul.append(h("li", {},
+      h("div", { class: "name" }, m.name, h("div", { class: "sub" }, [m.params, m.quant, fmtSize(m.size)].filter(Boolean).join(" · "))),
+      fitBadge(m.size),
+      h("button", { class: "ghost small", title: "Borrar", onclick: async () => {
+        if (!confirm(`¿Borrar ${m.name} de Ollama?`)) return;
+        await api("/api/ollama/models?" + qs({ name: m.name }), { method: "DELETE" }).catch((e) => toast(e.message)); renderOllama();
+      } }, "🗑")));
+    box.append(ul);
+    const inp = h("input", { class: "grow", placeholder: "Nombre del modelo, p.ej. qwen3:8b" });
+    const pull = async (name) => { if (!name) return; await post("/api/ollama/pull", { name }); toast("Descargando " + name + "…"); renderOllama(); };
+    box.append(h("form", { class: "row", onsubmit: (e) => { e.preventDefault(); pull(inp.value.trim()); } },
+      inp, h("button", { class: "primary small", disabled: job.status === "running" }, "Descargar")));
+    box.append(h("div", { class: "suggestions" }, `Recomendados para este equipo (${d.tier}): `,
+      d.suggestions.models.map((n) => h("button", { class: "link", onclick: () => pull(n) }, n)),
+      " · con visión: ", h("button", { class: "link", onclick: () => pull(d.suggestions.vision) }, d.suggestions.vision),
+      " · ", h("a", { href: "https://ollama.com/library", target: "_blank", rel: "noopener" }, "ver todos")));
+  }
+  if (job.status !== "idle") {
+    const pct = job.total ? Math.round(100 * job.completed / job.total) : null;
+    box.append(h("p", {}, job.status === "running" ? `⏳ ${job.what}…` + (pct != null ? ` ${pct}%` : "")
+      : job.status === "done" ? `✔ ${job.what}: hecho` : `✕ ${job.what}: ${job.error}`));
+    if (pct != null && job.status === "running") box.append(h("div", { class: "progress" }, h("div", { style: `width:${pct}%` })));
+    if (job.log.length) box.append(h("details", { open: job.status === "error" }, h("summary", {}, "Registro"), h("pre", { class: "logs" }, job.log.join("\n"))));
+  }
+  clearTimeout(ollamaTimer);
+  if (job.status === "running" && S.view === "models") ollamaTimer = setTimeout(renderOllama, 1500);
+}
 async function renderImageEngine() {
   const box = $("#image-engine"); box.innerHTML = "";
   const st = await api("/api/images/status");
@@ -777,6 +834,7 @@ async function refreshModels() {
   }
   renderImageEngine();
   renderHardware();
+  renderOllama();
   const logs = await api("/api/llama/logs");
   $("#llama-logs").textContent = logs.lines.join("\n");
   refreshDownloads();

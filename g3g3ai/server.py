@@ -29,7 +29,7 @@ from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
 from .engine import EngineInstaller
 from . import documents as D
-from . import devtools, hardware, images
+from . import devtools, hardware, images, ollama
 from .context import HistoryBuilder
 from .sync import INTERVAL as SYNC_INTERVAL, Sync, SyncError, new_key as new_sync_key
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
@@ -544,6 +544,58 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         rec = hardware.recommend(hw_cache["hw"])
         cfg.update_public(rec["settings"])
         return {"applied": rec["settings"]}
+
+    # --- Ollama ---------------------------------------------------------------------------------
+    olm = ollama.OllamaManager(cfg)
+
+    @app.get("/api/ollama")
+    async def ollama_info():
+        st = await ollama.status(cfg)
+        if "hw" not in hw_cache:
+            hw_cache["hw"] = await asyncio.to_thread(hardware.detect)
+        tier = hardware.recommend(hw_cache["hw"])["main"]["tier"]
+        prov = cfg.provider("ollama") or {}
+        return {**st, "job": olm.job, "suggestions": ollama.suggestions_for(tier), "tier": tier,
+                "provider_enabled": bool(prov.get("enabled"))}
+
+    @app.post("/api/ollama/install")
+    async def ollama_install():
+        return olm.install()
+
+    @app.post("/api/ollama/start")
+    async def ollama_start():
+        try:
+            return olm.start()
+        except (RuntimeError, OSError) as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.post("/api/ollama/pull")
+    async def ollama_pull(body: dict):
+        name = str(body.get("name", "")).strip()
+        if not re.fullmatch(r"[\w.\-/:]+", name):
+            raise HTTPException(400, "Nombre de modelo no válido (p.ej. qwen3:4b)")
+        return olm.pull(name)
+
+    @app.delete("/api/ollama/models")
+    async def ollama_delete(name: str):
+        try:
+            await olm.delete(name)
+        except (RuntimeError, httpx.HTTPError) as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True}
+
+    @app.post("/api/ollama/enable")
+    async def ollama_enable(body: dict):
+        """Activa (o desactiva) el proveedor «Ollama (local)» en el selector de modelos."""
+        provs = cfg["providers"]
+        prov = next((p for p in provs if p.get("id") == "ollama"), None)
+        if prov is None:
+            prov = dict(id="ollama", name="Ollama (local)", type="openai", api_key="")
+            provs.insert(0, prov)
+        prov["base_url"] = ollama.base_url(cfg) + "/v1"
+        prov["enabled"] = bool(body.get("enabled", True))
+        cfg.update_public({"providers": provs})
+        return {"enabled": prov["enabled"]}
 
     # --- Herramientas de programación ------------------------------------------------------------
     devinst = devtools.DevEnvInstaller(cfg)
