@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- G3G3AI se sirve por HTTP en la red local (o por Tailscale): se permite tráfico sin TLS. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#C2603F" android:pathData="M24,0h60a24,24 0 0 1 24,24v60a24,24 0 0 1 -24,24h-60a24,24 0 0 1 -24,-24v-60a24,24 0 0 1 24,-24z" />
+    <!-- Estrella de cuatro puntas -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M54,22 C56,42 66,52 86,54 C66,56 56,66 54,86 C52,66 42,56 22,54 C42,52 52,42 54,22 Z" />
+</vector>

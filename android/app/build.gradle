@@ -1,0 +1,29 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.g3g3ai.client"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.g3g3ai.client"
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName "0.5.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Firmada con la clave de depuración para poder instalarla directamente (versión de prueba)
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
