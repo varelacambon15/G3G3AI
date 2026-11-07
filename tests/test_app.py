@@ -851,3 +851,35 @@ def test_providers_export_requires_auth(env):
     client.put("/api/settings", headers=h, json=s)
     out = client.get("/api/providers/export", headers=h).json()
     assert [(p["id"], p["api_key"]) for p in out["providers"]] == [("deepseek", "sk-ds")]
+
+
+def test_anthropic_request_shape(monkeypatch):
+    """Claude actual rechaza temperature y necesita margen de max_tokens para razonar."""
+    import asyncio, json
+    import httpx
+    from g3g3ai import providers
+    sent = {}
+
+    class FakeStream:
+        def __init__(self, body): sent.update(body)
+        async def __aenter__(self):
+            lines = ['data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+                     'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hola"}}',
+                     'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}']
+            class R:
+                status_code = 200
+                async def aiter_lines(self):
+                    for l in lines:
+                        yield l
+            return R()
+        async def __aexit__(self, *a): return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "stream", lambda self, m, url, json=None, headers=None: FakeStream(json))
+    p = {"type": "anthropic", "base_url": "https://api.anthropic.com", "api_key": "x"}
+
+    async def run():
+        return [ev async for ev in providers.chat_stream(p, "claude-haiku-5-5", [{"role": "user", "content": "hola"}],
+                                                          {"temperature": 0.7, "max_tokens": 2048})]
+    evs = asyncio.run(run())
+    assert "temperature" not in sent and sent["max_tokens"] >= 16000
+    assert any(e["type"] == "content" and e["text"] == "hola" for e in evs)

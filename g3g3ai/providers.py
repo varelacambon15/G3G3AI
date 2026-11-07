@@ -18,6 +18,7 @@ import httpx
 from . import tools as T
 
 MAX_TOOL_STEPS = 25
+ANTHROPIC_MIN_TOKENS = 16000
 KEEP_TOOL_OUTPUTS = 4          # resultados de herramientas recientes que se envían completos
 TOOL_BUDGET_CHARS = 120_000    # por encima, se recortan los resultados antiguos
 OMITTED = "[Salida anterior omitida para ahorrar contexto; vuelve a ejecutar la herramienta si la necesitas.]"
@@ -167,10 +168,10 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600)) as c:
         for _ in range(MAX_TOOL_STEPS):
             _trim_anthropic(msgs)
+            # Los modelos actuales de Claude piensan antes de responder y ese razonamiento cuenta en
+            # max_tokens: se deja margen suficiente. Tampoco admiten temperature (devuelven 400).
             body = {"model": model, "messages": msgs, "stream": True,
-                    "max_tokens": opts.get("max_tokens") or 4096}
-            if opts.get("temperature") is not None:
-                body["temperature"] = opts["temperature"]
+                    "max_tokens": max(int(opts.get("max_tokens") or 0), ANTHROPIC_MIN_TOKENS)}
             if system:
                 body["system"] = system
             if ctx:

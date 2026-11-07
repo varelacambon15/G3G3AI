@@ -296,9 +296,9 @@ async function stream(p, model) {
   };
   let req;
   if (p.type === "anthropic") {
-    const body = { model, max_tokens: Number(st.max_tokens) || 2048, stream: true, messages: apiMessages(p) };
+    // Claude actual: razona antes de responder (cuenta en max_tokens) y no admite temperature
+    const body = { model, max_tokens: Math.max(Number(st.max_tokens) || 0, 16000), stream: true, messages: apiMessages(p) };
     if (st.system) body.system = st.system;
-    if (st.temperature !== "" && st.temperature != null) body.temperature = Number(st.temperature);
     req = request({ method: "POST", url: base + "/v1/messages", onLine, body,
       headers: { "x-api-key": p.api_key, "anthropic-version": "2023-06-01", "content-type": "application/json" } });
   } else {
