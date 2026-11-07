@@ -301,6 +301,9 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   const b = h("div", { class: "bubble" + (streaming ? " cursor" : "") });
   b.innerHTML = md(body);
   frag.append(b);
+  const imgs = extra.images || [];
+  if (imgs.length) frag.append(h("div", { class: "gen-images" }, imgs.map((p) =>
+    h("a", { href: fileUrl(p), target: "_blank", title: p }, h("img", { src: fileUrl(p), alt: "imagen generada", loading: "lazy" })))));
   return frag;
 }
 function messageEl(m) {
@@ -315,7 +318,7 @@ function messageEl(m) {
       att.filter((a) => !imgs.includes(a)).map((a) => h("span", { class: "chip" }, (a.kind === "document" || a.kind === "pdf_scan" ? "📄 " : "📎 ") + a.name)),
       h("button", { onclick: () => editFrom(m) }, "✎ editar")));
   } else {
-    el.append(assistantInner(m.content, m.reasoning, m.meta?.tools));
+    el.append(assistantInner(m.content, m.reasoning, m.meta?.tools, false, { images: m.meta?.images || [] }));
     const st = m.meta?.stats || {};
     el.append(h("div", { class: "meta" },
       h("span", { title: m.meta?.route || "" }, (m.meta?.provider === "local" ? "💻 " : "☁ ") + (m.meta?.model || "")),
@@ -379,7 +382,7 @@ async function send(text, attachments, isContinue = false) {
   const ctrl = new AbortController(); S.streaming = ctrl;
   $("#send-btn").textContent = "Detener"; $("#send-btn").classList.add("danger");
   let content = "", reasoning = "", tools = [], errorMsg = null, raf = 0;
-  const extra = { route: null, fallbacks: [] };
+  const extra = { route: null, fallbacks: [], images: [] };
   const paint = () => {
     raf = 0;
     const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -413,6 +416,7 @@ async function send(text, attachments, isContinue = false) {
         else if (ev.type === "approval_result") { const a = tools.find((t) => t.id === ev.id); if (a) a.state = ev.approved ? "approved" : "denied"; }
         else if (ev.type === "route") extra.route = ev;
         else if (ev.type === "status") extra.status = ev.text;
+        else if (ev.type === "image") extra.images.push(ev.path);
         else if (ev.type === "compacted") extra.compacted = ev.messages;
         else if (ev.type === "route_fallback") extra.fallbacks.push(ev.message);
         else if (ev.type === "error") errorMsg = ev.message;
@@ -460,6 +464,10 @@ async function attachLocalFiles(fileList) {
 }
 $("#camera-input").addEventListener("change", async (e) => { await attachLocalFiles(e.target.files); e.target.value = ""; });
 $("#camera-btn").addEventListener("click", () => $("#camera-input").click());
+$("#image-btn").addEventListener("click", () => {
+  if (!input.value.startsWith("/imagen ")) input.value = "/imagen " + input.value;
+  input.focus(); toast("Describe la imagen y pulsa Enviar (o pídeselo a la IA en el chat)", 3000);
+});
 const composer = $(".composer");
 composer.addEventListener("dragover", (e) => { e.preventDefault(); composer.classList.add("drop"); });
 composer.addEventListener("dragleave", () => composer.classList.remove("drop"));
@@ -540,25 +548,37 @@ function renderLlamaStatus() {
   if (mem?.total) box.append(h("p", { class: "muted" }, `RAM disponible: ${fmtSize(mem.available)} de ${fmtSize(mem.total)}`));
   $("#disk-free").textContent = S.status.disk_free ? `· ${fmtSize(S.status.disk_free)} libres` : "";
 }
-function engineBox() {
+async function renderImageEngine() {
+  const box = $("#image-engine"); box.innerHTML = "";
+  const st = await api("/api/images/status");
+  box.append(h("p", {}, "Proveedor actual: ", h("b", {}, st.provider || "desactivado"),
+    st.provider && st.provider !== "local" ? ` (${st.model || "sin modelo"})` : ""));
+  box.append(h("p", { class: "muted" }, "Para generar en local: instala el motor, descarga un modelo de imagen GGUF (p.ej. «sd-turbo») y pulsa 🎨 en él. Por API se configura en Ajustes."));
+  if (st.sd_binary) box.append(h("p", {}, "✔ stable-diffusion.cpp instalado", h("span", { class: "sub muted" }, " " + st.sd_binary)));
+  else box.append(engineBox("sd"));
+  box.append(h("p", { class: "muted" }, "Imágenes guardadas en ", h("code", {}, st.dir)));
+}
+function engineBox(kind = "llama") {
   const box = h("div", { class: "engine" },
-    h("p", {}, h("b", {}, "Falta el motor llama.cpp."), " En la Konkr se instala con ./install.sh (compilado para su CPU). En PC puedes descargarlo ya compilado:"));
+    kind === "sd"
+      ? h("p", {}, h("b", {}, "Motor de imágenes (stable-diffusion.cpp)."), " En la Konkr: ./install.sh --with-sd. En PC puedes descargarlo ya compilado:")
+      : h("p", {}, h("b", {}, "Falta el motor llama.cpp."), " En la Konkr se instala con ./install.sh (compilado para su CPU). En PC puedes descargarlo ya compilado:"));
   const list = h("div", {}, h("span", { class: "muted" }, "Consultando versiones…"));
   box.append(list);
-  api("/api/engine/assets").then((r) => {
+  api("/api/engine/assets?kind=" + kind).then((r) => {
     list.innerHTML = "";
     if (r.note) list.append(h("p", { class: "muted" }, r.note));
     for (const a of r.assets) list.append(h("div", { class: "row" },
       h("span", { class: "grow" }, h("b", {}, a.variant.toUpperCase()), " — ", a.description, h("span", { class: "sub muted" }, ` (${fmtSize(a.size)}, ${r.release})`)),
-      h("button", { class: "primary small", onclick: () => installEngine(a) }, "Instalar")));
+      h("button", { class: "primary small", onclick: () => installEngine(a, kind) }, "Instalar")));
   }).catch((e) => { list.innerHTML = ""; list.append(h("p", { class: "error" }, e.message)); });
   return box;
 }
-async function installEngine(a) {
-  await api("/api/engine/install", { method: "POST", body: { url: a.url, name: a.name } });
+async function installEngine(a, kind = "llama") {
+  await api("/api/engine/install", { method: "POST", body: { url: a.url, name: a.name, kind } });
   toast("Descargando motor…");
   const t = setInterval(async () => {
-    const st = await api("/api/engine/status");
+    const st = await api("/api/engine/status?kind=" + kind);
     const pill = $("#status-pill");
     if (st.status === "downloading") pill.textContent = `⬇ motor ${st.total ? Math.round(100 * st.done / st.total) : 0}%`;
     if (st.status === "extracting") pill.textContent = "⬇ motor: descomprimiendo";
@@ -587,11 +607,18 @@ async function refreshModels() {
       m.mmproj ? null : (loaded === m.path
         ? h("span", { class: "badge ok" }, "cargado")
         : h("button", { class: "primary small", onclick: () => loadModel(m.path) }, "Cargar")),
+      m.mmproj ? null : h("button", { class: "ghost small", title: "Usar este modelo para generar imágenes en local (stable-diffusion.cpp)",
+        onclick: async () => {
+          const st = await api("/api/settings");
+          await api("/api/settings", { method: "PUT", body: { ...st, sd_model: m.path, image_provider: "local" } });
+          S.settings = null; toast("🎨 " + m.name + " se usará para generar imágenes"); refreshModels();
+        } }, S.settings?.sd_model === m.path ? "🎨 ✔" : "🎨"),
       h("button", { class: "ghost small", title: "Borrar del disco", onclick: async () => {
         if (!confirm(`¿Borrar ${m.name} (${fmtSize(m.size)}) del disco?`)) return;
         await api("/api/models/local?" + qs({ path: m.path }), { method: "DELETE" }); refreshModels();
       } }, "🗑")));
   }
+  renderImageEngine();
   const logs = await api("/api/llama/logs");
   $("#llama-logs").textContent = logs.lines.join("\n");
   refreshDownloads();
@@ -733,6 +760,14 @@ const FIELDS = [
   ["memory_api", "🧠 Enviar la memoria también a modelos por API", "checkbox", "Si lo desactivas, sólo el modelo local conoce tus recuerdos."],
   ["vision_fallback", "👁 Modelo para describir imágenes", "model", "Cuando el modelo elegido no ve imágenes (p.ej. DeepSeek), éste las describe. Vacío = el local si tiene visión."],
   ["context_budget", "Contexto máximo para APIs (tokens)", "number", "Por encima, lo más antiguo de la conversación se resume automáticamente."],
+  ["image_provider", "🎨 Imágenes: proveedor", "imgprov", "Escribe «/imagen descripción» en el chat o pide a la IA que dibuje algo."],
+  ["image_model", "🎨 Imágenes: modelo (API)", "text", "OpenAI: gpt-image-1 · Gemini: imagen-3.0-generate-002 · OpenRouter: google/gemini-2.5-flash-image"],
+  ["image_mode", "🎨 Imágenes: tipo de API", "imgmode"],
+  ["image_size", "🎨 Imágenes: tamaño", "imgsize"],
+  ["image_dir", "🎨 Carpeta de imágenes", "text", "Vacío = ~/G3G3AI-imagenes"],
+  ["sd_steps", "🎨 Local: pasos", "number", "1–4 para modelos «turbo»; 20–30 para modelos normales."],
+  ["sd_cfg", "🎨 Local: CFG", "number", "1.0 para «turbo»; ~7 para modelos normales."],
+  ["sd_max_side", "🎨 Local: tamaño máximo (px)", "number", "En la Konkr, 512 es razonable; más grande tarda mucho más."],
   ["router_mode", "Modo Auto: estrategia", "router"],
   ["router_fast", "Modo Auto: modelo rápido", "model", "Normalmente el local (gratis, privado)."],
   ["router_strong", "Modo Auto: modelo potente", "model", "Normalmente una API (DeepSeek, Claude…). Se usa para código, análisis, documentos largos y el modo agente."],
@@ -795,6 +830,13 @@ async function loadSettings() {
         : sb.available ? (sb.active ? "🛡 Activo: los comandos sólo pueden escribir en las carpetas modificables." : "Disponible pero desactivado.")
         : "Falta bubblewrap (bwrap). En SteamOS viene con Flatpak; en otras distros instala el paquete «bubblewrap».";
     }
+    else if (type === "imgprov") {
+      const opts = [["", "Desactivado"], ["local", "Local (stable-diffusion.cpp)"]];
+      for (const p of S.settings.providers.filter((p) => p.enabled && p.type !== "anthropic")) opts.push([p.id, p.name]);
+      inp = selectEl(key, v || "", opts);
+    }
+    else if (type === "imgmode") inp = selectEl(key, v, [["auto", "Automático"], ["images", "/images/generations (OpenAI, Gemini…)"], ["chat", "Chat con imágenes (OpenRouter)"]]);
+    else if (type === "imgsize") inp = selectEl(key, v, [["1024x1024", "Cuadrada 1024×1024"], ["1024x1536", "Vertical 1024×1536"], ["1536x1024", "Horizontal 1536×1024"], ["512x512", "Pequeña 512×512"]]);
     else if (type === "webprov") inp = selectEl(key, v, [["duckduckgo", "DuckDuckGo (sin clave)"], ["brave", "Brave Search (clave)"], ["tavily", "Tavily (clave)"]]);
     else if (type === "router") inp = selectEl(key, v, [["smart", "Inteligente (según la tarea)"], ["local_first", "Local primero"], ["api_first", "API primero"]]);
     else if (type === "model") {
@@ -881,7 +923,7 @@ $("#save-settings").addEventListener("click", async () => {
   for (const [key, , type] of FIELDS) {
     const el = f.elements[key];
     if (type === "checkbox") out[key] = el.checked;
-    else if (["perm", "router", "model", "sandbox", "webprov"].includes(type)) out[key] = el.value;
+    else if (["perm", "router", "model", "sandbox", "webprov", "imgprov", "imgmode", "imgsize"].includes(type)) out[key] = el.value;
     else if (type === "number") out[key] = el.value === "" ? 0 : Number(el.value);
     else if (type === "lines") out[key] = el.value.split("\n").map((s) => s.trim()).filter(Boolean);
     else out[key] = el.value;

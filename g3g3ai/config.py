@@ -65,6 +65,17 @@ DEFAULTS: dict = {
     "vision_fallback": "",
     # Contexto máximo (tokens aprox.) que se envía a modelos por API antes de resumir lo antiguo
     "context_budget": 60000,
+    # Generación de imágenes: "" (desactivada) | "local" | id de un proveedor API
+    "image_provider": "",
+    "image_model": "",          # p.ej. gpt-image-1, imagen-3.0-generate-002, google/gemini-2.5-flash-image
+    "image_mode": "auto",       # auto | images (/images/generations) | chat (OpenRouter)
+    "image_size": "1024x1024",
+    "image_dir": "",            # vacío = ~/G3G3AI-imagenes
+    "sd_path": "",              # ejecutable de stable-diffusion.cpp (vacío = autodetectar)
+    "sd_model": "",             # modelo local de imagen (.gguf / .safetensors)
+    "sd_steps": 4,              # 1-4 para modelos «turbo»; 20+ para modelos normales
+    "sd_cfg": 1.0,              # 1.0 para «turbo»; ~7 para modelos normales
+    "sd_max_side": 512,         # límite de tamaño en local (la Konkr tarda mucho con imágenes grandes)
     # Memoria entre conversaciones
     "memory_enabled": True,     # usar los recuerdos como contexto
     "memory_auto": True,        # la IA puede guardar recuerdos por su cuenta (se ve en el chat)

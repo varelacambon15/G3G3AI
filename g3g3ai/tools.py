@@ -79,6 +79,11 @@ ALL_SPECS = {
                             ["content"])),
     "memory_delete": ("Borra un recuerdo por su id (cuando quede obsoleto o el usuario pida olvidarlo).",
                       _schema({"id": {"type": "integer"}}, ["id"])),
+    "generate_image": ("Genera una imagen a partir de una descripción detallada (en inglés suele dar mejor resultado). "
+                       "La imagen se muestra al usuario automáticamente.",
+                       _schema({"prompt": {"type": "string", "description": "Descripción detallada de la imagen"},
+                                "size": {"type": "string", "description": "Opcional, p.ej. 1024x1024 o 1024x1536"}},
+                               ["prompt"])),
     "ask_local_model": ("Delega una subtarea sencilla (resumir, traducir, extraer datos, reformatear) "
                         "en el modelo local gratuito. Devuelve su respuesta.",
                         _schema({"prompt": {"type": "string"}}, ["prompt"])),
@@ -88,7 +93,7 @@ ALL_SPECS = {
 class ToolContext:
     def __init__(self, files: Files, cfg, local_chat: Callable[[str], Awaitable[str]] | None = None, *,
                  agent: bool = True, web: bool = False, session_allow: set | None = None,
-                 memory=None, source: str | None = None):
+                 memory=None, source: str | None = None, image_gen=None):
         self.files = files
         self.cfg = cfg
         self.local_chat = local_chat
@@ -96,6 +101,8 @@ class ToolContext:
         self.web = web
         self.memory = memory  # objeto Memory si la IA puede guardar recuerdos
         self.source = source
+        self.image_gen = image_gen  # async (prompt, size) -> Path
+        self.generated: list[str] = []
         # Herramientas que el usuario permitió «siempre» en esta conversación
         self.session_allow = session_allow if session_allow is not None else set()
 
@@ -121,6 +128,8 @@ class ToolContext:
             out += ["web_search", "fetch_url"]
         if self.memory is not None:
             out += ["memory_save", "memory_delete"]
+        if self.image_gen is not None:
+            out.append("generate_image")
         return out
 
     def openai_specs(self) -> list[dict]:
@@ -155,6 +164,8 @@ class ToolContext:
         if self.memory is not None:
             from .memory import SAVE_GUIDE
             parts.append(SAVE_GUIDE)
+        if self.image_gen is not None:
+            parts.append("Puedes crear imágenes con generate_image cuando el usuario lo pida.")
         if self.web:
             parts.append("Puedes buscar en internet con web_search y leer páginas con fetch_url. "
                          "Cuando uses información de la web, cita las fuentes con enlaces.")
@@ -206,6 +217,14 @@ class ToolContext:
                 return await web.fetch(str(args.get("url", "")).strip())
             if name in MEMORY_TOOLS:
                 return self._memory(name, args)
+            if name == "generate_image":
+                from .images import ImageError
+                try:
+                    path = await self.image_gen(str(args.get("prompt", "")), args.get("size"))
+                except ImageError as e:
+                    return f"Error al generar la imagen: {e}"
+                self.generated.append(str(path))
+                return f"Imagen generada y mostrada al usuario. Guardada en {path}"
             return await asyncio.to_thread(self._run_sync, name, args)
         except (FileAccessError, DocumentError, web.WebError) as e:
             return f"Error: {e}"
@@ -357,6 +376,8 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
     if result is None:
         result = await ctx.run(name, args)
     yield {"type": "tool_result", "name": name, "result": result[:TOOL_RESULT_PREVIEW]}
+    while ctx.generated:
+        yield {"type": "image", "path": ctx.generated.pop(0)}
     sink.append(result)
 
 

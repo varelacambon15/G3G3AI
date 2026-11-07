@@ -12,6 +12,7 @@ Cliente de IA al estilo de LM Studio para tu **Konkr Pocket Fit** (SteamOS ARM) 
 - 🌐 **Búsqueda web**: busca en internet y lee páginas, citando las fuentes.
 - 📷 **Fotos y documentos**: adjunta fotos (o hazlas con la cámara del móvil), PDF, Word, Excel, PowerPoint u OpenDocument, y pregunta sobre ellos. Si el modelo elegido no ve imágenes (como DeepSeek), otro modelo con visión las describe automáticamente.
 - 🗜 **Conversaciones largas**: cuando no caben en el contexto, lo antiguo se resume solo, y en las tareas largas del agente se recortan las salidas viejas de las herramientas.
+- 🎨 **Generación de imágenes**: por API (OpenAI, Gemini, OpenRouter…) o en local con stable-diffusion.cpp. Escribe `/imagen descripción` o pídeselo a la IA.
 - 🧠 **Memoria entre conversaciones**: recuerda datos duraderos sobre ti (preferencias, proyectos…). Cada recuerdo nuevo se ve en el chat y puedes editarlos o borrarlos en Ajustes → Memoria.
 - 🔗 **Konkr ↔ PC**: cada equipo puede usar el modelo local del otro (Ajustes → Añadir proveedor → «Otro equipo con G3G3AI»).
 - 📱 **Desde el móvil**: interfaz web protegida con contraseña, instalable como app.
@@ -125,6 +126,12 @@ Junto al selector de modelo hay tres casillas: **🔀 Auto**, **🌐 Web** (busc
 
 Cuando una conversación no cabe en el contexto (el del modelo local, o «Contexto máximo para APIs» en Ajustes), los mensajes antiguos se resumen automáticamente: verás «🗜 Se resumieron N mensajes». En las tareas largas del modo agente, las salidas antiguas de las herramientas se recortan para que DeepSeek y otros modelos aguanten más pasos.
 
+### Generación de imágenes
+
+- **Uso:** escribe `/imagen un gato astronauta` (o pulsa 🎨), o pide en el chat «dibújame…» y la IA usará la herramienta `generate_image`. Las imágenes aparecen en el chat y se guardan en `~/G3G3AI-imagenes`.
+- **Por API** (Ajustes → 🎨 Imágenes): elige el proveedor y el modelo. Por ejemplo, OpenAI con `gpt-image-1`, Gemini con `imagen-3.0-generate-002` u OpenRouter con `google/gemini-2.5-flash-image`.
+- **En local** (Modelos → 🎨 Generación de imágenes): instala stable-diffusion.cpp (en el PC, con un botón; en la Konkr, con `./install.sh --with-sd`), descarga un modelo de imagen GGUF (por ejemplo, SD Turbo) y pulsa 🎨 en él. En la Konkr, cuenta con bastante espera por imagen y calidad modesta. En un PC con tarjeta gráfica va mucho mejor.
+
 ## Modelos recomendados
 
 En la Konkr (8 GB de RAM), mejor modelos de 3–4B en versión Q4_K_M: **Qwen3 4B** (bueno con herramientas y en modo agente), **Gemma 3 4B**, **Llama 3.2 3B**, **Qwen2.5 Coder 3B**. En un PC con 16 GB o más y tarjeta gráfica puedes usar modelos de 7–14B.
@@ -150,6 +157,7 @@ g3g3ai/
   memory.py     memoria entre conversaciones
   documents.py  lectura de PDF, Office e imágenes
   context.py    historial: imágenes/visión y resumen de conversaciones largas
+  images.py     generación de imágenes (API y stable-diffusion.cpp)
   providers.py  streaming OpenAI/Anthropic + bucle de herramientas
   llama.py      proceso llama-server
   engine.py     descarga de llama.cpp precompilado (Windows/macOS/Linux x64)

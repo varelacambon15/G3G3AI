@@ -7,6 +7,7 @@ import os
 import secrets
 import shutil
 import platform
+import re
 import socket
 import sys
 from contextlib import asynccontextmanager
@@ -28,6 +29,7 @@ from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
 from .engine import EngineInstaller
 from . import documents as D
+from . import images
 from .context import HistoryBuilder
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
 from .tools import ToolContext, resolve_approval
@@ -78,7 +80,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     files = Files(cfg)
     hub = Hub(cfg)
     llama = LlamaManager(cfg)
-    engine = EngineInstaller(cfg)
+    engines = {"llama": EngineInstaller(cfg, "llama"), "sd": EngineInstaller(cfg, "sd")}
     memory = Memory(db)
     session_allow: dict[str, set] = {}  # conversación -> herramientas permitidas «siempre»
 
@@ -295,13 +297,21 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         if not text and not attach_text and not body.get("continue"):
             raise HTTPException(400, "Mensaje vacío")
         agent = bool(body.get("use_tools"))
+        direct_image = None
+        m_img = re.match(r"^/(imagen|img|image)\s+(.+)", text, re.S | re.I)
+        if m_img:
+            if not cfg["image_provider"]:
+                raise HTTPException(409, "La generación de imágenes está desactivada. Configúrala en Ajustes → Imágenes.")
+            direct_image = m_img.group(2).strip()
         use_web = bool(body.get("use_web"))
 
         conv = db.get_conversation(cid) if cid else None
         # Último mensaje del usuario (para decidir la ruta al regenerar)
         last_user = text or next((m["content"] for m in reversed((conv or {}).get("messages", []))
                                   if m["role"] == "user"), "")
-        if pid == AUTO_PROVIDER:
+        if direct_image is not None:
+            candidates = []
+        elif pid == AUTO_PROVIDER:
             candidates = router.plan(cfg, last_user, bool(attachments), agent or use_web, provider_available)
             if not candidates:
                 raise HTTPException(409, "Modo Auto: no hay ningún modelo disponible. Carga un modelo local "
@@ -336,17 +346,37 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 return False
             return chosen_pid == LOCAL_PROVIDER or bool(cfg["memory_api"])
 
+        async def image_gen(prompt: str, size=None):
+            return await images.generate(cfg, provider_for, prompt, size)
+
         def make_ctx(chosen_pid: str):
             mem = memory if (memory_for(chosen_pid) and cfg["memory_auto"]) else None
-            if not (agent or use_web or mem):
+            img = image_gen if cfg["image_provider"] else None
+            if not (agent or use_web or mem or img):
                 return None
             delegate = local_complete if (agent and chosen_pid != LOCAL_PROVIDER and llama.ready) else None
             return ToolContext(files, cfg, delegate, agent=agent, web=use_web,
-                               session_allow=session_allow.setdefault(cid, set()), memory=mem, source=cid)
+                               session_allow=session_allow.setdefault(cid, set()), memory=mem, source=cid,
+                               image_gen=img)
 
         async def gen():
             content, reasoning, trace, stats, route = "", "", [], {}, None
+            made: list[str] = []
             yield sse({"type": "start", "conversation_id": cid})
+            if direct_image is not None:  # «/imagen …»: sin pasar por el modelo de texto
+                yield sse({"type": "status", "text": "🎨 Generando imagen…"})
+                try:
+                    path = await image_gen(direct_image)
+                    made.append(str(path))
+                    yield sse({"type": "image", "path": str(path)})
+                    content = "Imagen generada."
+                except images.ImageError as e:
+                    content = f"No se pudo generar la imagen: {e}"
+                yield sse({"type": "content", "text": content})
+                meta = {"provider": "imagen", "model": cfg["image_model"] or cfg["image_provider"], "images": made}
+                stats["message_id"] = db.add_message(cid, "assistant", content, None, meta)
+                yield sse({"type": "done", **stats})
+                return
             try:
                 for i, (cpid, cmodel, why) in enumerate(candidates):
                     p = provider_for(cpid)
@@ -372,6 +402,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                                 reasoning += ev["text"]
                             elif ev["type"] in ("tool_call", "tool_result"):
                                 trace.append(ev)
+                            elif ev["type"] == "image":
+                                made.append(ev["path"])
                             elif ev["type"] == "stats":
                                 stats.update({k: v for k, v in ev.items() if v is not None and k != "type"})
                             yield sse(ev)
@@ -383,11 +415,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             break
                         yield sse({"type": "route_fallback", "message": f"{shown}: {msg}"})
             finally:
-                if content or reasoning or trace:
+                if content or reasoning or trace or made:
                     meta = {"provider": route["provider"] if route else pid,
                             "model": route["model"] if route else model,
                             "route": route.get("reason") if route else None,
-                            "stats": stats, "tools": trace or None}
+                            "stats": stats, "tools": trace or None, "images": made or None}
                     stats["message_id"] = db.add_message(cid, "assistant", content, reasoning or None, meta)
             yield sse({"type": "done", **stats})
 
@@ -430,20 +462,40 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         return {"ok": True}
 
     # --- Motor llama.cpp precompilado -------------------------------------------------
+    def engine_of(kind: str) -> EngineInstaller:
+        if kind not in engines:
+            raise HTTPException(404, "Motor desconocido")
+        return engines[kind]
+
     @app.get("/api/engine/assets")
-    async def engine_assets():
+    async def engine_assets(kind: str = "llama"):
         try:
-            return await engine.assets()
+            return await engine_of(kind).assets()
         except httpx.HTTPError as e:
             raise HTTPException(502, f"No se pudo consultar GitHub: {e}") from e
 
     @app.post("/api/engine/install")
     async def engine_install(body: dict):
-        return engine.start(body["url"], body["name"])
+        return engine_of(body.get("kind", "llama")).start(body["url"], body["name"])
 
     @app.get("/api/engine/status")
-    async def engine_status():
-        return engine.state
+    async def engine_status(kind: str = "llama"):
+        return engine_of(kind).state
+
+    # --- Imágenes -----------------------------------------------------------------------
+    @app.get("/api/images/status")
+    async def images_status():
+        return {"provider": cfg["image_provider"], "model": cfg["image_model"],
+                "sd_binary": images.find_sd(cfg), "sd_model": cfg["sd_model"],
+                "dir": str(images.output_dir(cfg))}
+
+    @app.post("/api/images/generate")
+    async def images_generate(body: dict):
+        try:
+            path = await images.generate(cfg, provider_for, body.get("prompt", ""), body.get("size"))
+        except images.ImageError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"path": str(path)}
 
     # --- Modelos locales / llama.cpp ---------------------------------------------------
     @app.get("/api/models/local")

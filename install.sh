@@ -8,6 +8,7 @@
 #   ./install.sh --no-service  no instala el servicio de arranque automático
 #   ./install.sh --update-llama  vuelve a descargar y compilar llama.cpp
 #   ./install.sh --no-steam    no crea el acceso en Steam / menú de aplicaciones
+#   ./install.sh --with-sd     compila también stable-diffusion.cpp (generar imágenes en local)
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,7 +17,7 @@ VENV="$DATA_DIR/venv"
 LLAMA_DIR="$DATA_DIR/llama.cpp"
 BIN_DIR="$HOME/.local/bin"
 
-VULKAN=0; SKIP_LLAMA=0; SERVICE=1; UPDATE_LLAMA=0; STEAM=1
+VULKAN=0; SKIP_LLAMA=0; SERVICE=1; UPDATE_LLAMA=0; STEAM=1; WITH_SD=0
 for a in "$@"; do
   case "$a" in
     --vulkan) VULKAN=1 ;;
@@ -24,7 +25,8 @@ for a in "$@"; do
     --no-service) SERVICE=0 ;;
     --update-llama) UPDATE_LLAMA=1 ;;
     --no-steam) STEAM=0 ;;
-    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    --with-sd) WITH_SD=1 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "Opción desconocida: $a"; exit 1 ;;
   esac
 done
@@ -72,6 +74,21 @@ if [ "$SKIP_LLAMA" = 0 ]; then
     cmake --build "$LLAMA_DIR/build" --config Release -j "$JOBS" --target llama-server
   fi
   "$LLAMA_DIR/build/bin/llama-server" --version 2>&1 | head -n 3 || true
+fi
+
+# 2b) stable-diffusion.cpp (opcional) ------------------------------------------------------
+if [ "$WITH_SD" = 1 ]; then
+  SD_DIR="$DATA_DIR/stable-diffusion.cpp"
+  say "Descargando y compilando stable-diffusion.cpp (puede tardar 15-30 min)"
+  if [ ! -d "$SD_DIR/.git" ]; then
+    git clone --depth 1 --recursive https://github.com/leejet/stable-diffusion.cpp "$SD_DIR"
+  else
+    git -C "$SD_DIR" pull --ff-only && git -C "$SD_DIR" submodule update --init --recursive
+  fi
+  JOBS=$(( $(nproc) > 4 ? 4 : $(nproc) ))
+  cmake -S "$SD_DIR" -B "$SD_DIR/build" -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON
+  cmake --build "$SD_DIR/build" --config Release -j "$JOBS"
+  ls "$SD_DIR/build/bin/" 2>/dev/null | grep -E '^sd(-cli)?$' || echo "[aviso] no se encontró el ejecutable sd en build/bin"
 fi
 
 # 3) Lanzador ---------------------------------------------------------------------

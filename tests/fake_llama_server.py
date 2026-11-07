@@ -9,6 +9,8 @@ ap = argparse.ArgumentParser()
 ap.add_argument("-m"); ap.add_argument("--host", default="127.0.0.1"); ap.add_argument("--port", type=int)
 ap.add_argument("-c"); ap.add_argument("-t"); ap.add_argument("-ngl"); ap.add_argument("--jinja", action="store_true")
 args, _ = ap.parse_known_args()
+# PNG de 1x1 píxel
+PNG_B64 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
 
 
 class H(BaseHTTPRequestHandler):
@@ -23,8 +25,18 @@ class H(BaseHTTPRequestHandler):
     def chunk(self, obj):
         self.wfile.write(f"data: {json.dumps(obj)}\n\n".encode()); self.wfile.flush()
 
+    def json_reply(self, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path.endswith("/images/generations"):
+            return self.json_reply({"data": [{"b64_json": PNG_B64}]})
+        if req.get("modalities"):
+            return self.json_reply({"choices": [{"message": {"role": "assistant", "content": "",
+                                    "images": [{"image_url": {"url": "data:image/png;base64," + PNG_B64}}]}}]})
         self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
         msgs = req["messages"]
         last = msgs[-1]
@@ -32,6 +44,10 @@ class H(BaseHTTPRequestHandler):
         if "run_command" in names and last["role"] == "user" and "ejecuta" in last["content"]:
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c2", "function": {
                 "name": "run_command", "arguments": json.dumps({"command": "echo hola-g3"})}}]}}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if "generate_image" in names and last["role"] == "user" and "dibuja" in str(last["content"]):
+            self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "g1", "function": {
+                "name": "generate_image", "arguments": json.dumps({"prompt": "a cat on a Konkr"})}}]}}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
         if "memory_save" in names and last["role"] == "user" and "recuerda que" in last["content"]:
             fact = last["content"].split("recuerda que", 1)[1].strip()

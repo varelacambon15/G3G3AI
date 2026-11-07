@@ -529,3 +529,62 @@ def test_long_conversation_is_summarized(env):
     first = conv["messages"][0]["id"]
     conv = client.delete(f"/api/conversations/{cid}/messages/{first}", headers=h).json()
     assert conv["summary"] is None
+
+
+# --- Generación de imágenes ----------------------------------------------------------------
+def _fake_exe(tmp, name, script):
+    if sys.platform == "win32":
+        f = tmp / f"{name}.bat"
+        f.write_text(f'@"{sys.executable}" "{script}" %*\r\n')
+    else:
+        f = tmp / name
+        f.write_text(f"#!/bin/sh\nexec {sys.executable} {script} \"$@\"\n")
+        f.chmod(0o755)
+    return f
+
+
+def test_image_generation_api_tool_and_command(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    port = cfg["llama_port"]
+    s = client.get("/api/settings", headers=h).json()
+    s["providers"] += [
+        {"id": "imgapi", "name": "Img", "type": "openai", "enabled": True, "base_url": f"http://127.0.0.1:{port}/v1", "api_key": "x"},
+        {"id": "openrouter-x", "name": "OR", "type": "openai", "enabled": True, "base_url": f"http://127.0.0.1:{port}/v1", "api_key": "x"},
+    ]
+    s.update(image_provider="imgapi", image_model="gpt-image-1", image_dir=str(home / "imgs"))
+    client.put("/api/settings", headers=h, json=s)
+    # 1) Directo por API (/images/generations)
+    r = client.post("/api/images/generate", headers=h, json={"prompt": "un gato"})
+    assert r.status_code == 200 and Path(r.json()["path"]).read_bytes().startswith(b"\x89PNG")
+    # 2) La IA usa la herramienta generate_image y la imagen queda en el mensaje
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "dibuja un gato"}))
+    imgs = [e for e in evs if e["type"] == "image"]
+    assert imgs and Path(imgs[0]["path"]).exists()
+    cid = evs[0]["conversation_id"]
+    msg = client.get(f"/api/conversations/{cid}", headers=h).json()["messages"][-1]
+    assert msg["meta"]["images"] == [imgs[0]["path"]]
+    # 3) Comando /imagen (sin modelo de texto) en modo chat (estilo OpenRouter)
+    cfg.data.update(image_provider="openrouter-x", image_mode="chat")
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "/imagen un perro astronauta"}))
+    assert any(e["type"] == "image" for e in evs)
+    # Se puede ver desde la interfaz
+    path = next(e for e in evs if e["type"] == "image")["path"]
+    assert client.get("/api/files/download", params={"path": path, "inline": True}, headers=h).status_code == 200
+
+
+def test_image_generation_local_sd(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    fake = _fake_exe(tmp, "sd", Path(__file__).parent / "fake_sd.py")
+    model = tmp / "models" / "sd-turbo-q8_0.gguf"
+    model.write_bytes(b"GGUF")
+    cfg.data.update(image_provider="local", sd_path=str(fake), sd_model=str(model), image_dir=str(home / "imgs"),
+                    sd_max_side=512)
+    r = client.post("/api/images/generate", headers=h, json={"prompt": "paisaje", "size": "1024x768"})
+    assert r.status_code == 200, r.text
+    assert Path(r.json()["path"]).exists()
+    cfg.data.update(sd_model="")
+    r = client.post("/api/images/generate", headers=h, json={"prompt": "x"})
+    assert r.status_code == 400 and "modelo" in r.json()["detail"]
