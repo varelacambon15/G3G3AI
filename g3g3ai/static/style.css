@@ -316,3 +316,16 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .hub-actions { display: flex; gap: 6px; }
 .hub-more { justify-content: center; }
 .files-table li.recommended { background: color-mix(in srgb, var(--ok) 7%, transparent); border-radius: 8px; }
+
+/* Favoritos y modelos ocultos */
+.fav-btn { background: none; border: 0; font-size: 17px; color: var(--muted); padding: 4px 4px; border-radius: 8px; line-height: 1; }
+.fav-btn:hover { background: var(--hover); color: var(--text); }
+.fav-btn.on { color: #d9a400; }
+.fav-btn:disabled { opacity: .35; }
+.md-list { max-height: 60dvh; overflow-y: auto; margin-top: 10px; }
+.md-group { display: flex; align-items: center; gap: 6px; padding: 10px 2px 4px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
+.md-row { display: flex; align-items: center; gap: 4px; padding: 3px 2px 3px 8px; border-radius: 8px; }
+.md-row:hover { background: var(--hover); }
+.md-row.hidden-model .md-name { opacity: .45; text-decoration: line-through; }
+.md-name { font-size: 14px; overflow-wrap: anywhere; }
+.star-on { color: #d9a400 !important; }

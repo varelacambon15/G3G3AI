@@ -191,6 +191,12 @@ En el modo 🛠 Agente, la IA tiene dos herramientas:
 - Si el programa necesita librerías de internet (`pip`), **siempre** te lo pregunta.
 - En Linux y la Konkr, `build_exe` crea ejecutables de Linux. Los `.exe` de Windows se crean en el PC con Windows.
 
+### ⭐ Favoritos y modelos ocultos
+
+- **☆/★** junto al selector marca el modelo actual como favorito. Los favoritos salen arriba, en el grupo «⭐ Favoritos».
+- **⚙ Gestionar modelos…** (al final del selector) abre una ventana con buscador para marcar favoritos y ocultar modelos, uno a uno o todos los de un proveedor (respetando los favoritos). Útil con OpenRouter, que lista cientos.
+- El modelo seleccionado se sigue viendo aunque esté oculto. Favoritos y ocultos se sincronizan entre tus equipos.
+
 ### 🔎 Buscador de modelos
 
 En **Modelos → Buscar y descargar modelos**:

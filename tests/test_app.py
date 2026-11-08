@@ -1053,3 +1053,15 @@ def test_hub_search_enriched(env, monkeypatch):
     from g3g3ai.hub import quant_info
     assert quant_info("Q4_K_M")[1] == 3 and quant_info("Q8_0")[1] > quant_info("Q3_K_S")[1]
     assert client.get("/api/hardware", headers=h).json()["recommendation"]["summary"]["budget_gb"] > 0
+
+
+def test_model_favorites_and_hidden_are_saved_and_synced(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    before = cfg["settings_updated"] or 0
+    r = client.put("/api/settings", headers=h, json={"model_favorites": ["openrouter::anthropic/claude-haiku-5.5"],
+                                                      "model_hidden": ["openrouter::otro/modelo"]}).json()
+    assert r["model_favorites"] == ["openrouter::anthropic/claude-haiku-5.5"] and r["model_hidden"] == ["openrouter::otro/modelo"]
+    assert cfg["settings_updated"] > before  # cuenta como cambio de ajustes comunes: viaja con la sincronización
+    from g3g3ai.sync import SYNC_KEYS
+    assert {"model_favorites", "model_hidden"} <= set(SYNC_KEYS)

@@ -26,7 +26,7 @@ SYNC_KEYS = [
     "router_mode", "router_fast", "router_strong", "ai_write", "ai_commands",
     "web_provider", "web_api_key", "hf_token", "memory_enabled", "memory_auto", "memory_api",
     "vision_fallback", "context_budget", "image_provider", "image_model", "image_mode", "image_size",
-    "sd_steps", "sd_cfg",
+    "sd_steps", "sd_cfg", "model_favorites", "model_hidden",
 ]
 INTERVAL = 120  # segundos entre sincronizaciones automáticas
 SALT = b"g3g3ai-sync-v1"

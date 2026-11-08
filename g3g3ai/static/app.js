@@ -186,29 +186,115 @@ async function refreshStatus() {
 }
 
 // --- Proveedores y selector de modelo -------------------------------------------------------
+// Favoritos y ocultos del selector (se guardan en el servidor y se sincronizan entre equipos)
+const MS = { favs: [], hidden: [], catalog: [] };  // catalog: [{value, label, group}]
+async function loadModelPrefs() {
+  if (!S.settings) { try { S.settings = await api("/api/settings"); } catch { S.settings = null; } }
+  MS.favs = S.settings?.model_favorites || []; MS.hidden = S.settings?.model_hidden || [];
+}
+async function saveModelPrefs() {
+  try {
+    S.settings = await api("/api/settings", { method: "PUT", body: { model_favorites: MS.favs, model_hidden: MS.hidden } });
+  } catch (e) { toast(e.message); }
+}
 async function loadProviders() {
   S.providers = await api("/api/providers");
-  const sel = $("#model-select"), prev = store.get("model", "local::local");
-  sel.innerHTML = "";
+  await loadModelPrefs();
+  const prev = store.get("model", "local::local");
   updateAutoTitle();
-  const local = h("optgroup", { label: "Local (llama.cpp)" });
   const lm = S.status?.llama?.model;
-  local.append(h("option", { value: "local::local" }, lm ? `💻 ${lm}` : "💻 Modelo local (cárgalo en Modelos)"));
-  sel.append(local);
+  MS.catalog = [{ value: "local::local", label: lm ? `💻 ${lm}` : "💻 Modelo local (cárgalo en Modelos)", group: "Local (llama.cpp)", pid: "local" }];
+  const empty = [];
   for (const p of S.providers.filter((p) => !["local", "auto"].includes(p.id) && p.enabled)) {
-    const g = h("optgroup", { label: p.name });
     let models = S.models[p.id];
     if (!models) {
       try { models = S.models[p.id] = await api(`/api/providers/${p.id}/models`); }
       catch (e) { models = []; toast(`${p.name}: ${e.message}`); }
     }
-    for (const m of models) g.append(h("option", { value: `${p.id}::${m}` }, `☁ ${m}`));
-    if (!models.length) g.append(h("option", { disabled: true }, "(sin modelos — revisa la clave API)"));
+    if (!models.length) empty.push(p.name);
+    for (const m of models) MS.catalog.push({ value: `${p.id}::${m}`, label: `☁ ${m}`, group: p.name, pid: p.id });
+  }
+  renderModelSelect(prev, empty);
+}
+function renderModelSelect(prev, empty = []) {
+  const sel = $("#model-select");
+  prev = prev || sel.value || store.get("model", "local::local");
+  sel.innerHTML = "";
+  const favs = MS.catalog.filter((m) => MS.favs.includes(m.value));
+  if (favs.length) {
+    const g = h("optgroup", { label: "⭐ Favoritos" });
+    favs.forEach((m) => g.append(h("option", { value: m.value }, `${m.label.replace(/^(💻|☁) /, "")} · ${m.group}`)));
     sel.append(g);
   }
+  const groups = new Map();
+  for (const m of MS.catalog) {
+    if (MS.favs.includes(m.value)) continue;
+    if (MS.hidden.includes(m.value) && m.value !== prev) continue;  // el seleccionado siempre se ve
+    if (!groups.has(m.group)) groups.set(m.group, h("optgroup", { label: m.group }));
+    groups.get(m.group).append(h("option", { value: m.value }, m.label + (MS.hidden.includes(m.value) ? " (oculto)" : "")));
+  }
+  for (const g of groups.values()) sel.append(g);
+  for (const name of empty) sel.append(h("optgroup", { label: name }, h("option", { disabled: true }, "(sin modelos — revisa la clave API)")));
+  const nHidden = MS.catalog.filter((m) => MS.hidden.includes(m.value)).length;
+  sel.append(h("optgroup", { label: "──────" }, h("option", { value: "__manage__" }, "⚙ Gestionar modelos…" + (nHidden ? ` (${nHidden} ocultos)` : ""))));
   if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  updateFavButton();
 }
-$("#model-select").addEventListener("change", (e) => store.set("model", e.target.value));
+function updateFavButton() {
+  const v = $("#model-select").value, on = MS.favs.includes(v);
+  const b = $("#fav-btn");
+  b.textContent = on ? "★" : "☆"; b.classList.toggle("on", on);
+  b.title = on ? "Quitar de favoritos" : "Marcar este modelo como favorito";
+  b.disabled = !v || v === "__manage__" || $("#auto-toggle").checked;
+}
+$("#fav-btn").addEventListener("click", async () => {
+  const v = $("#model-select").value;
+  if (!v || v === "__manage__") return;
+  MS.favs = MS.favs.includes(v) ? MS.favs.filter((x) => x !== v) : [...MS.favs, v];
+  MS.hidden = MS.hidden.filter((x) => x !== v);
+  renderModelSelect(v); await saveModelPrefs();
+  toast(MS.favs.includes(v) ? "⭐ Añadido a favoritos" : "Quitado de favoritos");
+});
+// Ventana «Gestionar modelos»
+function openModelsDialog() { $("#md-search").value = ""; renderModelsDialog(); $("#models-dialog").showModal(); $("#md-search").focus(); }
+$("#md-search").addEventListener("input", renderModelsDialog);
+$("#md-filter").addEventListener("change", renderModelsDialog);
+function renderModelsDialog() {
+  const box = $("#md-list"); box.innerHTML = "";
+  const q = $("#md-search").value.trim().toLowerCase(), f = $("#md-filter").value;
+  const list = MS.catalog.filter((m) => (!q || m.value.toLowerCase().includes(q) || m.label.toLowerCase().includes(q)) &&
+    (f !== "fav" || MS.favs.includes(m.value)) && (f !== "hidden" || MS.hidden.includes(m.value)) &&
+    (f !== "visible" || !MS.hidden.includes(m.value)));
+  if (!list.length) { box.append(h("p", { class: "muted" }, "Ningún modelo coincide.")); return; }
+  const byGroup = new Map();
+  list.forEach((m) => { if (!byGroup.has(m.group)) byGroup.set(m.group, []); byGroup.get(m.group).push(m); });
+  const update = async (fn) => { fn(); renderModelsDialog(); renderModelSelect(); await saveModelPrefs(); };
+  for (const [group, models] of byGroup) {
+    const values = models.map((m) => m.value);
+    box.append(h("div", { class: "md-group" },
+      h("b", { class: "grow" }, `${group} `, h("span", { class: "muted" }, `(${models.length})`)),
+      h("button", { class: "ghost small", title: "Oculta todos menos los favoritos",
+        onclick: () => update(() => { MS.hidden = [...new Set([...MS.hidden, ...values.filter((v) => !MS.favs.includes(v))])]; }) }, "🙈 Ocultar todos"),
+      h("button", { class: "ghost small", onclick: () => update(() => { MS.hidden = MS.hidden.filter((x) => !values.includes(x)); }) }, "👁 Mostrar todos")));
+    for (const m of models) {
+      const fav = MS.favs.includes(m.value), hid = MS.hidden.includes(m.value);
+      box.append(h("div", { class: "md-row" + (hid ? " hidden-model" : "") },
+        h("span", { class: "grow md-name" }, m.label.replace(/^(💻|☁) /, "")),
+        h("button", { class: "icon-btn" + (fav ? " star-on" : ""), title: fav ? "Quitar de favoritos" : "Añadir a favoritos",
+          onclick: () => update(() => { MS.favs = fav ? MS.favs.filter((x) => x !== m.value) : [...MS.favs, m.value]; if (!fav) MS.hidden = MS.hidden.filter((x) => x !== m.value); }) }, fav ? "★" : "☆"),
+        h("button", { class: "icon-btn", title: hid ? "Mostrar en el selector" : "Ocultar del selector",
+          onclick: () => update(() => { MS.hidden = hid ? MS.hidden.filter((x) => x !== m.value) : [...MS.hidden, m.value]; if (!hid) MS.favs = MS.favs.filter((x) => x !== m.value); }) }, hid ? "🙈" : "👁")));
+    }
+  }
+}
+let lastModel = null;
+$("#model-select").addEventListener("focus", (e) => { lastModel = e.target.value; });
+$("#model-select").addEventListener("change", (e) => {
+  if (e.target.value === "__manage__") {  // no es un modelo: abre la ventana y vuelve al anterior
+    e.target.value = lastModel || store.get("model", "local::local"); updateFavButton(); openModelsDialog(); return;
+  }
+  lastModel = e.target.value; store.set("model", e.target.value); updateFavButton();
+});
 function currentModel() {
   if ($("#auto-toggle").checked) return { provider: "auto", model: "auto" };
   const [provider, ...rest] = $("#model-select").value.split("::");
@@ -223,7 +309,7 @@ function updateAutoTitle() {
     : "Elige automáticamente entre el modelo local y la API en cada mensaje";
 }
 $("#auto-toggle").checked = store.get("auto", false);
-$("#auto-toggle").addEventListener("change", (e) => { store.set("auto", e.target.checked); updateAutoTitle(); });
+$("#auto-toggle").addEventListener("change", (e) => { store.set("auto", e.target.checked); updateAutoTitle(); updateFavButton(); });
 $("#web-toggle").checked = store.get("web", false);
 $("#web-toggle").addEventListener("change", (e) => store.set("web", e.target.checked));
 $("#tools-toggle").checked = store.get("tools", false);
@@ -304,7 +390,7 @@ async function openConversation(id) {
   S.convId = id; S.system = undefined; store.set("conv", id);
   if (S.conv.provider) {
     const v = `${S.conv.provider}::${S.conv.model}`;  // las conversaciones en Auto no cambian el selector
-    if ([...$("#model-select").options].some((o) => o.value === v)) $("#model-select").value = v;
+    if ([...$("#model-select").options].some((o) => o.value === v)) { $("#model-select").value = v; updateFavButton(); }
   }
   renderMessages(); loadConversations();
   if (S.view === "chat") $("#top-title").textContent = S.conv.title;
@@ -1146,7 +1232,7 @@ async function loadSettings() {
     else if (type === "webprov") inp = selectEl(key, v, [["duckduckgo", "DuckDuckGo (sin clave)"], ["brave", "Brave Search (clave)"], ["tavily", "Tavily (clave)"]]);
     else if (type === "router") inp = selectEl(key, v, [["smart", "Inteligente (según la tarea)"], ["local_first", "Local primero"], ["api_first", "API primero"]]);
     else if (type === "model") {
-      const opts = [...$("#model-select").options].filter((o) => o.value && !o.disabled).map((o) => [o.value, o.textContent]);
+      const opts = MS.catalog.map((m) => [m.value, `${m.label} · ${m.group}`]);  // todos, también los ocultos
       if (key === "vision_fallback") opts.unshift(["", "Automático (el modelo local si tiene visión)"]);
       if (v && !opts.some((o) => o[0] === v)) opts.push([v, v + " (no disponible ahora)"]);
       inp = selectEl(key, v, opts);

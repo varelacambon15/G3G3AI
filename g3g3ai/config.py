@@ -77,6 +77,9 @@ DEFAULTS: dict = {
     "sd_steps": 4,              # 1-4 para modelos «turbo»; 20+ para modelos normales
     "sd_cfg": 1.0,              # 1.0 para «turbo»; ~7 para modelos normales
     "sd_max_side": 512,         # límite de tamaño en local (la Konkr tarda mucho con imágenes grandes)
+    # Selector de modelos: favoritos (arriba) y ocultos ("proveedor::modelo")
+    "model_favorites": [],
+    "model_hidden": [],
     # Ollama (motor local alternativo)
     "ollama_url": "http://127.0.0.1:11434",
     # Python del entorno de compilación (vacío = el de G3G3AI en la carpeta de datos)

@@ -93,6 +93,7 @@
                   <div id="active-tools" class="active-tools"></div>
                 </div>
                 <div class="right-tools">
+                  <button id="fav-btn" class="fav-btn" title="Marcar este modelo como favorito" aria-label="Favorito">☆</button>
                   <select id="model-select" title="Modelo" aria-label="Modelo"></select>
                   <button id="send-btn" class="send-btn" title="Enviar" aria-label="Enviar">↑</button>
                 </div>
@@ -276,6 +277,21 @@
     <a id="preview-download" class="ghost small btn-like">⬇ Descargar</a>
     <button class="icon-btn" data-close>✕</button></span></div>
   <div id="preview-body"></div>
+</dialog>
+
+<dialog id="models-dialog">
+  <div class="dialog-head"><b>Gestionar modelos del selector</b><button class="icon-btn" data-close>✕</button></div>
+  <p class="muted small-text">⭐ Los favoritos aparecen arriba del selector. 🙈 Los ocultos no aparecen. Se sincroniza con tus otros equipos.</p>
+  <div class="row">
+    <input id="md-search" class="grow" type="search" placeholder="Buscar modelo…">
+    <select id="md-filter">
+      <option value="">Todos</option>
+      <option value="fav">Sólo favoritos</option>
+      <option value="hidden">Sólo ocultos</option>
+      <option value="visible">Sólo visibles</option>
+    </select>
+  </div>
+  <div id="md-list" class="md-list"></div>
 </dialog>
 
 <dialog id="system-dialog">
