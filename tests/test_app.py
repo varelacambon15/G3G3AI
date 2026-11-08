@@ -1023,3 +1023,33 @@ def test_ollama_integration(env):
         assert client.get("/api/ollama", headers=h).json()["models"] == []
     finally:
         srv.shutdown()
+
+
+FAKE_HF = [
+    {"id": "unsloth/Qwen3-30B-A3B-GGUF", "downloads": 900000, "likes": 800, "lastModified": "2026-10-01T00:00:00Z",
+     "tags": ["gguf", "text-generation"], "pipeline_tag": "text-generation"},
+    {"id": "bartowski/Qwen2.5-VL-7B-Instruct-GGUF", "downloads": 50000, "likes": 90, "lastModified": "2026-05-01T00:00:00Z",
+     "tags": ["gguf"], "pipeline_tag": "image-text-to-text"},
+    {"id": "org/repo", "downloads": 10, "likes": 1, "tags": ["gguf"]},
+]
+
+
+def test_hub_search_enriched(env, monkeypatch):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    from g3g3ai import hub as hubmod
+    seen = {}
+
+    async def fake_list(self, query, sort, limit):
+        seen.update(query=query, sort=sort)
+        return FAKE_HF
+    monkeypatch.setattr(hubmod.Hub, "_list_models", fake_list)
+    res = client.get("/api/hub/search", params={"q": "qwen", "sort": "trending"}, headers=h).json()
+    assert seen == {"query": "qwen", "sort": "trending"}
+    moe, vl, local = res
+    assert moe["moe"] and moe["params"] == 30 and moe["active"] == 3 and moe["est_gb"] > 15
+    assert "vision" in vl["caps"] and vl["params"] == 7 and vl["url"].endswith("Qwen2.5-VL-7B-Instruct-GGUF")
+    assert local["downloaded"] is True and moe["downloaded"] is False  # org/repo ya está en la carpeta de modelos
+    from g3g3ai.hub import quant_info
+    assert quant_info("Q4_K_M")[1] == 3 and quant_info("Q8_0")[1] > quant_info("Q3_K_S")[1]
+    assert client.get("/api/hardware", headers=h).json()["recommendation"]["summary"]["budget_gb"] > 0

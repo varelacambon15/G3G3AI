@@ -659,9 +659,9 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
 
     # --- Hugging Face -------------------------------------------------------------------
     @app.get("/api/hub/search")
-    async def hub_search(q: str):
+    async def hub_search(q: str, sort: str = "downloads"):
         try:
-            return await hub.search(q)
+            return await hub.search(q, sort)
         except httpx.HTTPError as e:
             raise HTTPException(502, f"No se pudo contactar con Hugging Face: {e}") from e
 

@@ -301,3 +301,18 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 /* El texto del chat siempre se puede seleccionar y copiar */
 #messages, #messages * { -webkit-user-select: text; user-select: text; }
 .warnings-list { margin: 4px 0 10px; padding-left: 1.2em; font-size: 13.5px; color: var(--muted); }
+
+/* Buscador de modelos */
+.hub-form select { max-width: 190px; }
+.hub-explore { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0; font-size: 13.5px; }
+.chip-btn { background: var(--panel-2); border: 1px solid var(--border); border-radius: 99px; padding: 4px 11px; font-size: 13px; }
+.chip-btn:hover { background: var(--hover); }
+.hub-filters { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); margin-bottom: 6px; }
+.hub-filters select { padding: 5px 8px; font-size: 13.5px; }
+.small-text { font-size: 12.5px; margin: 6px 2px; }
+.hub-item { align-items: flex-start !important; }
+.hub-title { overflow-wrap: anywhere; }
+.hub-badges { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+.hub-actions { display: flex; gap: 6px; }
+.hub-more { justify-content: center; }
+.files-table li.recommended { background: color-mix(in srgb, var(--ok) 7%, transparent); border-radius: 8px; }

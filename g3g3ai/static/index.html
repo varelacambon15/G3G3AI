@@ -147,24 +147,49 @@
             <div id="image-engine"></div>
           </div>
           <div class="card">
-            <h2>Descargar modelos (Hugging Face)</h2>
-            <form id="hub-search" class="row">
-              <input id="hub-q" class="grow" placeholder="Buscar: qwen3 4b, gemma 3, llama 3.2…" required>
+            <h2>Buscar y descargar modelos <small>Hugging Face · formato GGUF</small></h2>
+            <form id="hub-search" class="row hub-form">
+              <input id="hub-q" class="grow" type="search" placeholder="Buscar: qwen 8b, gemma 4b, llama, coder…">
+              <select id="hub-sort" title="Orden en Hugging Face">
+                <option value="downloads">Más descargados</option>
+                <option value="trending">Tendencia</option>
+                <option value="likes">Más «me gusta»</option>
+                <option value="updated">Más recientes</option>
+              </select>
               <button class="primary">Buscar</button>
             </form>
-            <div class="suggestions">Sugerencias para 8 GB de RAM:
-              <button class="link" data-q="Qwen3-4B GGUF">Qwen3 4B</button>
-              <button class="link" data-q="gemma-3-4b-it GGUF">Gemma 3 4B</button>
-              <button class="link" data-q="Llama-3.2-3B-Instruct GGUF">Llama 3.2 3B</button>
-              <button class="link" data-q="Qwen2.5-Coder-3B GGUF">Qwen2.5 Coder 3B</button>
-              <button class="link" data-q="Phi-4-mini GGUF">Phi-4 mini</button>
-              <br>Con visión (fotos y documentos escaneados):
-              <button class="link" data-q="gemma-3-4b-it GGUF">Gemma 3 4B</button>
-              <button class="link" data-q="Qwen2.5-VL-3B-Instruct GGUF">Qwen2.5-VL 3B</button>
-              <br>Para generar imágenes en local:
-              <button class="link" data-q="sd-turbo gguf">SD Turbo</button>
-              <button class="link" data-q="sdxl-turbo gguf">SDXL Turbo</button>
+            <div class="hub-explore">
+              <span class="muted">Explorar:</span>
+              <button class="chip-btn" data-q="instruct" data-cap="">💬 Chat general</button>
+              <button class="chip-btn" data-q="coder" data-cap="code">🧑‍💻 Código</button>
+              <button class="chip-btn" data-q="vl" data-cap="vision">👁 Visión</button>
+              <button class="chip-btn" data-q="r1" data-cap="reasoning">🧠 Razonamiento</button>
+              <button class="chip-btn" data-q="a3b" data-cap="">⚡ MoE rápidos</button>
+              <button class="chip-btn" data-q="4b" data-cap="" data-size="s">🪶 Pequeños</button>
+              <button class="chip-btn" data-q="stable diffusion" data-cap="image">🎨 Imágenes</button>
             </div>
+            <div id="hub-filters" class="hub-filters hidden">
+              <select id="f-size" title="Tamaño">
+                <option value="">Cualquier tamaño</option>
+                <option value="xs">Diminutos (≤ 2B)</option>
+                <option value="s">Pequeños (3–4B)</option>
+                <option value="m">Medianos (7–9B)</option>
+                <option value="l">Grandes (12–14B)</option>
+                <option value="xl">Muy grandes (≥ 20B)</option>
+                <option value="moe">Sólo MoE</option>
+              </select>
+              <label class="toggle"><input type="checkbox" id="f-vision"> 👁 Visión</label>
+              <label class="toggle"><input type="checkbox" id="f-code"> 🧑‍💻 Código</label>
+              <label class="toggle"><input type="checkbox" id="f-reason"> 🧠 Razonamiento</label>
+              <label class="toggle" title="Según la memoria detectada en este equipo"><input type="checkbox" id="f-fits"> ✅ Sólo los que caben</label>
+              <select id="f-order" title="Ordenar resultados">
+                <option value="">Orden de Hugging Face</option>
+                <option value="small">Más pequeños primero</option>
+                <option value="big">Más grandes primero</option>
+                <option value="recent">Actualizados recientemente</option>
+              </select>
+            </div>
+            <p id="hub-count" class="muted small-text"></p>
             <div id="downloads"></div>
             <ul id="hub-results" class="list"></ul>
           </div>

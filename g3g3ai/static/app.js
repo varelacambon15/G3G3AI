@@ -854,44 +854,131 @@ async function loadModel(path) {
     }
   }, 1500);
 }
-$("#hub-search").addEventListener("submit", (e) => { e.preventDefault(); hubSearch($("#hub-q").value); });
-$$(".suggestions [data-q]").forEach((b) => b.addEventListener("click", () => { $("#hub-q").value = b.dataset.q; hubSearch(b.dataset.q); }));
+// --- Buscador de modelos (Hugging Face) ------------------------------------------------------
+const HUB = { results: [], shown: 20, budget: null };
+const fmtNum = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, "") + " M" : n >= 1e3 ? Math.round(n / 1e3) + " k" : String(n || 0);
+function ago(iso) {
+  if (!iso) return "";
+  const d = (Date.now() - new Date(iso).getTime()) / 86400000;
+  if (d < 1) return "hoy";
+  if (d < 2) return "ayer";
+  if (d < 31) return `hace ${Math.round(d)} días`;
+  if (d < 365) return `hace ${Math.round(d / 30)} meses`;
+  return `hace ${(d / 365).toFixed(1).replace(".0", "")} años`;
+}
+async function hubBudget() {
+  if (HUB.budget == null) {
+    try { HUB.budget = (await api("/api/hardware")).recommendation.summary.budget_gb; } catch { HUB.budget = 0; }
+  }
+  return HUB.budget;
+}
+function fitInfo(gb) {
+  if (!gb || !HUB.budget) return null;
+  if (gb <= HUB.budget * 0.75) return h("span", { class: "badge ok", title: `~${gb} GB de ${HUB.budget} GB disponibles` }, "cabe bien");
+  if (gb <= HUB.budget) return h("span", { class: "badge warn", title: `~${gb} GB de ${HUB.budget} GB disponibles` }, "justo");
+  return h("span", { class: "badge bad", title: `~${gb} GB; este equipo tiene ~${HUB.budget} GB disponibles` }, "no cabe");
+}
+const sizeBucket = (r) => !r.params ? "" : r.params <= 2 ? "xs" : r.params <= 4.5 ? "s" : r.params <= 9.5 ? "m" : r.params <= 15 ? "l" : "xl";
+const CAP_BADGE = { vision: "👁 visión", code: "🧑‍💻 código", reasoning: "🧠 razonamiento", image: "🎨 imágenes" };
+
+$("#hub-search").addEventListener("submit", (e) => { e.preventDefault(); hubSearch($("#hub-q").value.trim()); });
+$("#hub-sort").addEventListener("change", () => { if ($("#hub-q").value.trim()) hubSearch($("#hub-q").value.trim()); });
+["f-size", "f-vision", "f-code", "f-reason", "f-fits", "f-order"].forEach((id) =>
+  $("#" + id).addEventListener("change", () => { HUB.shown = 20; renderHub(); }));
+$$(".hub-explore [data-q]").forEach((b) => b.addEventListener("click", () => {
+  $("#hub-q").value = b.dataset.q;
+  $("#f-vision").checked = b.dataset.cap === "vision"; $("#f-code").checked = b.dataset.cap === "code";
+  $("#f-reason").checked = b.dataset.cap === "reasoning"; $("#f-size").value = b.dataset.size || "";
+  hubSearch(b.dataset.q);
+}));
+
 async function hubSearch(q) {
-  const ul = $("#hub-results"); ul.innerHTML = ""; ul.append(h("li", { class: "muted" }, "Buscando…"));
+  if (!q) { $("#hub-q").focus(); return; }
+  const ul = $("#hub-results"); ul.innerHTML = ""; ul.append(h("li", { class: "muted" }, "Buscando en Hugging Face…"));
+  $("#hub-count").textContent = "";
+  await hubBudget();
   try {
-    const res = await api("/api/hub/search?" + qs({ q }));
-    ul.innerHTML = "";
-    if (!res.length) ul.append(h("li", { class: "muted" }, "Sin resultados."));
-    for (const r of res) {
-      const files = h("div", { class: "repo-files hidden" });
-      ul.append(h("li", {},
-        h("div", { class: "name" }, r.id, h("div", { class: "sub" }, `⬇ ${r.downloads.toLocaleString()} · ♥ ${r.likes}`)),
-        h("button", { class: "ghost small", onclick: () => toggleRepo(r.id, files) }, "Ver archivos"), files));
-    }
+    HUB.results = await api("/api/hub/search?" + qs({ q, sort: $("#hub-sort").value }));
+    HUB.shown = 20; $("#hub-filters").classList.remove("hidden"); renderHub();
   } catch (e) { ul.innerHTML = ""; ul.append(h("li", { class: "error" }, e.message)); }
 }
-async function toggleRepo(repo, box) {
-  if (!box.classList.contains("hidden")) { box.classList.add("hidden"); return; }
-  box.classList.remove("hidden"); box.innerHTML = "Cargando…";
+
+function renderHub() {
+  const ul = $("#hub-results"); ul.innerHTML = "";
+  const size = $("#f-size").value, needs = [["f-vision", "vision"], ["f-code", "code"], ["f-reason", "reasoning"]]
+    .filter(([id]) => $("#" + id).checked).map(([, c]) => c);
+  let list = HUB.results.filter((r) =>
+    (!size || (size === "moe" ? r.moe : sizeBucket(r) === size)) &&
+    needs.every((c) => r.caps.includes(c)) &&
+    (!$("#f-fits").checked || (r.est_gb && HUB.budget && r.est_gb <= HUB.budget)));
+  const order = $("#f-order").value;
+  if (order === "small") list = [...list].sort((a, b) => (a.params ?? 1e9) - (b.params ?? 1e9));
+  if (order === "big") list = [...list].sort((a, b) => (b.params ?? -1) - (a.params ?? -1));
+  if (order === "recent") list = [...list].sort((a, b) => new Date(b.updated || 0) - new Date(a.updated || 0));
+  $("#hub-count").textContent = HUB.results.length
+    ? `${list.length} de ${HUB.results.length} resultados` + (HUB.budget ? ` · memoria disponible en este equipo: ~${HUB.budget} GB` : "") : "";
+  if (!list.length) {
+    ul.append(h("li", { class: "muted" }, HUB.results.length ? "Ningún resultado con estos filtros." : "Sin resultados. Prueba con otro nombre (p.ej. «qwen», «gemma», «llama»)."));
+    return;
+  }
+  for (const r of list.slice(0, HUB.shown)) {
+    const files = h("div", { class: "repo-files hidden" });
+    const sizeLabel = r.params ? (r.moe && r.active ? `${r.params}B (${r.active}B activos)` : `${r.params}B`) : null;
+    ul.append(h("li", { class: "hub-item" },
+      h("div", { class: "name" },
+        h("div", { class: "hub-title" }, h("b", {}, r.name), h("span", { class: "muted" }, " · " + r.author)),
+        h("div", { class: "hub-badges" },
+          sizeLabel ? h("span", { class: "badge" }, sizeLabel) : null,
+          r.moe ? h("span", { class: "badge", title: "Mezcla de expertos: rápido para su tamaño" }, "⚡ MoE") : null,
+          r.caps.map((c) => h("span", { class: "badge" }, CAP_BADGE[c] || c)),
+          r.est_gb ? h("span", { class: "badge", title: "Tamaño aproximado en Q4_K_M" }, `~${r.est_gb} GB`) : null,
+          fitInfo(r.est_gb),
+          r.downloaded ? h("span", { class: "badge ok" }, "✔ descargado") : null),
+        h("div", { class: "sub" }, `⬇ ${fmtNum(r.downloads)} · ♥ ${fmtNum(r.likes)}` + (r.updated ? ` · actualizado ${ago(r.updated)}` : ""))),
+      h("div", { class: "hub-actions" },
+        h("button", { class: "ghost small", onclick: (e) => toggleRepo(r, files, e.target) }, "Ver archivos"),
+        h("a", { class: "ghost small btn-like", href: r.url, target: "_blank", rel: "noopener", title: "Abrir en Hugging Face" }, "↗")),
+      files));
+  }
+  if (list.length > HUB.shown) ul.append(h("li", { class: "hub-more" },
+    h("button", { class: "ghost", onclick: () => { HUB.shown += 20; renderHub(); } }, `Mostrar más (${list.length - HUB.shown})`)));
+}
+
+async function toggleRepo(r, box, btn) {
+  const repo = r.id;
+  if (!box.classList.contains("hidden")) { box.classList.add("hidden"); btn.textContent = "Ver archivos"; return; }
+  box.classList.remove("hidden"); btn.textContent = "Ocultar"; box.innerHTML = "Cargando archivos…";
   try {
     const groups = await api("/api/hub/files?" + qs({ repo }));
     box.innerHTML = "";
     const projs = groups.filter((g) => g.mmproj);
     const proj = projs.find((g) => /f16/i.test(g.name)) || projs[0];
-    if (proj) box.append(h("p", { class: "muted" }, "👁 Este modelo tiene visión: al descargarlo se añade también su proyector (" + proj.name + ")."));
-    const ul = h("ul", { class: "list" });
-    for (const g of groups) {
-      ul.append(h("li", {},
-        h("div", { class: "name" }, g.name, h("div", { class: "sub" }, [g.quant, fmtSize(g.size), g.files.length > 1 ? `${g.files.length} partes` : ""].filter(Boolean).join(" · "))),
-        g.mmproj ? h("span", { class: "badge" }, "visión") : fitBadge(g.size),
-        h("button", { class: "primary small", onclick: async () => {
-          await api("/api/hub/download", { method: "POST", body: { repo, files: g.files } });
-          if (proj && !g.mmproj) await api("/api/hub/download", { method: "POST", body: { repo, files: proj.files } });
-          toast("Descarga iniciada"); refreshDownloads();
-        } }, "Descargar")));
+    const models = groups.filter((g) => !g.mmproj);
+    // Recomendado: Q4_K_M si cabe; si no, la mejor calidad que quepa
+    const budget = HUB.budget ? HUB.budget * 1024 ** 3 : null;
+    const fits = (g) => !budget || g.size <= budget;
+    let best = models.find((g) => g.quant === "Q4_K_M" && fits(g));
+    if (!best) best = [...models].filter(fits).sort((a, b) => b.level - a.level || b.size - a.size)[0];
+    if (proj) box.append(h("p", { class: "muted" }, "👁 Tiene visión: al descargar un modelo se añade también su proyector (" + proj.name + ")."));
+    if (!models.length) { box.append(h("p", { class: "muted" }, "Este repositorio no tiene archivos GGUF de modelo.")); return; }
+    const ul = h("ul", { class: "list files-table" });
+    for (const g of models) {
+      const gb = Math.round(g.size / 1024 ** 3 * 10) / 10;
+      ul.append(h("li", { class: g === best ? "recommended" : "" },
+        h("div", { class: "name" },
+          h("b", {}, g.quant || g.name), g === best ? h("span", { class: "badge ok" }, "⭐ recomendado para este equipo") : null,
+          h("div", { class: "sub" }, [g.quality, fmtSize(g.size), g.files.length > 1 ? `${g.files.length} partes` : "", g.name].filter(Boolean).join(" · "))),
+        fitInfo(gb),
+        g.downloaded ? h("span", { class: "badge ok" }, "✔ descargado")
+          : h("button", { class: g === best ? "primary small" : "ghost small", onclick: async (e) => {
+            e.target.disabled = true;
+            await api("/api/hub/download", { method: "POST", body: { repo, files: g.files } });
+            if (proj && !proj.downloaded) await api("/api/hub/download", { method: "POST", body: { repo, files: proj.files } });
+            toast("Descarga iniciada: " + (g.quant || g.name)); refreshDownloads();
+          } }, "Descargar")));
     }
-    if (!groups.length) ul.append(h("li", { class: "muted" }, "Este repositorio no tiene archivos GGUF."));
     box.append(ul);
+    box.append(h("p", { class: "muted small-text" }, "Guía: Q4_K_M = equilibrio · Q5/Q6 = más calidad y más memoria · Q8 = casi sin pérdida · Q3/Q2 = cuando no cabe otra cosa."));
   } catch (e) { box.textContent = e.message; }
 }
 let dlTimer = null;

@@ -305,6 +305,8 @@ def recommend(hw: dict) -> dict:
             "cpu": cpu.get("name") or hw.get("soc") or "Procesador", "cores": cpu.get("cores"), "threads": cpu.get("threads"),
             "ram_gb": ram, "gpu": gpu["name"] if gpu else (integrated["name"] if integrated else "ninguna"),
             "vram_gb": vram, "arch": hw.get("arch"), "soc": hw.get("soc"),
+            # memoria que puede ocupar un modelo: la de la gráfica dedicada o la RAM que deja libre el sistema
+            "budget_gb": round(max(vram - 0.5, ram_free), 1),
         },
         "main": {"tier": main[1], "where": where, "searches": main[3]},
         "fast": {"tier": fast[1], "searches": fast[3]} if fast else None,

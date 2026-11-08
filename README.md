@@ -191,6 +191,15 @@ En el modo 🛠 Agente, la IA tiene dos herramientas:
 - Si el programa necesita librerías de internet (`pip`), **siempre** te lo pregunta.
 - En Linux y la Konkr, `build_exe` crea ejecutables de Linux. Los `.exe` de Windows se crean en el PC con Windows.
 
+### 🔎 Buscador de modelos
+
+En **Modelos → Buscar y descargar modelos**:
+- **Búsqueda** en Hugging Face (formato GGUF), ordenada por descargas, tendencia, «me gusta» o más recientes.
+- **Explorar** sin escribir: Chat general, Código, Visión, Razonamiento, MoE rápidos, Pequeños, Imágenes.
+- **Cada resultado muestra:** tamaño (4B, 8B, 30B con 3B activos…), si es MoE, capacidades (visión, código, razonamiento), memoria aproximada, si **cabe en este equipo**, descargas, «me gusta», cuándo se actualizó y si ya lo tienes.
+- **Filtros:** tamaño, visión, código, razonamiento, «solo los que caben» y ordenación local.
+- **Archivos de cada modelo:** qué significa cada cuantización, ⭐ la **recomendada para tu equipo**, aviso de lo que no cabe o ya está descargado, y descarga automática del proyector de visión si hace falta.
+
 ### 🧭 Recomendación según tu equipo
 
 En **Modelos → Recomendado para este equipo**, G3G3AI detecta el procesador (núcleos, AVX2, AVX-512, dotprod/i8mm), la RAM y las gráficas con su memoria (NVIDIA, AMD, Intel integrada, Adreno), y propone:
