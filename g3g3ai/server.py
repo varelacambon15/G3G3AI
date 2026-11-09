@@ -307,6 +307,14 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
 
     builder = HistoryBuilder(db, cfg, llama, provider_for, provider_available, complete_messages)
 
+    PRECISION_RE = re.compile(r"\b(docx?|word|excel|xlsx?|csv|pdf|pptx|documento|informe|resum\w*|tabla|"
+                              r"hoja de c[aá]lculo|cifras?|importes?|totales?)\b", re.I)
+
+    def needs_precision(text: str, attachments, conv, agent: bool) -> bool:
+        """¿Hace falta fidelidad con cifras/argumentos? Sólo entonces se limita la temperatura (el chat normal no cambia)."""
+        return bool(agent or attachments or PRECISION_RE.search(text or "")
+                    or any(((m.get("meta") or {}).get("attachments")) for m in (conv or {}).get("messages", [])))
+
     @app.post("/api/chat")
     async def chat(body: dict):
         cid = body.get("conversation_id")
@@ -417,7 +425,15 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             else:
                                 yield sse(ev)
                         msgs = ([{"role": "system", "content": system}] if system else []) + history
-                        async for ev in chat_stream(p, cmodel, msgs, opts, ctx):
+                        if ctx:
+                            ctx.set_sources([h["content"] if isinstance(h["content"], str) else
+                                             " ".join(x.get("text", "") for x in h["content"])
+                                             for h in history if h["role"] == "user"])
+                        copts = dict(opts)
+                        if (ctx and ctx.names() and "temperature" not in body and copts.get("temperature") is not None
+                                and needs_precision(last_user, attachments, conv, agent)):
+                            copts["temperature"] = min(copts["temperature"], cfg["tool_temperature"])
+                        async for ev in chat_stream(p, cmodel, msgs, copts, ctx):
                             if ev["type"] == "content":
                                 content += ev["text"]
                             elif ev["type"] == "reasoning":

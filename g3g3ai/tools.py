@@ -193,6 +193,24 @@ ALL_SPECS = {
 }
 
 
+_NUM_RE = re.compile(r"\d{1,3}(?:[.,\u00a0 ]\d{3})+(?:[.,]\d+)?|\d+[.,]\d+|\d{4,}")
+
+
+def numbers_in(text: str) -> set[str]:
+    """Cifras relevantes de un texto, normalizadas a sus dígitos (150.322,54 y 150,322.54 → 15032254).
+    Se ignoran números pequeños, años y fechas, que no son importes."""
+    out = set()
+    for m in _NUM_RE.finditer(text or ""):
+        tok = m.group(0)
+        digits = re.sub(r"\D", "", tok)
+        plain4 = re.fullmatch(r"\d{4}", tok)
+        if plain4 and 1900 <= int(tok) <= 2100:
+            continue
+        if len(digits) >= 4:
+            out.add(digits)
+    return out
+
+
 class ToolContext:
     def __init__(self, files: Files, cfg, local_chat: Callable[[str], Awaitable[str]] | None = None, *,
                  agent: bool = True, web: bool = False, session_allow: set | None = None,
@@ -206,10 +224,38 @@ class ToolContext:
         self.source = source
         self.image_gen = image_gen  # async (prompt, size) -> Path
         self.plan: list[dict] = []
+        self.known: set[str] | None = None  # cifras de los archivos adjuntos y resultados de herramientas
         self.generated: list[str] = []
         self.files_out: list[str] = []  # archivos creados para ofrecer al usuario
         # Herramientas que el usuario permitió «siempre» en esta conversación
         self.session_allow = session_allow if session_allow is not None else set()
+
+    # Verificación de cifras -------------------------------------------------------
+    def set_sources(self, texts: list[str]) -> None:
+        """Textos de partida (mensajes del usuario con sus adjuntos): sus cifras son las «conocidas»."""
+        self.known = set()
+        for t in texts:
+            self.known |= numbers_in(t)
+
+    def note_source(self, text: str) -> None:
+        if self.known is not None:
+            self.known |= numbers_in(text)
+
+    def unverified_numbers(self, content: str) -> list[str]:
+        """Cifras del documento que no aparecen en ninguna fuente. Vacío si no hay fuentes con cifras."""
+        if not self.known:
+            return []
+        seen, out = set(), []
+        for m in _NUM_RE.finditer(content or ""):
+            tok = m.group(0)
+            digits = re.sub(r"\D", "", tok)
+            if len(digits) < 4 or digits in self.known or digits in seen:
+                continue
+            if re.fullmatch(r"\d{4}", tok) and 1900 <= int(tok) <= 2100:
+                continue
+            seen.add(digits)
+            out.append(tok)
+        return out[:12]
 
     # Permisos ------------------------------------------------------------------
     def mode(self, name: str) -> str:
@@ -298,6 +344,10 @@ class ToolContext:
             hint = steam_hint()
             if hint:
                 parts.append(hint)
+        if "create_document" in names or "table_export" in names:
+            parts.append("CIFRAS: al resumir o crear documentos copia los importes, códigos y fechas literalmente del original; "
+                         "no los recalcules, redondees ni reescribas de memoria. Si un dato no está en el original, no lo "
+                         "inventes: indícalo. Si la herramienta te avisa de cifras sin verificar, corrígelas.")
         if not self.agent and "create_document" in names:
             wr = self.files.write_roots[0]
             parts.append("Puedes crear documentos Word (.docx), Excel (.xlsx), PowerPoint (.pptx) o PDF con create_document "
@@ -460,7 +510,14 @@ class ToolContext:
             except (office.OfficeError, ValueError, KeyError, TypeError) as e:
                 return f"Error al crear el documento: {e}"
             self.files_out.append(str(p))
-            return f"Documento creado: {p} ({p.stat().st_size} bytes). El usuario ya puede descargarlo."
+            msg = f"Documento creado: {p} ({p.stat().st_size} bytes). El usuario ya puede descargarlo."
+            bad = self.unverified_numbers(a.get("content", "") if isinstance(a.get("content"), str)
+                                          else json.dumps(a.get("content", ""), ensure_ascii=False))
+            if bad:
+                msg += ("\n⚠ VERIFICA ESTAS CIFRAS: no aparecen en los archivos adjuntos ni en los resultados de las "
+                        f"herramientas: {', '.join(bad)}. Si te has equivocado al copiarlas, corrige el documento y vuelve "
+                        "a generarlo con las cifras exactas del original; si son un cálculo tuyo, dilo claramente al usuario.")
+            return msg
         if name == "edit_file":
             p = f.resolve(a["path"], "ai_write")
             text = p.read_text("utf-8")
@@ -678,6 +735,8 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
                     result = "El usuario ha denegado esta acción. Pregunta o propón otra alternativa."
     if result is None:
         result = await ctx.run(name, args)
+        if name not in ("create_document", "table_export", "write_file", "edit_file"):
+            ctx.note_source(result)
     yield {"type": "tool_result", "name": name, "result": result[:TOOL_RESULT_PREVIEW]}
     while ctx.generated:
         yield {"type": "image", "path": ctx.generated.pop(0)}

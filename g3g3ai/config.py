@@ -110,6 +110,7 @@ DEFAULTS: dict = {
     # Chat
     "default_system_prompt": "Eres un asistente útil. Responde en el idioma del usuario.",
     "temperature": 0.7,
+    "tool_temperature": 0.2,   # tope de temperatura cuando el modelo usa herramientas (más fiel con cifras y argumentos)
     "max_tokens": 8192,
     # Proveedores API externos.
     "providers": [

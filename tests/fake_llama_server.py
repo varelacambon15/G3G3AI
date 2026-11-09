@@ -54,6 +54,9 @@ class H(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "m1", "function": {
                 "name": "memory_save", "arguments": json.dumps({"content": "Al usuario " + fact})}}]}}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if last["role"] == "user" and "dime la temperatura" in str(last["content"]):
+            self.chunk({"choices": [{"delta": {"content": f"T={req.get('temperature')}"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         first_user = next((m["content"] for m in msgs if m["role"] == "user"), "")
         if "texto largo" in str(first_user):  # simula un corte por longitud y su continuación
             if "límite de longitud" in str(last["content"]):

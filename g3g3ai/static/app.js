@@ -1376,6 +1376,7 @@ const FIELDS = [
   ["router_strong", "Modo Auto: modelo potente", "model", "Normalmente una API (DeepSeek, Claude…). Se usa para código, análisis, documentos largos y el modo agente."],
   ["default_system_prompt", "Instrucciones del sistema", "textarea"],
   ["temperature", "Temperatura", "number", "0 = preciso · 1 = creativo"],
+  ["tool_temperature", "Temperatura con herramientas", "number", "Tope cuando la IA usa herramientas (crear documentos, Excel, agente). Más baja = copia las cifras con más fidelidad."],
   ["max_tokens", "Máx. tokens por respuesta", "number"],
   ["models_dir", "Carpeta de modelos", "text"],
   ["llama_server_path", "Ruta de llama-server", "text", "Vacío = autodetectar (~/.local/share/g3g3ai/llama.cpp)"],

@@ -1305,3 +1305,51 @@ def test_table_tools_cross_two_files(env):
     # errores claros y fuera de las carpetas permitidas
     assert "No existe la columna" in run("table_query", {"path": str(home / "nominas.xlsx"), "columns": ["NOPE"]})
     assert "Error" in run("table_query", {"path": str(tmp / "fuera.txt")})
+
+
+def test_number_verifier_catches_wrong_figures(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext, numbers_in
+    cfg.data["write_roots"] = [str(home)]; cfg.data["ai_write"] = "auto"
+    assert numbers_in("150.322,54 y 150,322.54 y 2026 y 12 y 9-nov-2026 y 42116") == {"15032254", "42116"}
+    ctx = ToolContext(Files(cfg), cfg, agent=False)
+    run = lambda c: asyncio.run(ctx.run("create_document", {"path": "r.docx", "content": c}))
+    # sin fuentes no hay nada que comparar
+    assert "VERIFICA" not in run("# R\n\nTotal 150.122,54")
+    ctx.set_sources(["La nómina supera en 695.447,11 (2Q Abril 545.124,57; 1Q Mayo 150.322,54). Pedido 42116."])
+    ok = run("# R\n\nExceso 695.447,11: 545.124,57 + 150.322,54. Pedido 42116, fecha 9-nov-2026.")
+    assert "Documento creado" in ok and "VERIFICA" not in ok
+    bad = run("# R\n\nExceso 695.447,11 con 150.122,54 por encima.")   # error real del modelo: 150.122 en vez de 150.322
+    assert "VERIFICA" in bad and "150.122,54" in bad and "695.447,11" not in bad.split("VERIFICA")[1]
+    # los resultados de herramientas también valen como fuente
+    ctx.note_source("Resultado: 42.500,00")
+    assert "VERIFICA" not in run("# R\n\n42.500,00")
+    # el mensaje de sistema pide copiar las cifras
+    assert "CIFRAS" in ctx.system_hint()
+
+
+def test_tool_temperature_setting(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    assert cfg["tool_temperature"] == 0.2
+    s = client.get("/api/settings", headers=h).json()
+    assert s["tool_temperature"] == 0.2
+    s["tool_temperature"] = 0.1
+    client.put("/api/settings", headers=h, json=s)
+    assert cfg["tool_temperature"] == 0.1
+
+
+def test_temperature_is_lowered_only_when_precision_is_needed(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    def ask(text="dime la temperatura", **kw):
+        evs = sse(client.post("/api/chat", headers=h, json={"message": text, **kw}))
+        return "".join(e.get("text", "") for e in evs if e["type"] == "content")
+    assert ask() == "T=0.7"                                            # chat normal: no cambia
+    assert ask("dime la temperatura del excel") == "T=0.2"             # habla de documentos/cifras
+    assert ask(use_tools=True) == "T=0.2"                              # modo Agente
+    assert ask(attachments=[str(home / "hola.txt")]) == "T=0.2"        # con adjuntos
+    assert ask("dime la temperatura del excel", temperature=0.9) == "T=0.9"   # la petición explícita se respeta
