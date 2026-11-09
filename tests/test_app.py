@@ -1110,3 +1110,39 @@ def test_grep_files(env):
     from g3g3ai.files import FileAccessError
     with _p.raises(FileAccessError):
         f.grep("x", str(tmp))
+
+
+def test_new_agent_tools(env):
+    import asyncio, subprocess
+    client, cfg, home, tmp = env
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    work = Path(cfg["write_roots"][0]); work.mkdir(parents=True, exist_ok=True)
+    cfg.update({"ai_write": "auto", "file_roots": [str(home), str(work)]}) if hasattr(cfg, "update") else None
+    ctx = ToolContext(Files(cfg), cfg, agent=True)
+    names = ctx.names()
+    for n in ("glob_files", "git", "update_plan", "grep_files"):
+        assert n in names
+    run = lambda n, a: asyncio.run(ctx.run(n, a))
+    # glob
+    (home / "docs" / "sub").mkdir(exist_ok=True)
+    (home / "docs" / "sub" / "t.py").write_text("x")
+    assert "t.py" in run("glob_files", {"pattern": "**/*.py", "path": str(home / "docs")})
+    assert "Sin resultados" in run("glob_files", {"pattern": "*.zzz", "path": str(home / "docs")})
+    # plan
+    out = run("update_plan", {"todos": [{"content": "a", "status": "done"}, {"content": "b", "status": "in_progress"}]})
+    assert "[x] a" in out and "[~] b" in out
+    # git (lectura + commit)
+    repo = work / "repo"; repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "f.txt").write_text("hola")
+    assert "f.txt" in run("git", {"action": "status", "repo": str(repo)})
+    assert "primero" in run("git_commit", {"path": str(repo), "message": "primero"})
+    assert "primero" in run("git", {"action": "log", "repo": str(repo)})
+    assert "no válido" in run("git", {"action": "show", "repo": str(repo), "rev": "--output=/tmp/x"})
+    # PDF por páginas
+    from g3g3ai import office
+    pdf = work / "d.pdf"; office.create(pdf, "# Uno\n\ntexto uno")
+    assert "Página 1" in run("read_file", {"path": str(pdf), "pages": "1"})

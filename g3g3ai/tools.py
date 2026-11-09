@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import re
 import platform
 import subprocess
 import sys
@@ -34,8 +36,8 @@ PENDING: dict[str, asyncio.Future] = {}
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-FILE_TOOLS = {"list_dir", "read_file", "search_files", "grep_files"}
-WRITE_TOOLS = {"write_file", "edit_file", "create_document"}
+FILE_TOOLS = {"list_dir", "read_file", "search_files", "grep_files", "glob_files", "git", "update_plan"}
+WRITE_TOOLS = {"write_file", "edit_file", "create_document", "git_commit"}
 COMMAND_TOOLS = {"run_command", "build_exe"}
 WEB_TOOLS = {"web_search", "fetch_url"}
 MEMORY_TOOLS = {"memory_save", "memory_delete"}
@@ -54,10 +56,34 @@ ALL_SPECS = {
                  _schema({"path": {"type": "string", "description": "Ruta absoluta o relativa a la carpeta personal"}})),
     "read_file": ("Lee un archivo de texto. Usa start_line/max_lines para archivos grandes.",
                   _schema({"path": {"type": "string"}, "start_line": {"type": "integer"},
-                           "max_lines": {"type": "integer"}}, ["path"])),
+                           "max_lines": {"type": "integer"},
+                           "pages": {"type": "string", "description": "Sólo PDF: páginas a leer, p.ej. '3', '2-5' o '1,4,7-9'"}},
+                          ["path"])),
     "search_files": ("Busca archivos o carpetas por nombre (admite comodines * y ?).",
                      _schema({"query": {"type": "string", "description": "Texto o patrón, p.ej. '*.pdf'"},
                               "path": {"type": "string", "description": "Carpeta donde buscar (opcional)"}}, ["query"])),
+    "glob_files": ("Encuentra archivos por patrón de ruta, p.ej. '**/*.py' o 'src/**/test_*.js' (los más recientes primero).",
+                   _schema({"pattern": {"type": "string"},
+                            "path": {"type": "string", "description": "Carpeta base (opcional)"}}, ["pattern"])),
+    "git": ("Consulta un repositorio git (sólo lectura). action: status, diff, log, show, branch. "
+            "diff admite staged=true y path; log admite max_count; show y diff admiten rev (commit, rama o HEAD~1).",
+            _schema({"action": {"type": "string", "enum": ["status", "diff", "log", "show", "branch"]},
+                     "repo": {"type": "string", "description": "Carpeta del repositorio (opcional)"},
+                     "rev": {"type": "string"}, "path": {"type": "string", "description": "Limita a un archivo"},
+                     "staged": {"type": "boolean"}, "max_count": {"type": "integer"}}, ["action"])),
+    "git_commit": ("Añade archivos al área de preparación de git y crea un commit (no hace push). "
+                   "Sólo en repositorios dentro de las carpetas modificables.",
+                   _schema({"path": {"type": "string", "description": "Carpeta del repositorio"},
+                            "message": {"type": "string"},
+                            "files": {"type": "array", "items": {"type": "string"},
+                                      "description": "Archivos a incluir (relativos al repo). Vacío = todos los cambios"}},
+                           ["path", "message"])),
+    "update_plan": ("Escribe o actualiza tu lista de tareas para trabajos de varios pasos. Cada tarea: "
+                    "{content, status: pending|in_progress|done}. Mantén una sola en curso y márcalas al terminarlas.",
+                    _schema({"todos": {"type": "array", "items": {"type": "object", "properties": {
+                        "content": {"type": "string"},
+                        "status": {"type": "string", "enum": ["pending", "in_progress", "done"]}},
+                        "required": ["content", "status"]}}}, ["todos"])),
     "grep_files": ("Busca texto DENTRO de los archivos (expresión regular o texto literal) en una carpeta y sus subcarpetas. "
                    "Devuelve líneas `ruta:nº: texto`. Úsalo para localizar dónde se define o se usa algo.",
                    _schema({"pattern": {"type": "string", "description": "Texto o expresión regular"},
@@ -138,6 +164,7 @@ class ToolContext:
         self.memory = memory  # objeto Memory si la IA puede guardar recuerdos
         self.source = source
         self.image_gen = image_gen  # async (prompt, size) -> Path
+        self.plan: list[dict] = []
         self.generated: list[str] = []
         self.files_out: list[str] = []  # archivos creados para ofrecer al usuario
         # Herramientas que el usuario permitió «siempre» en esta conversación
@@ -154,9 +181,9 @@ class ToolContext:
     def names(self) -> list[str]:
         out = []
         if self.agent:
-            out += ["list_dir", "read_file", "search_files", "grep_files"]
+            out += ["list_dir", "read_file", "search_files", "grep_files", "glob_files", "git", "update_plan"]
             if self.mode("write_file") != "off" and self.files.write_roots:
-                out += ["write_file", "edit_file", "create_document"]
+                out += ["write_file", "edit_file", "create_document", "git_commit"]
             if self.mode("run_command") != "off":
                 out.append("run_command")
                 from .devtools import devenv_python
@@ -336,7 +363,9 @@ class ToolContext:
             if kind == "image":
                 return (f"{path} es una imagen. Pide al usuario que la adjunte al chat (📎) para verla "
                         "con un modelo con visión.")
-            if kind == "document":
+            if kind == "document" and a.get("pages") and path.suffix.lower() == ".pdf":
+                res = {"path": str(path), "content": D.pdf_pages_text(path, a["pages"])}
+            elif kind == "document":
                 text = D.extract_text(path) or "(documento sin texto: puede ser un PDF escaneado; adjúntalo al chat)"
                 res = {"path": str(path), "content": text}
             else:
@@ -351,6 +380,18 @@ class ToolContext:
                 text = text[:READ_LIMIT_FOR_AI]
                 note = "\n[... truncado: usa start_line/max_lines para leer el resto ...]"
             return f"Archivo: {res['path']} ({len(lines)} líneas)\n{text}{note}"
+        if name == "glob_files":
+            res = f.glob(a["pattern"], a.get("path"))
+            return "\n".join(r["path"] for r in res) or "Sin resultados."
+        if name == "git":
+            return self._git(a)
+        if name == "git_commit":
+            return self._git_commit(a)
+        if name == "update_plan":
+            icons = {"pending": "[ ]", "in_progress": "[~]", "done": "[x]"}
+            self.plan = [{"content": str(t.get("content", ""))[:200], "status": t.get("status", "pending")}
+                         for t in (a.get("todos") or [])][:30]
+            return "Plan actualizado:\n" + "\n".join(f"{icons.get(t['status'], '[ ]')} {t['content']}" for t in self.plan)
         if name == "grep_files":
             res = f.grep(a["pattern"], a.get("path"), a.get("glob"))
             return "\n".join(res) + ("\n[... más resultados omitidos ...]" if len(res) >= 100 else "") if res else "Sin resultados."
@@ -412,6 +453,64 @@ class ToolContext:
             return f"No existe el recuerdo {a.get('id')}."
         except MemoryRejected as e:
             return f"No guardado: {e}"
+
+    _REV = re.compile(r"^[\w./~^@{}:-]+$")
+
+    def _run_git(self, cwd: Path, args: list[str]) -> str:
+        import shutil
+        import subprocess
+        exe = shutil.which("git")
+        if not exe:
+            return "Error: git no está instalado en este equipo."
+        env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C.UTF-8"}
+        try:
+            r = subprocess.run([exe, "--no-pager", "-c", "core.quotepath=false", *args], cwd=cwd, env=env,
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        except subprocess.TimeoutExpired:
+            return "Error: git tardó demasiado."
+        out = (r.stdout or "") + (("\n[stderr]\n" + r.stderr) if r.stderr.strip() else "")
+        if len(out) > OUTPUT_LIMIT:
+            out = out[:OUTPUT_LIMIT] + "\n[... salida recortada ...]"
+        return out.strip() or ("(sin salida)" if r.returncode == 0 else f"git terminó con código {r.returncode}")
+
+    def _rev(self, rev) -> str | None:
+        if not rev:
+            return None
+        rev = str(rev)
+        if rev.startswith("-") or not self._REV.match(rev):
+            raise ValueError(f"rev no válido: {rev}")
+        return rev
+
+    def _git(self, a: dict) -> str:
+        cwd = self.files.resolve(a.get("repo"))
+        if not cwd.is_dir():
+            return f"Error: {cwd} no es una carpeta."
+        act, rev = a.get("action"), self._rev(a.get("rev"))
+        path = [str(self.files.resolve(a["path"]))] if a.get("path") else []
+        if act == "status":
+            return self._run_git(cwd, ["status", "--short", "--branch"])
+        if act == "diff":
+            return self._run_git(cwd, ["diff", *(["--staged"] if a.get("staged") else []), *([rev] if rev else []), "--", *path])
+        if act == "log":
+            n = max(1, min(int(a.get("max_count") or 20), 100))
+            return self._run_git(cwd, ["log", f"--max-count={n}", "--date=short", "--format=%h %ad %an  %s", *([rev] if rev else []), "--", *path])
+        if act == "show":
+            return self._run_git(cwd, ["show", "--stat", "--patch", rev or "HEAD", "--", *path])
+        if act == "branch":
+            return self._run_git(cwd, ["branch", "-vv", "--all"])
+        return "Error: action debe ser status, diff, log, show o branch."
+
+    def _git_commit(self, a: dict) -> str:
+        cwd = self.files.resolve(a["path"], "ai_write")
+        msg = str(a.get("message", "")).strip()
+        if not msg:
+            return "Error: el mensaje del commit está vacío."
+        paths = [str(self.files.resolve(str(p), "ai_write")) for p in (a.get("files") or [])]
+        out = self._run_git(cwd, ["add", "--", *paths] if paths else ["add", "-A"])
+        if out.startswith("Error"):
+            return out
+        res = self._run_git(cwd, ["commit", "-m", msg])
+        return res
 
     def _build_exe(self, a: dict) -> str:
         from . import devtools

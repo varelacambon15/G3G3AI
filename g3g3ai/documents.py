@@ -215,6 +215,37 @@ def _pdf_text(path: Path) -> str:
         raise DocumentError(f"No se pudo leer el PDF {path.name}: {e}") from e
 
 
+def pdf_pages_text(path: Path, spec: str) -> str:
+    """Texto de las páginas indicadas de un PDF. spec: «3», «2-5» o «1,4,7-9» (empiezan en 1)."""
+    try:
+        from pypdf import PdfReader
+    except ImportError as e:
+        raise DocumentError("Falta pypdf para leer PDF (pip install pypdf).") from e
+    try:
+        reader = PdfReader(str(path))
+        total = len(reader.pages)
+        wanted: list[int] = []
+        for part in str(spec).replace(" ", "").split(","):
+            if not part:
+                continue
+            a, _, b = part.partition("-")
+            lo, hi = int(a), int(b or a)
+            wanted += [n for n in range(lo, min(hi, total) + 1) if n >= 1 and n not in wanted]
+        if not wanted:
+            raise DocumentError(f"Páginas no válidas «{spec}». El PDF tiene {total} páginas.")
+        parts = []
+        for n in wanted[:60]:
+            t = (reader.pages[n - 1].extract_text() or "").strip()
+            parts.append(f"--- Página {n} de {total} ---\n{t or '(sin texto: ¿escaneada?)'}")
+        return "\n\n".join(parts)[:TEXT_LIMIT]
+    except DocumentError:
+        raise
+    except ValueError as e:
+        raise DocumentError(f"Páginas no válidas «{spec}»: usa por ejemplo 3, 2-5 o 1,4,7-9") from e
+    except Exception as e:  # noqa: BLE001 — PDFs dañados o cifrados
+        raise DocumentError(f"No se pudo leer el PDF {path.name}: {e}") from e
+
+
 def pdf_page_images(path: Path, pages: int = MAX_PDF_IMAGE_PAGES) -> list[tuple[str, str]]:
     """Renderiza las primeras páginas de un PDF escaneado como imágenes JPEG (base64)."""
     try:

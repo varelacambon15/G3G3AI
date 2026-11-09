@@ -224,6 +224,30 @@ class Files:
                 continue
         return out
 
+    def glob(self, pattern: str, path: str | None = None, max_results: int = 200) -> list[dict]:
+        """Archivos cuyo camino relativo encaja con un patrón tipo `**/*.py` o `src/*/test_*.js`."""
+        base = self.resolve(path)
+        if not base.is_dir():
+            raise FileAccessError(f"No es una carpeta: {base}")
+        pat = pattern.replace("\\", "/").lstrip("/")
+        skip = {"node_modules", "__pycache__", "venv", ".venv", "dist", "build"}
+        rx = re.compile("^" + "".join(
+            "(?:.*/)?" if t == "**/" else ".*" if t == "**" else "[^/]*" if t == "*" else "[^/]" if t == "?"
+            else re.escape(t) for t in re.findall(r"\*\*/|\*\*|\*|\?|[^*?]+", pat)) + "$", re.I)
+        out: list[dict] = []
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in skip
+                           and not self.is_blocked(Path(dirpath) / d)]
+            for n in filenames:
+                full = Path(dirpath) / n
+                rel = full.relative_to(base).as_posix()
+                if (rx.match(rel) or ("/" not in pat and rx.match(n))) and not self.is_blocked(full):
+                    out.append({"path": str(full), "mtime": full.stat().st_mtime})
+                    if len(out) >= max_results:
+                        return out
+        out.sort(key=lambda x: -x["mtime"])
+        return out
+
     def safe_relative(self, directory: str | None, relpath: str) -> Path:
         """Ruta dentro de `directory` para un archivo subido con subcarpetas (carpeta arrastrada).
         Crea las subcarpetas necesarias; rechaza `..` y rutas absolutas."""
