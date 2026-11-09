@@ -1146,3 +1146,13 @@ def test_new_agent_tools(env):
     from g3g3ai import office
     pdf = work / "d.pdf"; office.create(pdf, "# Uno\n\ntexto uno")
     assert "Página 1" in run("read_file", {"path": str(pdf), "pages": "1"})
+
+
+def test_ollama_pull_errors(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    r = client.post("/api/ollama/pull", headers=h, json={"name": "llama.cpp"})
+    assert r.status_code == 400 and "motor" in r.json()["detail"]
+    from g3g3ai.ollama import friendly_pull_error
+    assert "no existe en la biblioteca" in friendly_pull_error("x", "pull model manifest: file does not exist")
+    assert friendly_pull_error("x", "otro error") == "otro error"

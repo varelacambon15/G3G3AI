@@ -982,7 +982,8 @@ function engineBox(kind = "llama") {
   const box = h("div", { class: "engine" },
     kind === "sd"
       ? h("p", {}, h("b", {}, "Motor de imágenes (stable-diffusion.cpp)."), " En la Konkr: ./install.sh --with-sd. En PC puedes descargarlo ya compilado:")
-      : h("p", {}, h("b", {}, "Falta el motor llama.cpp."), " En la Konkr se instala con ./install.sh (compilado para su CPU). En PC puedes descargarlo ya compilado:"));
+      : h("p", {}, h("b", {}, "Falta el motor llama.cpp."), " En la Konkr se instala con ./install.sh (compilado para su CPU). En PC puedes descargarlo ya compilado:",
+        h("br"), h("span", { class: "muted" }, "Si usas Ollama no lo necesitas: descarga un modelo en la tarjeta de Ollama y elígelo en el selector del chat.")));
   const list = h("div", {}, h("span", { class: "muted" }, "Consultando versiones…"));
   box.append(list);
   api("/api/engine/assets?kind=" + kind).then((r) => {

@@ -583,6 +583,9 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         name = str(body.get("name", "")).strip()
         if not re.fullmatch(r"[\w.\-/:]+", name):
             raise HTTPException(400, "Nombre de modelo no válido (p.ej. qwen3:4b)")
+        if name.lower().replace("-", "").replace("_", "") in ("llama.cpp", "llamacpp", "llama"):
+            raise HTTPException(400, "llama.cpp es un motor, no un modelo de Ollama. Escribe el nombre de un modelo, "
+                                     "p.ej. qwen3:8b o gemma3:4b.")
         return olm.pull(name)
 
     @app.delete("/api/ollama/models")

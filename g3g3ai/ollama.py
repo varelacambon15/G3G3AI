@@ -163,7 +163,7 @@ class OllamaManager:
                     except json.JSONDecodeError:
                         continue
                     if ev.get("error"):
-                        raise RuntimeError(ev["error"])
+                        raise RuntimeError(friendly_pull_error(name, ev["error"]))
                     if ev.get("total"):
                         self.job["total"], self.job["completed"] = ev["total"], ev.get("completed", 0)
                     st = ev.get("status", "")
@@ -186,6 +186,16 @@ class OllamaManager:
             return r.returncode, (r.stdout + r.stderr).strip()
         except (OSError, subprocess.TimeoutExpired) as e:
             return -1, str(e)
+
+
+def friendly_pull_error(name: str, err: str) -> str:
+    low = err.lower()
+    if "file does not exist" in low or "manifest" in low and ("not found" in low or "does not exist" in low):
+        return (f"«{name}» no existe en la biblioteca de Ollama. Revisa el nombre y la etiqueta "
+                "(p.ej. qwen3:8b o gemma3:4b); puedes ver los disponibles en ollama.com/library.")
+    if any(k in low for k in ("no such host", "dial tcp", "timeout", "connection refused", "eof")):
+        return f"Ollama no pudo conectar con su registro (¿sin internet o con proxy?): {err}"
+    return err
 
 
 def suggestions_for(tier: str) -> dict:
