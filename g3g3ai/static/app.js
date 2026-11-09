@@ -503,7 +503,7 @@ function messageEl(m) {
     if (imgs.length) el.append(h("div", { class: "msg-images" }, imgs.map((a) =>
       h("img", { src: fileUrl(a.path), alt: a.name, loading: "lazy", onclick: () => previewFile(a.path) }))));
     el.append(h("div", { class: "meta" },
-      att.filter((a) => !imgs.includes(a)).map((a) => h("span", { class: "chip" }, (a.kind === "document" || a.kind === "pdf_scan" ? "📄 " : "📎 ") + a.name)),
+      att.filter((a) => !imgs.includes(a)).map((a) => h("span", { class: "chip" }, (a.kind === "folder" ? "📁 " : a.kind === "document" || a.kind === "pdf_scan" ? "📄 " : "📎 ") + a.name)),
       h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, "⧉"),
       h("button", { class: "act", title: "Editar", onclick: () => editFrom(m) }, "✎")));
   } else {
@@ -666,13 +666,44 @@ const fileUrl = (path) => "/api/files/download?" + qs({ path, inline: true });
 function renderAttachments() {
   const c = $("#attachments"); c.innerHTML = "";
   S.attachments.forEach((a, i) => c.append(h("span", { class: "chip" },
-    isImage(a.name) ? h("img", { class: "thumb", src: fileUrl(a.path), alt: "" }) : "📎 ", a.name,
+    isImage(a.name) ? h("img", { class: "thumb", src: fileUrl(a.path), alt: "" }) : (a.dir ? "📁 " : "📎 "), a.name,
     h("button", { onclick: () => { S.attachments.splice(i, 1); renderAttachments(); } }, "✕"))));
 }
-function addAttachment(path) {
-  if (!S.attachments.some((a) => a.path === path)) S.attachments.push({ path, name: baseName(path) });
+function addAttachment(path, dir = false) {
+  if (!S.attachments.some((a) => a.path === path)) S.attachments.push({ path, name: baseName(path), dir });
   renderAttachments();
 }
+// Con una carpeta adjunta, la IA necesita herramientas para leerla/modificarla: sugerir el modo Agente.
+function enableAgentHint() {
+  if ($("#tools-toggle").checked) return;
+  $("#tools-toggle").checked = true; $("#tools-toggle").dispatchEvent(new Event("change"));
+  toast("🛠 Modo Agente activado para que la IA pueda trabajar con la carpeta", 4000);
+}
+// Adjuntar una ruta escrita a mano (archivo o carpeta del equipo)
+async function attachPath(raw) {
+  const p = raw.trim().replace(/^["'`@]+|["'`]+$/g, "");
+  if (!p) return false;
+  try {
+    const d = await api("/api/files/list?" + qs({ path: p }));
+    addAttachment(d.path, true); enableAgentHint(); return true;
+  } catch { /* no es carpeta: probar como archivo */ }
+  try {
+    const f = await api("/api/files/read?" + qs({ path: p }));
+    addAttachment(f.path); return true;
+  } catch { /* puede ser binario (docx, pdf, imagen): probar la descarga */ }
+  try {
+    const r = await fetch("/api/files/download?" + qs({ path: p, inline: true }), { headers: { Range: "bytes=0-0" } });
+    r.body?.cancel?.();
+    if (r.ok) { addAttachment(p); return true; }
+  } catch { /* */ }
+  toast("No encuentro esa ruta o está fuera de las carpetas permitidas (Ajustes → Carpetas visibles)", 4500);
+  return false;
+}
+const looksLikePath = (t) => /^\s*["'`@]?(~[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\n]*$/.test(t) && t.trim().length < 400;
+$("#path-btn").addEventListener("click", async () => {
+  const p = prompt("Ruta de un archivo o carpeta del equipo (p. ej. ~/proyectos/mi-app):");
+  if (p) await attachPath(p);
+});
 async function attachLocalFiles(fileList) {
   if (!fileList || !fileList.length) return;
   toast("Subiendo…", 1500);
@@ -712,25 +743,76 @@ window.addEventListener("dragleave", (e) => {
   if (!hasFiles(e)) return;
   if (--dragDepth <= 0) endDrag();
 });
-window.addEventListener("drop", async (e) => {
+// Recorre lo soltado (archivos y carpetas). Debe empezar de forma síncrona: tras un await el DataTransfer se vacía.
+const SKIP_DIRS = new Set([".git", "node_modules", "__pycache__", ".venv", "venv"]);
+const MAX_DROP_FILES = 500;
+const readAll = (reader) => new Promise((ok, ko) => {
+  const acc = [];
+  const next = () => reader.readEntries((b) => (b.length ? (acc.push(...b), next()) : ok(acc)), ko);
+  next();
+});
+async function walkEntry(entry, prefix, out) {
+  if (out.length >= MAX_DROP_FILES) return;
+  if (entry.isFile) {
+    const file = await new Promise((ok, ko) => entry.file(ok, ko));
+    out.push({ file, rel: prefix + entry.name });
+  } else if (entry.isDirectory && !SKIP_DIRS.has(entry.name)) {
+    for (const c of await readAll(entry.createReader())) await walkEntry(c, prefix + entry.name + "/", out);
+  }
+}
+async function collectDropped(dt) {
+  const entries = [...(dt.items || [])].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+  if (!entries.length) return { files: [...dt.files].map((f) => ({ file: f, rel: f.name })), folders: [] };
+  const files = [], folders = [];
+  for (const en of entries) {
+    if (en.isDirectory) folders.push(en.name);
+    await walkEntry(en, "", files);
+  }
+  return { files, folders };
+}
+// Sube lo recogido; las carpetas conservan su estructura. Devuelve las rutas de nivel superior.
+async function uploadDropped(items, folders, dir) {
+  const tops = [];
+  const sub = (r) => r.includes("/") ? r : "";
+  let n = 0;
+  for (const { file, rel } of items) {
+    const fd = new FormData(); fd.append("dir", dir || ""); fd.append("file", file);
+    if (sub(rel)) fd.append("relpath", rel);
+    try {
+      const r = await api("/api/files/upload", { method: "POST", body: fd });
+      n++;
+      if (!sub(rel)) tops.push(r.path);
+    } catch (e) { toast(`${rel}: ${e.message}`); }
+  }
+  for (const f of folders) tops.push(joinPath(dir, f));
+  return { tops, n };
+}
+window.addEventListener("drop", (e) => {
   if (!hasFiles(e)) return;
   e.preventDefault(); endDrag();
-  const files = [...e.dataTransfer.files].filter((f) => f.type || f.size || /\.[^.]+$/.test(f.name)); // descarta carpetas sin extensión ni tamaño
-  if (!files.length) { toast("Arrastra archivos, no carpetas"); return; }
-  if (S.view === "files") {
+  if (S.view !== "files" && S.view !== "chat") { toast("Ve a Chat o Archivos para soltar documentos"); return; }
+  const view = S.view, pending = collectDropped(e.dataTransfer); // síncrono: captura el DataTransfer
+  (async () => {
+    const { files, folders } = await pending;
+    if (!files.length && !folders.length) { toast("No hay nada que subir"); return; }
+    if (files.length >= MAX_DROP_FILES) toast(`Carpeta muy grande: se suben los primeros ${MAX_DROP_FILES} archivos`, 4000);
     toast("Subiendo…", 1500);
-    const res = await uploadFiles(files, S.filesPath);
-    if (res.length) toast(`${res.length} archivo(s) subido(s)`);
-    loadFiles(S.filesPath);
-  } else if (S.view === "chat") {
-    if ($("#picker").open) $("#picker").close();
-    await attachLocalFiles(files);
-  } else toast("Ve a Chat o Archivos para soltar documentos");
+    const dir = view === "files" ? S.filesPath : await uploadsDir();
+    const { tops, n } = await uploadDropped(files, folders, dir);
+    if (view === "files") { if (n) toast(`${n} archivo(s) subido(s)`); loadFiles(S.filesPath); }
+    else { if ($("#picker").open) $("#picker").close(); tops.forEach(addAttachment); if (folders.length) enableAgentHint(); }
+  })();
 });
 input.addEventListener("paste", (e) => {
   const imgs = [...(e.clipboardData?.files || [])];
-  if (imgs.length) { e.preventDefault(); attachLocalFiles(imgs); }
+  if (imgs.length) { e.preventDefault(); attachLocalFiles(imgs); return; }
+  const t = e.clipboardData?.getData("text") || "";
+  if (looksLikePath(t) && !input.value.trim()) {
+    e.preventDefault();
+    attachPath(t).then((ok) => { if (!ok) { input.value = t; input.dispatchEvent(new Event("input")); } });
+  }
 });
+$("#picker-folder").addEventListener("click", () => { addAttachment(S.pickerPath, true); enableAgentHint(); $("#picker").close(); });
 $("#attach-btn").addEventListener("click", () => { $("#picker").showModal(); loadPicker(S.pickerPath); });
 async function loadPicker(path) {
   try {

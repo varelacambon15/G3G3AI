@@ -103,6 +103,27 @@ def test_files_sandbox(env):
     assert r.status_code == 200 and r.json()["path"] == str(home / "docs" / "evil.txt")
 
 
+def test_folder_upload_and_attach(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    d = str(home / "docs")
+    r = client.post("/api/files/upload", headers=h, data={"dir": d, "relpath": "proy/src/a.py"},
+                    files={"file": ("a.py", b"print(1)")})
+    assert r.status_code == 200 and (home / "docs" / "proy" / "src" / "a.py").read_text() == "print(1)"
+    for bad in ("../x.txt", "a/../../x"):
+        assert client.post("/api/files/upload", headers=h, data={"dir": d, "relpath": bad},
+                           files={"file": ("x", b"x")}).status_code in (400, 403)
+    assert not (home / "x.txt").exists()
+    # una ruta absoluta se trata como relativa: queda dentro de la carpeta destino
+    r = client.post("/api/files/upload", headers=h, data={"dir": d, "relpath": "/etc/x"}, files={"file": ("x", b"x")})
+    assert r.status_code == 200 and r.json()["path"] == str(home / "docs" / "etc" / "x")
+    # Adjuntar una carpeta: la IA recibe el listado en árbol
+    r = client.post("/api/chat", headers=h, json={"message": "mira", "attachments": [str(home / "docs" / "proy")]})
+    assert r.status_code in (200, 409)  # 409 = sin modelo cargado, pero la carpeta se expandió sin error 400/403
+    r2 = client.post("/api/chat", headers=h, json={"message": "x", "attachments": [str(tmp)]})
+    assert r2.status_code == 403 or r2.status_code == 400  # fuera de las carpetas permitidas
+
+
 def test_local_model_chat_and_tools(env):
     client, cfg, home, tmp = env
     h = auth(cfg)
@@ -375,13 +396,13 @@ def test_web_parsing_and_ssrf_guard():
 
 
 def test_web_tools_in_chat(env, monkeypatch):
-    """Con 🌐 Web activado (sin Agente) el modelo sólo recibe herramientas web."""
+    """Con 🌐 Web activado (sin Agente) el modelo recibe las herramientas web (y crear documentos, sin tocar el disco más allá)."""
     client, cfg, home, tmp = env
     h = auth(cfg)
     from g3g3ai.files import Files
     from g3g3ai.tools import ToolContext
     ctx = ToolContext(Files(cfg), cfg, agent=False, web=True)
-    assert ctx.names() == ["web_search", "fetch_url"]
+    assert ctx.names() == ["create_document", "web_search", "fetch_url"]
     ctx = ToolContext(Files(cfg), cfg, agent=True, web=False)
     assert "web_search" not in ctx.names() and "read_file" in ctx.names()
     from g3g3ai import web
@@ -1065,3 +1086,27 @@ def test_model_favorites_and_hidden_are_saved_and_synced(env):
     assert cfg["settings_updated"] > before  # cuenta como cambio de ajustes comunes: viaja con la sincronización
     from g3g3ai.sync import SYNC_KEYS
     assert {"model_favorites", "model_hidden"} <= set(SYNC_KEYS)
+
+
+def test_create_document_without_agent_mode(env):
+    client, cfg, home, tmp = env
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    ctx = ToolContext(Files(cfg), cfg, agent=False)
+    assert ctx.names() == ["create_document"]
+    assert "create_document" in ctx.system_hint()
+
+
+def test_grep_files(env):
+    client, cfg, home, tmp = env
+    from g3g3ai.files import Files
+    (home / "docs" / "a.py").write_text("x = 1\ndef saludo():\n    return 'hola'\n")
+    (home / "docs" / "b.txt").write_text("nada\n")
+    f = Files(cfg)
+    res = f.grep("def saludo", str(home / "docs"))
+    assert len(res) == 1 and res[0].endswith("a.py:2: def saludo():")
+    assert f.grep("saludo", str(home / "docs"), "*.txt") == []
+    import pytest as _p
+    from g3g3ai.files import FileAccessError
+    with _p.raises(FileAccessError):
+        f.grep("x", str(tmp))

@@ -259,8 +259,17 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         for p in paths:
             try:
                 path = files.resolve(p)
-                if not path.is_file():
-                    raise FileAccessError(f"No es un archivo: {path}")
+                if path.is_dir():
+                    listing, cut = files.tree(str(path))
+                    can_edit = files.can_ai_write(path)
+                    note = ("La IA puede modificar esta carpeta." if can_edit else
+                            "Esta carpeta es de sólo lectura para la IA (se puede ampliar en Ajustes → Carpetas que la IA puede modificar).")
+                    parts.append(f"Carpeta adjunta `{path}` ({note} Usa tus herramientas para leer los archivos que necesites):\n"
+                                 f"```\n{listing or '(vacía)'}{chr(10) + '[... listado truncado ...]' if cut else ''}\n```")
+                    meta.append({"name": path.name, "path": str(path), "kind": "folder"})
+                    continue
+                if not path.exists():
+                    raise FileAccessError(f"No existe: {path}")
                 kind = D.kind_of(path)
                 if kind == "image":
                     meta.append({"name": path.name, "path": str(path), "kind": "image"})
@@ -716,8 +725,10 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         return FileResponse(p, filename=p.name, content_disposition_type="inline" if inline else "attachment")
 
     @app.post("/api/files/upload")
-    async def file_upload(dir: str = Form(""), file: UploadFile = File(...)):
-        target = fa(files.safe_child, dir, file.filename or "archivo")
+    async def file_upload(dir: str = Form(""), relpath: str = Form(""), file: UploadFile = File(...)):
+        # relpath: ruta relativa dentro de `dir` (al subir una carpeta arrastrada)
+        target = (fa(files.safe_relative, dir, relpath) if relpath
+                  else fa(files.safe_child, dir, file.filename or "archivo"))
         with open(target, "wb") as out:
             while chunk := await file.read(1 << 20):
                 out.write(chunk)

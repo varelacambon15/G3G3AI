@@ -34,7 +34,7 @@ PENDING: dict[str, asyncio.Future] = {}
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-FILE_TOOLS = {"list_dir", "read_file", "search_files"}
+FILE_TOOLS = {"list_dir", "read_file", "search_files", "grep_files"}
 WRITE_TOOLS = {"write_file", "edit_file", "create_document"}
 COMMAND_TOOLS = {"run_command", "build_exe"}
 WEB_TOOLS = {"web_search", "fetch_url"}
@@ -58,6 +58,12 @@ ALL_SPECS = {
     "search_files": ("Busca archivos o carpetas por nombre (admite comodines * y ?).",
                      _schema({"query": {"type": "string", "description": "Texto o patrón, p.ej. '*.pdf'"},
                               "path": {"type": "string", "description": "Carpeta donde buscar (opcional)"}}, ["query"])),
+    "grep_files": ("Busca texto DENTRO de los archivos (expresión regular o texto literal) en una carpeta y sus subcarpetas. "
+                   "Devuelve líneas `ruta:nº: texto`. Úsalo para localizar dónde se define o se usa algo.",
+                   _schema({"pattern": {"type": "string", "description": "Texto o expresión regular"},
+                            "path": {"type": "string", "description": "Carpeta o archivo donde buscar (opcional)"},
+                            "glob": {"type": "string", "description": "Filtrar por nombre, p.ej. '*.py' (opcional)"}},
+                           ["pattern"])),
     "write_file": ("Crea o sobrescribe un archivo de texto completo (sólo en las carpetas modificables).",
                    _schema({"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"])),
     "create_document": ("Crea un documento Word (.docx), Excel (.xlsx), PowerPoint (.pptx) o PDF (.pdf); el formato sale "
@@ -148,7 +154,7 @@ class ToolContext:
     def names(self) -> list[str]:
         out = []
         if self.agent:
-            out += ["list_dir", "read_file", "search_files"]
+            out += ["list_dir", "read_file", "search_files", "grep_files"]
             if self.mode("write_file") != "off" and self.files.write_roots:
                 out += ["write_file", "edit_file", "create_document"]
             if self.mode("run_command") != "off":
@@ -160,6 +166,9 @@ class ToolContext:
                 out += ["steam_games", "game_diagnostics"]
             if self.local_chat:
                 out.append("ask_local_model")
+        elif self.mode("create_document") != "off" and self.files.write_roots:
+            # Crear documentos (docx/xlsx/pptx/pdf) no requiere activar el modo Agente (pide permiso igualmente).
+            out.append("create_document")
         if self.web:
             out += ["web_search", "fetch_url"]
         if self.memory is not None:
@@ -216,6 +225,11 @@ class ToolContext:
             hint = steam_hint()
             if hint:
                 parts.append(hint)
+        if not self.agent and "create_document" in names:
+            wr = self.files.write_roots[0]
+            parts.append("Puedes crear documentos Word (.docx), Excel (.xlsx), PowerPoint (.pptx) o PDF con create_document "
+                         f"cuando el usuario los pida (usa una ruta relativa como informe.docx; se guarda en {wr}). "
+                         "No le des scripts para generarlos: créalos tú con la herramienta.")
         if self.memory is not None:
             from .memory import SAVE_GUIDE
             parts.append(SAVE_GUIDE)
@@ -337,6 +351,9 @@ class ToolContext:
                 text = text[:READ_LIMIT_FOR_AI]
                 note = "\n[... truncado: usa start_line/max_lines para leer el resto ...]"
             return f"Archivo: {res['path']} ({len(lines)} líneas)\n{text}{note}"
+        if name == "grep_files":
+            res = f.grep(a["pattern"], a.get("path"), a.get("glob"))
+            return "\n".join(res) + ("\n[... más resultados omitidos ...]" if len(res) >= 100 else "") if res else "Sin resultados."
         if name == "search_files":
             res = f.search(a["query"], a.get("path"))
             return "\n".join(("[D] " if r["is_dir"] else "") + r["path"] for r in res) or "Sin resultados."

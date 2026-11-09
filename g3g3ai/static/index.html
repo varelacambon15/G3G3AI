@@ -67,6 +67,7 @@
                     <button id="plus-btn" class="round-btn" title="Añadir" aria-label="Añadir">＋</button>
                     <div id="plus-menu" class="popover hidden">
                       <button id="attach-btn"><span class="ico">📎</span> Adjuntar archivo o documento</button>
+                      <button id="path-btn"><span class="ico">📁</span> Añadir ruta (archivo o carpeta)</button>
                       <button id="camera-btn"><span class="ico">📷</span> Hacer o elegir una foto</button>
                       <button id="image-btn"><span class="ico">🎨</span> Generar una imagen</button>
                     </div>
@@ -267,7 +268,8 @@
     <label class="primary btn-like">Desde este dispositivo<input id="picker-upload" type="file" multiple hidden></label>
   </div>
   <p class="muted">…o elige uno del equipo:</p>
-  <div class="row"><button id="picker-up" class="ghost small">⬆</button><span id="picker-path" class="muted grow"></span></div>
+  <div class="row"><button id="picker-up" class="ghost small">⬆</button><span id="picker-path" class="muted grow"></span>
+    <button id="picker-folder" class="ghost small" title="Adjuntar la carpeta que estás viendo">📁 Adjuntar esta carpeta</button></div>
   <ul id="picker-list" class="list files"></ul>
 </dialog>
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 from pathlib import Path
 
 TEXT_LIMIT = 200_000  # caracteres máximos leídos de un archivo de texto
@@ -180,6 +181,90 @@ class Files:
                     if len(out) >= max_results:
                         return out
         return out
+
+    def grep(self, pattern: str, path: str | None = None, glob: str | None = None,
+             ignore_case: bool = True, max_results: int = 100) -> list[str]:
+        """Busca texto (expresión regular) dentro de los archivos. Devuelve líneas `ruta:nº: texto`."""
+        try:
+            rx = re.compile(pattern, re.I if ignore_case else 0)
+        except re.error:
+            rx = re.compile(re.escape(pattern), re.I if ignore_case else 0)
+        base = self.resolve(path)
+        files = [base] if base.is_file() else None
+        out: list[str] = []
+        skip = {"node_modules", "__pycache__", "venv", ".venv", "dist", "build"}
+
+        def candidates():
+            if files:
+                yield from files
+                return
+            for dirpath, dirnames, filenames in os.walk(base):
+                dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in skip
+                               and not self.is_blocked(Path(dirpath) / d)]
+                for n in filenames:
+                    if not n.startswith(".") and (not glob or fnmatch.fnmatch(n.lower(), glob.lower())):
+                        yield Path(dirpath) / n
+
+        for f in candidates():
+            if self.is_blocked(f):
+                continue
+            try:
+                if f.stat().st_size > 2_000_000:
+                    continue
+                with open(f, "rb") as fh:
+                    raw = fh.read()
+                if b"\x00" in raw[:8192]:
+                    continue
+                for i, line in enumerate(raw.decode("utf-8", errors="replace").splitlines(), 1):
+                    if rx.search(line):
+                        out.append(f"{f}:{i}: {line.strip()[:200]}")
+                        if len(out) >= max_results:
+                            return out
+            except OSError:
+                continue
+        return out
+
+    def safe_relative(self, directory: str | None, relpath: str) -> Path:
+        """Ruta dentro de `directory` para un archivo subido con subcarpetas (carpeta arrastrada).
+        Crea las subcarpetas necesarias; rechaza `..` y rutas absolutas."""
+        parts = [x for x in str(relpath).replace("\\", "/").split("/") if x not in ("", ".")]
+        if not parts or ".." in parts:
+            raise FileAccessError("Ruta relativa no válida")
+        d = self.resolve(directory)
+        target = self.resolve(str(d.joinpath(*parts)))
+        if not is_under(target, d):
+            raise FileAccessError("Ruta relativa no válida")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def tree(self, path: str, max_entries: int = 300, max_depth: int = 4) -> tuple[str, bool]:
+        """Listado en árbol de una carpeta para dárselo a la IA. Devuelve (texto, truncado)."""
+        base = self.resolve(path)
+        lines, count, truncated = [], 0, False
+        skip = {"node_modules", "__pycache__", "venv", ".venv", "dist", "build"}
+
+        def walk(d: Path, depth: int) -> None:
+            nonlocal count, truncated
+            try:
+                items = sorted(os.scandir(d), key=lambda e: (not e.is_dir(), e.name.lower()))
+            except OSError:
+                return
+            for e in items:
+                if truncated:
+                    return
+                if e.name.startswith(".") or e.name in skip or self.is_blocked(Path(e.path)):
+                    continue
+                if count >= max_entries:
+                    truncated = True
+                    return
+                count += 1
+                isdir = e.is_dir()
+                lines.append("  " * depth + e.name + ("/" if isdir else ""))
+                if isdir and depth + 1 < max_depth:
+                    walk(Path(e.path), depth + 1)
+
+        walk(base, 0)
+        return "\n".join(lines), truncated
 
     def safe_child(self, directory: str | None, filename: str) -> Path:
         name = Path(filename).name  # evita ../ en el nombre subido
