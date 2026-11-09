@@ -1257,3 +1257,51 @@ def test_xlsx_rejects_broken_json_and_shifted_rows(env):
     office.create(p2, "ID;NOMBRE\n1;ANA")
     from openpyxl import load_workbook
     assert [c.value for c in load_workbook(p2).active[2]] == [1, "ANA"]
+
+
+def test_table_tools_cross_two_files(env):
+    import asyncio
+    from openpyxl import Workbook, load_workbook
+    client, cfg, home, tmp = env
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    cfg.data["write_roots"] = [str(home)]
+    cfg.data["ai_write"] = "auto"
+    # A: como las nóminas: fila 1 = títulos de día, fila 2 = encabezados, columnas repetidas
+    wb = Workbook(); ws = wb.active
+    ws.append(["", "", "Viernes | 16-10", None])
+    ws.append(["OPERARIOS", "CATEGORÍA", "OBRA", "OBRA"])
+    for r in (["Ana  Pérez", "OFICIAL", 1, 2], ["JOSÉ-LUIS Gómez", "AYUDANTE", 1, 2], ["Luis Díaz", "OFICIAL", 1, 2],
+              ["Marta Ruiz", "AYUDANTE", 1, 2]):
+        ws.append(r)
+    wb.save(home / "nominas.xlsx")
+    # B: lista de quienes SÍ tienen descargo (otra grafía: acentos/mayúsculas)
+    wb = Workbook(); ws = wb.active
+    ws.append(["ID", "NOMBRE", "DESCARGO"])
+    for r in ([1, "ana perez", "SI"], [2, "JOSE LUIS GOMEZ", "SI"], [3, "Otro Sin Nómina", "SI"]):
+        ws.append(r)
+    wb.save(home / "descargos.xlsx")
+
+    ctx = ToolContext(Files(cfg), cfg, agent=True)
+    for n in ("table_info", "table_query", "table_export"):
+        assert n in ctx.names()
+    run = lambda n, a: asyncio.run(ctx.run(n, a))
+    info = run("table_info", {"path": str(home / "nominas.xlsx")})
+    assert "encabezados en la fila 2" in info and "OBRA_2" in info
+    out = run("table_query", {"path": str(home / "nominas.xlsx"), "columns": ["OPERARIOS"], "where": [
+        {"column": "categoria", "op": "=", "value": "ayudante"}]})
+    assert "Resultado: 2 filas" in out and "Marta Ruiz" in out
+    # cruce: quién de las nóminas NO está en la lista de descargos
+    cross = {"path": str(home / "nominas.xlsx"), "column": "OPERARIOS", "other_path": str(home / "descargos.xlsx"),
+             "other_column": "NOMBRE", "mode": "missing", "columns": ["OPERARIOS", "CATEGORÍA"]}
+    out = run("table_query", cross)
+    assert "Resultado: 2 filas" in out and "Luis Díaz" in out and "Marta Ruiz" in out and "Ana" not in out
+    # exportar sin que el modelo escriba filas
+    out = run("table_export", {**cross, "save_as": str(home / "sin_descargo.xlsx")})
+    assert "con 2 filas" in out
+    rows = list(load_workbook(home / "sin_descargo.xlsx").active.iter_rows(values_only=True))
+    assert rows[0] == ("OPERARIOS", "CATEGORÍA") and {r[0] for r in rows[1:]} == {"Luis Díaz", "Marta Ruiz"}
+    assert str(home / "sin_descargo.xlsx") in ctx.files_out
+    # errores claros y fuera de las carpetas permitidas
+    assert "No existe la columna" in run("table_query", {"path": str(home / "nominas.xlsx"), "columns": ["NOPE"]})
+    assert "Error" in run("table_query", {"path": str(tmp / "fuera.txt")})

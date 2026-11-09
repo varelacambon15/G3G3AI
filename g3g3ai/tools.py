@@ -36,8 +36,8 @@ PENDING: dict[str, asyncio.Future] = {}
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-FILE_TOOLS = {"list_dir", "read_file", "search_files", "grep_files", "glob_files", "git", "update_plan"}
-WRITE_TOOLS = {"write_file", "edit_file", "create_document", "git_commit"}
+FILE_TOOLS = {"list_dir", "read_file", "search_files", "grep_files", "glob_files", "git", "update_plan", "table_info", "table_query"}
+WRITE_TOOLS = {"write_file", "edit_file", "create_document", "git_commit", "table_export"}
 COMMAND_TOOLS = {"run_command", "build_exe"}
 WEB_TOOLS = {"web_search", "fetch_url"}
 MEMORY_TOOLS = {"memory_save", "memory_delete"}
@@ -62,6 +62,47 @@ ALL_SPECS = {
     "search_files": ("Busca archivos o carpetas por nombre (admite comodines * y ?).",
                      _schema({"query": {"type": "string", "description": "Texto o patrón, p.ej. '*.pdf'"},
                               "path": {"type": "string", "description": "Carpeta donde buscar (opcional)"}}, ["query"])),
+    "table_info": ("Describe una hoja de cálculo (xlsx/xls/csv): hojas, columnas, nº de filas y ejemplos. Úsalo SIEMPRE "
+                   "antes de consultar un Excel grande; no lo leas con read_file.",
+                   _schema({"path": {"type": "string"}, "sheet": {"type": "string"},
+                            "header_row": {"type": "integer"}}, ["path"])),
+    "table_query": ("Consulta un Excel/CSV grande sin leerlo entero: filtra filas, elige columnas, cuenta, quita repetidos y "
+                    "CRUZA dos archivos (p.ej. las personas del archivo A que NO están en el archivo B). Devuelve las "
+                    "primeras filas y el total; para guardar todo el resultado usa table_export.",
+                    _schema({"path": {"type": "string", "description": "Archivo .xlsx/.xls/.csv"},
+                            "sheet": {"type": "string", "description": "Hoja (por defecto la primera)"},
+                            "header_row": {"type": "integer", "description": "Fila de encabezados (se detecta sola)"},
+                            "columns": {"type": "array", "items": {"type": "string"}, "description": "Columnas a devolver"},
+                            "where": {"type": "array", "items": {"type": "object", "properties": {
+                                "column": {"type": "string"},
+                                "op": {"type": "string", "description": "=, !=, contains, not_contains, empty, not_empty, >, <, >=, <="},
+                                "value": {"type": "string"}}, "required": ["column", "op"]},
+                                "description": "Condiciones (todas deben cumplirse)"},
+                            "distinct": {"type": "boolean", "description": "Quitar filas repetidas"},
+                            "other_path": {"type": "string", "description": "Segundo archivo para cruzar"},
+                            "other_sheet": {"type": "string"}, "other_header_row": {"type": "integer"},
+                            "column": {"type": "string", "description": "Columna de ESTE archivo con la que cruzar (p.ej. NOMBRE)"},
+                            "other_column": {"type": "string", "description": "Columna del OTRO archivo con la que cruzar"},
+                            "mode": {"type": "string", "enum": ["missing", "common"], "description": "missing = los que NO están en el otro archivo; common = los que sí"}}, ["path"])),
+    "table_export": ("Igual que table_query pero guarda TODO el resultado en un archivo .xlsx o .csv (save_as), sin que "
+                     "tengas que escribir las filas tú. Úsalo para entregar listas completas.",
+                     _schema({"path": {"type": "string", "description": "Archivo .xlsx/.xls/.csv"},
+                            "sheet": {"type": "string", "description": "Hoja (por defecto la primera)"},
+                            "header_row": {"type": "integer", "description": "Fila de encabezados (se detecta sola)"},
+                            "columns": {"type": "array", "items": {"type": "string"}, "description": "Columnas a devolver"},
+                            "where": {"type": "array", "items": {"type": "object", "properties": {
+                                "column": {"type": "string"},
+                                "op": {"type": "string", "description": "=, !=, contains, not_contains, empty, not_empty, >, <, >=, <="},
+                                "value": {"type": "string"}}, "required": ["column", "op"]},
+                                "description": "Condiciones (todas deben cumplirse)"},
+                            "distinct": {"type": "boolean", "description": "Quitar filas repetidas"},
+                            "other_path": {"type": "string", "description": "Segundo archivo para cruzar"},
+                            "other_sheet": {"type": "string"}, "other_header_row": {"type": "integer"},
+                            "column": {"type": "string", "description": "Columna de ESTE archivo con la que cruzar (p.ej. NOMBRE)"},
+                            "other_column": {"type": "string", "description": "Columna del OTRO archivo con la que cruzar"},
+                            "mode": {"type": "string", "enum": ["missing", "common"], "description": "missing = los que NO están en el otro archivo; common = los que sí"},
+                              "save_as": {"type": "string", "description": "Archivo de salida, p.ej. sin_descargo.xlsx"}},
+                             ["path", "save_as"])),
     "glob_files": ("Encuentra archivos por patrón de ruta, p.ej. '**/*.py' o 'src/**/test_*.js' (los más recientes primero).",
                    _schema({"pattern": {"type": "string"},
                             "path": {"type": "string", "description": "Carpeta base (opcional)"}}, ["pattern"])),
@@ -181,9 +222,9 @@ class ToolContext:
     def names(self) -> list[str]:
         out = []
         if self.agent:
-            out += ["list_dir", "read_file", "search_files", "grep_files", "glob_files", "git", "update_plan"]
+            out += ["list_dir", "read_file", "search_files", "grep_files", "glob_files", "git", "update_plan", "table_info", "table_query"]
             if self.mode("write_file") != "off" and self.files.write_roots:
-                out += ["write_file", "edit_file", "create_document", "git_commit"]
+                out += ["write_file", "edit_file", "create_document", "git_commit", "table_export"]
             if self.mode("run_command") != "off":
                 out.append("run_command")
                 from .devtools import devenv_python
@@ -242,6 +283,11 @@ class ToolContext:
                     parts.append("Para crear un programa ejecutable escribe el script de Python y compílalo con build_exe "
                                  + ("(genera un .exe de Windows)." if sys.platform == "win32" else
                                     "(en este equipo genera un binario de Linux; los .exe de Windows se crean en un PC con Windows)."))
+            if "table_query" in names:
+                parts.append("Para Excel o CSV grandes NO uses read_file: llama a table_info para ver las columnas y a "
+                             "table_query para filtrar, contar o cruzar dos archivos (por ejemplo «los que NO están en el "
+                             "otro archivo»); con table_export guardas el resultado completo en un .xlsx sin escribir las "
+                             "filas a mano. Si tras table_info no sabes qué columna usar para cruzar, pregunta al usuario.")
             if "ask_local_model" in names:
                 parts.append("Para subtareas sencillas y voluminosas (resumir archivos largos, traducir, extraer) "
                              "puedes usar ask_local_model y ahorrar coste.")
@@ -280,7 +326,7 @@ class ToolContext:
         """Devuelve (error, avisos_fuertes, avisos_suaves). Los fuertes obligan a preguntar siempre."""
         try:
             if name in WRITE_TOOLS:
-                p = self.files.resolve(args.get("path"), "ai_write")
+                p = self.files.resolve(args.get("save_as") if name == "table_export" else args.get("path"), "ai_write")
                 if self.files.is_game_path(p) and not any(is_under(p, r) for r in self.files.write_roots):
                     return None, ["modifica archivos de un juego (se guarda una copia de seguridad del original)"], []
             if name == "build_exe":
@@ -380,6 +426,8 @@ class ToolContext:
                 text = text[:READ_LIMIT_FOR_AI]
                 note = "\n[... truncado: usa start_line/max_lines para leer el resto ...]"
             return f"Archivo: {res['path']} ({len(lines)} líneas)\n{text}{note}"
+        if name in ("table_info", "table_query", "table_export"):
+            return self._table(name, a)
         if name == "glob_files":
             res = f.glob(a["pattern"], a.get("path"))
             return "\n".join(r["path"] for r in res) or "Sin resultados."
@@ -453,6 +501,29 @@ class ToolContext:
             return f"No existe el recuerdo {a.get('id')}."
         except MemoryRejected as e:
             return f"No guardado: {e}"
+
+    def _table(self, name: str, a: dict) -> str:
+        from . import tables as T
+        try:
+            src = self.files.resolve(a["path"])
+            if name == "table_info":
+                return T.describe(src, a.get("sheet"), a.get("header_row"))
+            kw = dict(sheet=a.get("sheet"), header_row=a.get("header_row"), columns=a.get("columns") or None,
+                      where=a.get("where"), distinct=bool(a.get("distinct")), column=a.get("column"),
+                      other_column=a.get("other_column"), mode=a.get("mode") or "missing",
+                      other_sheet=a.get("other_sheet"), other_header_row=a.get("other_header_row"),
+                      other_path=self.files.resolve(a["other_path"]) if a.get("other_path") else None)
+            res = T.query(src, **kw)
+            if name == "table_query":
+                return T.format_result(res)
+            dest = self.files.resolve(a["save_as"], "ai_write")
+            n = T.export(res, dest)
+            self.files_out.append(str(dest))
+            return (" · ".join(res["info"]) + f"\nGuardado {dest} con {n} filas. El usuario ya puede descargarlo.")
+        except T.TableError as e:
+            return f"Error: {e}"
+        except (OSError, ValueError, KeyError) as e:
+            return f"Error al leer la hoja de cálculo: {e}"
 
     _REV = re.compile(r"^[\w./~^@{}:-]+$")
 
