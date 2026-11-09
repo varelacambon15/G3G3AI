@@ -44,6 +44,58 @@ async function copyText(text, okMsg = "Copiado") {
   toast(ok ? okMsg : "No se pudo copiar: selecciona el texto y usa Ctrl+C");
 }
 
+// --- Menú del clic derecho ----------------------------------------------------------------
+// La ventana de escritorio (pywebview) no trae menú contextual: se muestra uno propio. En un navegador normal se
+// deja el nativo.
+(() => {
+  let menu = null;
+  const close = () => { menu?.remove(); menu = null; };
+  const isEditable = (el) => !!el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && !["checkbox", "radio", "button", "file", "range"].includes(el.type)) || el.isContentEditable);
+  const selectedText = (el) => {
+    if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT")) {
+      try { return el.value.slice(el.selectionStart, el.selectionEnd); } catch { return ""; }
+    }
+    return String(window.getSelection?.() || "");
+  };
+  async function paste(el) {
+    try {
+      const t = await navigator.clipboard.readText();
+      el.focus();
+      if (!document.execCommand("insertText", false, t) && el.setRangeText) {   // execCommand conserva «deshacer»
+        el.setRangeText(t, el.selectionStart, el.selectionEnd, "end"); el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    } catch { toast("No se pudo pegar desde el menú: usa Ctrl+V"); }
+  }
+  document.addEventListener("contextmenu", (e) => {
+    if (!window.pywebview) return;               // navegador normal: menú nativo
+    e.preventDefault(); close();
+    const el = e.target, editable = isEditable(el) ? el : null, sel = selectedText(editable);
+    const bubble = el.closest?.(".bubble"), pre = el.closest?.("pre");
+    const items = [];
+    if (sel) items.push(["Copiar", () => copyText(sel)]);
+    if (editable && sel && !editable.readOnly) items.push(["Cortar", async () => { await copyText(sel); editable.focus(); document.execCommand("delete"); }]);
+    if (editable && !editable.readOnly) items.push(["Pegar", () => paste(editable)]);
+    if (pre && !editable) items.push(["Copiar bloque de código", () => copyText(pre.innerText, "Código copiado")]);
+    if (bubble && !editable) items.push(["Copiar mensaje", () => copyText(bubble.innerText)]);
+    items.push(["Seleccionar todo", () => {
+      if (editable) { editable.focus(); editable.select?.(); return; }
+      const r = document.createRange(); r.selectNodeContents(bubble || document.body);
+      const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+    }]);
+    menu = h("div", { id: "ctx-menu", class: "popover" },
+      items.map(([label, fn]) => h("button", { onmousedown: (ev) => ev.preventDefault(), onclick: () => { close(); fn(); } }, label)));
+    document.body.append(menu);
+    const { innerWidth: W, innerHeight: H } = window, r = menu.getBoundingClientRect();
+    menu.style.left = Math.max(4, Math.min(e.clientX, W - r.width - 4)) + "px";
+    menu.style.top = Math.max(4, Math.min(e.clientY, H - r.height - 4)) + "px";
+  });
+  document.addEventListener("mousedown", (e) => { if (menu && !menu.contains(e.target)) close(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  window.addEventListener("blur", close);
+  window.addEventListener("resize", close);
+  document.addEventListener("scroll", close, true);
+})();
+
 // --- API ---------------------------------------------------------------------------
 async function api(path, opts = {}) {
   const o = { headers: {}, ...opts };
