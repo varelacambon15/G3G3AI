@@ -486,9 +486,7 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   frag.append(b);
   const fileIcon = (p) => ({ docx: "📘", doc: "📘", xlsx: "📗", xlsm: "📗", csv: "📗", pptx: "📙", pdf: "📕", exe: "⚙️", py: "🐍" }[String(p).split(".").pop().toLowerCase()] || "📄");
   const outs = [...new Set(extra.files || [])];
-  if (outs.length) frag.append(h("div", { class: "file-cards" }, outs.map((p) =>
-    h("a", { class: "file-card", href: "/api/files/download?" + qs({ path: p }), title: p },
-      h("span", { class: "fi" }, fileIcon(p)), h("span", { class: "fn" }, baseName(p), h("small", {}, "Descargar")))))); 
+  if (outs.length) frag.append(h("div", { class: "file-cards" }, outs.map((p) => fileCard(p, fileIcon(p)))));
   const imgs = extra.images || [];
   if (imgs.length) frag.append(h("div", { class: "gen-images" }, imgs.map((p) =>
     h("a", { href: fileUrl(p), target: "_blank", title: p }, h("img", { src: fileUrl(p), alt: "imagen generada", loading: "lazy" })))));
@@ -663,6 +661,49 @@ if ("Notification" in window && Notification.permission === "default") {
 // --- Adjuntos --------------------------------------------------------------------------
 const isImage = (name) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(name || "");
 const fileUrl = (path) => "/api/files/download?" + qs({ path, inline: true });
+// --- Archivos generados por la IA: «Guardar» (diálogo) + menú con flecha (Abrir, Guardar como…, Mostrar en carpeta) ---
+async function saveGenerated(path) {
+  const name = baseName(path);
+  try {
+    if (window.pywebview?.api?.save_file) {              // ventana de escritorio: diálogo nativo
+      const r = await window.pywebview.api.save_file(path, name);
+      if (r?.ok) toast("Guardado en " + r.path, 5000);
+      else if (!r?.cancelled) toast("No se pudo guardar: " + (r?.error || "error desconocido"), 5000);
+      return;
+    }
+    if (window.showSaveFilePicker) {                      // navegadores con File System Access
+      const ext = (name.match(/\.[^.]+$/) || [""])[0];
+      const fh = await window.showSaveFilePicker({ suggestedName: name,
+        types: ext ? [{ description: ext.slice(1).toUpperCase(), accept: { "application/octet-stream": [ext] } }] : undefined });
+      const res = await fetch("/api/files/download?" + qs({ path }));
+      if (!res.ok) throw new Error(res.statusText);
+      const w = await fh.createWritable(); await w.write(await res.blob()); await w.close();
+      toast("Guardado ✔"); return;
+    }
+    const a = h("a", { href: "/api/files/download?" + qs({ path }), download: name }); document.body.append(a); a.click(); a.remove();
+  } catch (e) { if (e?.name !== "AbortError") toast("No se pudo guardar: " + (e.message || e), 5000); }
+}
+async function openGenerated(path, reveal = false) {
+  try { await api("/api/files/open", { method: "POST", body: { path, reveal } }); }
+  catch (e) { toast(e.message, 5000); }
+}
+function fileCard(path, icon) {
+  const menu = h("div", { class: "popover file-menu hidden" },
+    h("button", { onclick: () => openGenerated(path) }, h("span", { class: "ico" }, "↗"), "Abrir"),
+    h("button", { onclick: () => saveGenerated(path) }, h("span", { class: "ico" }, "💾"), "Guardar como…"),
+    h("button", { onclick: () => openGenerated(path, true) }, h("span", { class: "ico" }, "📂"), "Mostrar en carpeta"),
+    h("button", { onclick: () => navigator.clipboard?.writeText(path).then(() => toast("Ruta copiada")) }, h("span", { class: "ico" }, "📋"), "Copiar ruta"));
+  const arrow = h("button", { class: "fc-arrow", title: "Más opciones", "aria-label": "Más opciones", onclick: (e) => {
+    e.stopPropagation(); const open = menu.classList.contains("hidden");
+    $$(".popover").forEach((p) => p.classList.add("hidden")); menu.classList.toggle("hidden", !open);
+  } }, "▾");
+  menu.addEventListener("click", () => menu.classList.add("hidden"));
+  return h("div", { class: "file-card", title: path },
+    h("span", { class: "fi" }, icon),
+    h("span", { class: "fn" }, baseName(path), h("small", {}, "Documento generado")),
+    h("div", { class: "split" },
+      h("button", { class: "fc-main", onclick: () => saveGenerated(path) }, "Guardar"), arrow, menu));
+}
 function renderAttachments() {
   const c = $("#attachments"); c.innerHTML = "";
   S.attachments.forEach((a, i) => c.append(h("span", { class: "chip" },

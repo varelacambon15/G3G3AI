@@ -1156,3 +1156,18 @@ def test_ollama_pull_errors(env):
     from g3g3ai.ollama import friendly_pull_error
     assert "no existe en la biblioteca" in friendly_pull_error("x", "pull model manifest: file does not exist")
     assert friendly_pull_error("x", "otro error") == "otro error"
+
+
+def test_open_file_only_local_and_safe(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    # TestClient no viene de 127.0.0.1: debe rechazarse (protege cuando se usa desde el móvil)
+    r = client.post("/api/files/open", headers=h, json={"path": str(home / "hola.txt")})
+    assert r.status_code == 403
+    from fastapi.testclient import TestClient
+    local = TestClient(client.app, client=("127.0.0.1", 5000))
+    (home / "malo.exe").write_bytes(b"MZ")
+    r = local.post("/api/files/open", headers=h, json={"path": str(home / "malo.exe")})
+    assert r.status_code == 400 and "programas" in r.json()["detail"]
+    r = local.post("/api/files/open", headers=h, json={"path": str(tmp / "fuera.txt")})
+    assert r.status_code == 403

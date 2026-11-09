@@ -727,6 +727,39 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             raise HTTPException(404, "No es un archivo")
         return FileResponse(p, filename=p.name, content_disposition_type="inline" if inline else "attachment")
 
+    # Abrir un archivo con su programa, o mostrarlo en el explorador. Sólo desde el propio equipo (no desde el móvil)
+    # y nunca programas ni scripts.
+    UNSAFE_OPEN = {".exe", ".bat", ".cmd", ".com", ".msi", ".scr", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse",
+                   ".wsf", ".wsh", ".hta", ".lnk", ".url", ".reg", ".jar", ".sh", ".desktop", ".appimage", ".pif",
+                   ".cpl", ".dll", ".sys", ".app", ".command", ".run", ".bin", ".py", ".pyw"}
+
+    @app.post("/api/files/open")
+    async def file_open(request: Request, body: dict):
+        if (request.client.host if request.client else "") not in ("127.0.0.1", "::1", "localhost"):
+            raise HTTPException(403, "Sólo se puede abrir desde el propio equipo donde corre G3G3AI. "
+                                     "Desde otro dispositivo usa «Guardar».")
+        p = fa(files.resolve, body.get("path"))
+        if not p.exists():
+            raise HTTPException(404, "El archivo ya no existe")
+        reveal = bool(body.get("reveal"))
+        if not reveal and (p.is_dir() or p.suffix.lower() in UNSAFE_OPEN):
+            raise HTTPException(400, "Por seguridad no se abren programas ni scripts desde aquí; usa «Mostrar en carpeta».")
+        import subprocess
+        try:
+            if sys.platform == "win32":
+                if reveal:
+                    subprocess.Popen(["explorer", f"/select,{p}"])
+                else:
+                    os.startfile(str(p))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", str(p)] if reveal else ["open", str(p)])
+            else:
+                subprocess.Popen(["xdg-open", str(p.parent if reveal else p)], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as e:
+            raise HTTPException(500, f"No se pudo abrir: {e}") from e
+        return {"ok": True}
+
     @app.post("/api/files/upload")
     async def file_upload(dir: str = Form(""), relpath: str = Form(""), file: UploadFile = File(...)):
         # relpath: ruta relativa dentro de `dir` (al subir una carpeta arrastrada)

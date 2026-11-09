@@ -30,6 +30,47 @@ def _port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+class DesktopApi:
+    """Funciones nativas que la interfaz llama desde la ventana (window.pywebview.api)."""
+
+    def __init__(self, cfg):
+        self._cfg = cfg
+        self._window = None
+
+    def attach(self, window) -> None:
+        self._window = window
+
+    def save_file(self, path, suggested=None):
+        """Abre «Guardar como…» y copia el archivo generado al sitio elegido."""
+        import shutil
+
+        import webview
+
+        from .files import FileAccessError, Files
+        try:
+            src = Files(self._cfg).resolve(path)
+        except FileAccessError as e:
+            return {"ok": False, "error": str(e)}
+        if not src.is_file():
+            return {"ok": False, "error": f"No existe {src}"}
+        name = suggested or src.name
+        ext = src.suffix.lstrip(".")
+        kind = webview.FileDialog.SAVE if hasattr(webview, "FileDialog") else webview.SAVE_DIALOG
+        kw = {"file_types": (f"{ext.upper()} (*.{ext})", "Todos los archivos (*.*)")} if ext else {}
+        try:
+            res = self._window.create_file_dialog(kind, save_filename=name, **kw)
+        except TypeError:
+            res = self._window.create_file_dialog(kind, save_filename=name)
+        if not res:
+            return {"ok": False, "cancelled": True}
+        dest = res if isinstance(res, str) else res[0]
+        try:
+            shutil.copyfile(src, dest)
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "path": str(dest)}
+
+
 def main() -> None:
     from .config import DATA_DIR, Config
 
@@ -78,7 +119,10 @@ def main() -> None:
             import webview  # pywebview
 
             # text_select=True: pywebview desactiva por defecto la selección de texto (no se podría copiar)
-            webview.create_window("G3G3AI", url, width=1280, height=840, min_size=(380, 500), text_select=True)
+            api = DesktopApi(cfg)
+            win = webview.create_window("G3G3AI", url, width=1280, height=840, min_size=(380, 500), text_select=True,
+                                        js_api=api)
+            api.attach(win)
             webview.start()
             opened = True
         except Exception as e:  # noqa: BLE001
