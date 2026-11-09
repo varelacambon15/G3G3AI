@@ -1234,3 +1234,26 @@ def test_long_conversation_fits_small_local_context(env):
     history = asyncio.run(run())
     assert len(calls) >= 2                       # se resumió por tandas, no de una vez
     assert estimate_tokens(history) + 1024 < CTX  # y lo que se envía al chat cabe
+
+
+def test_xlsx_rejects_broken_json_and_shifted_rows(env):
+    client, cfg, home, tmp = env
+    from g3g3ai import office
+    p = home / "t.xlsx"
+    # JSON mal formado (comillas sin cerrar): antes salía una hoja basura con una fila de celdas
+    bad = '{"sheets": [{"name": "S", "rows": [["ID", "NOMBRE"], ["1", "ANA]]}]}'
+    with pytest.raises(office.OfficeError, match="JSON no es válido"):
+        office.create(p, bad)
+    assert not p.exists()
+    # fila con más columnas que el encabezado
+    shifted = '{"sheets": [{"name": "S", "rows": [["ID", "NOMBRE"], ["1", "ANA"], ["2", "LUIS", "SI", "X"]]}]}'
+    with pytest.raises(office.OfficeError, match="más columnas"):
+        office.create(p, shifted)
+    assert not p.exists()
+    # válido, y el CSV simple sigue funcionando
+    office.create(p, '{"sheets": [{"name": "S", "rows": [["ID", "NOMBRE"], ["1", "ANA"]]}]}')
+    assert p.exists()
+    p2 = home / "c.xlsx"
+    office.create(p2, "ID;NOMBRE\n1;ANA")
+    from openpyxl import load_workbook
+    assert [c.value for c in load_workbook(p2).active[2]] == [1, "ANA"]

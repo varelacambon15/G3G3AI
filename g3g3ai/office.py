@@ -165,7 +165,11 @@ def create_xlsx(path: Path, spec) -> None:
     if isinstance(spec, str):
         try:
             spec = json.loads(spec)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            if spec.lstrip().startswith(("{", "[")):
+                # Era JSON mal formado (típico de modelos pequeños): antes se leía como CSV y salía una fila basura
+                raise OfficeError(f"El JSON no es válido ({e.msg}, línea {e.lineno}, columna {e.colno}). Corrígelo y "
+                                  "vuelve a llamar a create_document; no se ha creado el archivo.") from e
             # También vale CSV / tabla de texto: una hoja con separador ; , o tabulador
             sep = "\t" if "\t" in spec else (";" if ";" in spec else ",")
             spec = {"sheets": [{"name": "Hoja1", "rows": [line.split(sep) for line in spec.strip().splitlines()]}]}
@@ -181,6 +185,13 @@ def create_xlsx(path: Path, spec) -> None:
     for sh in sheets:
         ws = wb.create_sheet(str(sh.get("name") or f"Hoja{len(wb.sheetnames) + 1}")[:31])
         rows = sh.get("rows") or []
+        if sh.get("header", True) and len(rows) > 1:
+            n = len(rows[0])
+            bad = [i + 1 for i, r in enumerate(rows) if len(r) > n]
+            if bad:
+                raise OfficeError(f"Las filas {bad[:10]} de «{sh.get('name', 'Hoja')}» tienen más columnas que el encabezado "
+                                  f"({n}): los valores quedarían desplazados. Revisa que cada valor vaya en su columna "
+                                  "(usa \"\" para las celdas vacías) y vuelve a generarlo; no se ha creado el archivo.")
         for row in rows:
             ws.append([_cell_value(v) for v in row])
         header = sh.get("header", True)
