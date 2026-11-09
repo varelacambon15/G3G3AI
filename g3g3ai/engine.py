@@ -19,8 +19,10 @@ import httpx
 from .config import DATA_DIR
 from .llama import EXE
 
-RELEASES = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
-SD_RELEASES = "https://api.github.com/repos/leejet/stable-diffusion.cpp/releases/latest"
+# Se listan las últimas versiones (no /releases/latest): llama.cpp publica cada versión como «prerelease» y
+# /latest las ignora, devolviendo una versión antigua sin los binarios actuales.
+RELEASES = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=15"
+SD_RELEASES = "https://api.github.com/repos/leejet/stable-diffusion.cpp/releases?per_page=15"
 
 
 def sd_rules() -> list[tuple[str, re.Pattern, str]]:
@@ -73,24 +75,37 @@ class EngineInstaller:
         self.state = {"status": "idle", "done": 0, "total": 0, "error": None, "name": None}
         self._task: asyncio.Task | None = None
 
+    def pick_release(self, releases: list[dict]) -> tuple[dict | None, list[dict]]:
+        """Primera versión (más reciente primero) con binarios para esta plataforma. Devuelve (release, assets)."""
+        first = None
+        for rel in releases:
+            if rel.get("draft"):
+                continue
+            first = first or rel
+            out = []
+            for variant, pat, desc in self.rules():
+                for a in rel.get("assets", []):
+                    if pat.search(a["name"]):
+                        out.append({"variant": variant, "name": a["name"], "url": a["browser_download_url"],
+                                    "size": a.get("size", 0), "description": desc})
+                        break
+            if out:
+                return rel, out
+        return first, []
+
     async def assets(self) -> dict:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True,
                                      headers={"Accept": "application/vnd.github+json"}) as c:
             r = await c.get(self.releases)
             r.raise_for_status()
-        rel = r.json()
-        out = []
-        for variant, pat, desc in self.rules():
-            for a in rel.get("assets", []):
-                if pat.search(a["name"]):
-                    out.append({"variant": variant, "name": a["name"], "url": a["browser_download_url"],
-                                "size": a.get("size", 0), "description": desc})
-                    break
+        data = r.json()
+        rel, out = self.pick_release(data if isinstance(data, list) else [data])
         note = None
         if not out:
             note = ("No hay binarios precompilados para esta plataforma "
-                    f"({sys.platform} {platform.machine()}). En Linux/ARM usa ./install.sh para compilarlo.")
-        return {"release": rel.get("tag_name"), "assets": out, "note": note}
+                    f"({sys.platform} {platform.machine()}) en las últimas versiones. "
+                    "En Linux/ARM usa ./install.sh para compilarlo.")
+        return {"release": (rel or {}).get("tag_name"), "assets": out, "note": note}
 
     def start(self, url: str, name: str) -> dict:
         if self._task and not self._task.done():

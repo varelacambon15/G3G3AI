@@ -1171,3 +1171,24 @@ def test_open_file_only_local_and_safe(env):
     assert r.status_code == 400 and "programas" in r.json()["detail"]
     r = local.post("/api/files/open", headers=h, json={"path": str(tmp / "fuera.txt")})
     assert r.status_code == 403
+
+
+def test_engine_picks_recent_prerelease_with_binaries(env, monkeypatch):
+    client, cfg, home, tmp = env
+    import re as _re
+    from g3g3ai import engine
+    inst = engine.EngineInstaller(cfg)
+    inst.rules = lambda: [("vulkan", _re.compile(r"bin-win-vulkan-x64\.(zip|tar\.gz)$"), ""),
+                          ("cpu", _re.compile(r"bin-win-cpu-x64\.(zip|tar\.gz)$"), "")]  # reglas de Windows x64
+    asset = lambda n: {"name": n, "browser_download_url": "https://x/" + n, "size": 1}
+    releases = [
+        {"tag_name": "b3", "draft": True, "assets": [asset("llama-b3-bin-win-cpu-x64.zip")]},      # borrador: se ignora
+        {"tag_name": "b2", "prerelease": True, "assets": [asset("llama-b2-bin-win-cpu-x64.zip"),
+                                                          asset("llama-b2-bin-win-vulkan-x64.zip"),
+                                                          asset("llama-b2-bin-win-cuda-12.4-x64.zip")]},
+        {"tag_name": "b0", "assets": [asset("llama-b0-bin-win-avx2-x64.zip")]},                   # antigua sin binarios válidos
+    ]
+    rel, out = inst.pick_release(releases)
+    assert rel["tag_name"] == "b2" and [a["variant"] for a in out] == ["vulkan", "cpu"]
+    rel, out = inst.pick_release([releases[2]])
+    assert out == []
