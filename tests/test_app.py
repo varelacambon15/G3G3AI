@@ -1192,3 +1192,45 @@ def test_engine_picks_recent_prerelease_with_binaries(env, monkeypatch):
     assert rel["tag_name"] == "b2" and [a["variant"] for a in out] == ["vulkan", "cpu"]
     rel, out = inst.pick_release([releases[2]])
     assert out == []
+
+
+def test_long_conversation_fits_small_local_context(env):
+    """Regresión: con un modelo local de 8K, resumir la conversación antigua no debe enviarla entera (HTTP 400)."""
+    import asyncio
+    from types import SimpleNamespace
+    client, cfg, home, tmp = env
+    from g3g3ai.context import HistoryBuilder, estimate_tokens
+
+    CTX = 8192
+    calls = []
+
+    async def fake_complete(p, model, messages, max_tokens):
+        n = estimate_tokens(messages) + max_tokens
+        calls.append(n)
+        assert n < CTX, f"petición de {n} tokens excede el contexto de {CTX}"
+        return "resumen breve"
+
+    class DB:
+        def set_summary(self, *a): pass
+        def update_message_meta(self, *a): pass
+
+    llama = SimpleNamespace(params={"ctx": CTX}, vision=False, ready=True, status=lambda: {"model": "m"})
+    cfg.data["llama_ctx"] = CTX
+    hb = HistoryBuilder(DB(), cfg, llama, lambda pid: {}, lambda pid: True, fake_complete)
+    big = "dato " * 4000  # ~5.700 tokens (como un xlsx adjunto)
+    msgs = [{"id": 1, "role": "user", "content": "conclusiones", "meta": {"expanded": big}},
+            {"id": 2, "role": "assistant", "content": "x " * 3000}]
+    for i in range(3, 12):
+        msgs.append({"id": i, "role": "user" if i % 2 else "assistant", "content": "texto " * 600})
+    conv = {"id": "c1", "messages": msgs, "summary": None, "summary_upto": 0}
+
+    async def run():
+        out = None
+        async for ev in hb.build(conv, "local", "local", "", 1024):
+            if ev["type"] == "_history":
+                out = ev["messages"]
+        return out
+
+    history = asyncio.run(run())
+    assert len(calls) >= 2                       # se resumió por tandas, no de una vez
+    assert estimate_tokens(history) + 1024 < CTX  # y lo que se envía al chat cabe

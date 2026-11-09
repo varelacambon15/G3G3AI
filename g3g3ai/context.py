@@ -37,6 +37,31 @@ def estimate_tokens(messages: list[dict]) -> int:
     return int(total)
 
 
+def clip_middle(text: str, max_tokens: int) -> str:
+    """Recorta un texto largo conservando el principio y el final."""
+    limit = int(max_tokens * CHARS_PER_TOKEN)
+    if len(text) <= limit:
+        return text
+    half = max(limit // 2, 50)
+    return text[:half] + "\n[... recortado ...]\n" + text[-half:]
+
+
+def shrink_to_fit(sys_msg: list[dict], history: list[dict], budget: int) -> list[dict]:
+    """Si el historial supera el presupuesto, recorta el mensaje de texto más largo hasta que quepa."""
+    history = [dict(m) for m in history]
+    for _ in range(40):
+        if estimate_tokens(sys_msg + history) <= budget:
+            break
+        texts = [(len(m["content"]), i) for i, m in enumerate(history) if isinstance(m.get("content"), str)]
+        if not texts:
+            break
+        n, i = max(texts)
+        if n < 800:  # nada razonable que recortar
+            break
+        history[i]["content"] = clip_middle(history[i]["content"], int(n / CHARS_PER_TOKEN * 0.6))
+    return history
+
+
 def image_part(media: str, b64: str) -> dict:
     return {"type": "image_url", "image_url": {"url": f"data:{media};base64,{b64}"}}
 
@@ -155,16 +180,13 @@ class HistoryBuilder:
             while len(kept) > 2 and estimate_tokens(sys_msg + kept) > budget * 0.6:
                 kept = kept[2:]
             old = history[:len(history) - len(kept)]
-            transcript = "\n\n".join(
+            p = self.provider_for(pid)
+            pieces = [
                 f"{'USUARIO' if h['role'] == 'user' else 'ASISTENTE'}: "
                 + (h["content"] if isinstance(h["content"], str)
-                   else " ".join(p.get("text", "[imagen]") for p in h["content"]))
-                for h in old)
-            if conv.get("summary"):
-                transcript = f"RESUMEN PREVIO:\n{conv['summary']}\n\n{transcript}"
-            p = self.provider_for(pid)
-            summary = await self.complete(p, model, [{"role": "system", "content": SUMMARY_PROMPT},
-                                                     {"role": "user", "content": transcript[-400_000:]}], 1500)
+                   else " ".join(part.get("text", "[imagen]") for part in h["content"]))
+                for h in old]
+            summary = await self.summarize(p, model, pid, pieces, conv.get("summary"), max_tokens)
             # Último id de mensaje cubierto por el resumen
             visible = [m for m in msgs if m["id"] > upto and m["role"] in ("user", "assistant")]
             new_upto = visible[len(old) - 1]["id"]
@@ -174,7 +196,37 @@ class HistoryBuilder:
                            {"role": "assistant", "content": "Entendido, continúo a partir de ese resumen."}]
             history = kept
             yield {"type": "compacted", "messages": len(old)}
-        yield {"type": "_history", "messages": summary_msg + history}
+        # Último recurso: si aun así no cabe (p.ej. un adjunto enorme en un modelo local de 8K), se recortan los mensajes más largos
+        final = shrink_to_fit(sys_msg, summary_msg + history, budget)
+        yield {"type": "_history", "messages": final}
+
+    def window(self, pid: str) -> int:
+        """Tamaño real de contexto del modelo (tokens)."""
+        if pid == "local":
+            return int((self.llama.params or {}).get("ctx") or self.cfg["llama_ctx"])
+        return int(self.cfg["context_budget"] or 60000)
+
+    async def summarize(self, p, model: str, pid: str, pieces: list[str], previous: str | None,
+                        max_tokens: int) -> str:
+        """Resume mensajes antiguos por tandas que quepan en el contexto del modelo (resumen acumulativo).
+        Antes se enviaba todo de una vez y un modelo local de 8K rechazaba la petición (HTTP 400)."""
+        out_tokens = 1500 if self.window(pid) > 16000 else 700
+        chunk_tokens = max(500, int(self.window(pid) * 0.75) - out_tokens - 600)
+        chunks, cur, size = [], [], 0
+        for text in pieces:
+            text = clip_middle(text, chunk_tokens)
+            t = int(len(text) / CHARS_PER_TOKEN)
+            if cur and size + t > chunk_tokens:
+                chunks.append("\n\n".join(cur)); cur, size = [], 0
+            cur.append(text); size += t
+        if cur:
+            chunks.append("\n\n".join(cur))
+        summary = previous or ""
+        for chunk in chunks:
+            body = (f"RESUMEN PREVIO:\n{clip_middle(summary, 900)}\n\nMENSAJES NUEVOS:\n{chunk}" if summary else chunk)
+            summary = await self.complete(p, model, [{"role": "system", "content": SUMMARY_PROMPT},
+                                                     {"role": "user", "content": body}], out_tokens)
+        return summary
 
     def budget(self, pid: str, max_tokens: int) -> int:
         if pid == "local":
