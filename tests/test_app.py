@@ -1353,3 +1353,88 @@ def test_temperature_is_lowered_only_when_precision_is_needed(env):
     assert ask(use_tools=True) == "T=0.2"                              # modo Agente
     assert ask(attachments=[str(home / "hola.txt")]) == "T=0.2"        # con adjuntos
     assert ask("dime la temperatura del excel", temperature=0.9) == "T=0.9"   # la petición explícita se respeta
+
+
+def test_tool_args_are_parsed_tolerantly():
+    from g3g3ai.tools import parse_args_ex
+    assert parse_args_ex('{"a": 1}') == ({"a": 1}, None)
+    assert parse_args_ex('```json\n{"a": 1}\n```') == ({"a": 1}, None)            # bloque de código
+    assert parse_args_ex('{"a": [1, 2,], }') == ({"a": [1, 2]}, None)             # comas finales
+    assert parse_args_ex("{'a': 'x', 'b': True}") == ({"a": "x", "b": True}, None)  # estilo Python
+    assert parse_args_ex('"{\\"a\\": 1}"') == ({"a": 1}, None)                    # doble codificación
+    assert parse_args_ex("") == ({}, None)
+    args, err = parse_args_ex('{"path": "x", "content": "sin cerrar')
+    assert args is None and err
+
+
+def test_broken_args_and_repeated_calls_are_handled(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext, tool_events
+    cfg.data["write_roots"] = [str(home)]; cfg.data["ai_write"] = "auto"
+    ctx = ToolContext(Files(cfg), cfg, agent=True)
+
+    async def call(name, raw):
+        sink = []
+        async for _ in tool_events(ctx, name, raw, sink):
+            pass
+        return sink[0]
+
+    # JSON roto: mensaje claro en vez de «argumento no válido ('path')»
+    r = asyncio.run(call("create_document", '{"path": "a.docx", "content": "sin cerrar'))
+    assert "no son un JSON válido" in r and "No se ha hecho nada" in r and not (home / "a.docx").exists()
+    # crear dos veces el mismo documento: la segunda no se ejecuta
+    raw = json.dumps({"path": "b.docx", "content": "# Hola"})
+    assert "Documento creado" in asyncio.run(call("create_document", raw))
+    assert "ya está hecho" in asyncio.run(call("create_document", raw))
+    # lecturas repetidas: se permiten 2 y a la tercera se avisa
+    rd = json.dumps({"path": str(home / "hola.txt")})
+    assert "contenido secreto" in asyncio.run(call("read_file", rd))
+    assert "contenido secreto" in asyncio.run(call("read_file", rd))
+    assert "No lo repitas" in asyncio.run(call("read_file", rd))
+
+
+def test_big_spreadsheet_attachment_becomes_schema_plus_tools(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    from openpyxl import Workbook
+    wb = Workbook(); ws = wb.active
+    ws.append(["OPERARIOS", "CATEGORÍA", "NOTAS"])
+    for i in range(3000):
+        ws.append([f"OPERARIO NUMERO {i}", "OFICIAL 1ª", "texto de relleno " * 5])
+    wb.save(home / "grande.xlsx")
+    wb = Workbook(); wb.active.append(["A", "B"]); wb.active.append([1, 2]); wb.save(home / "pequeno.xlsx")
+    load_model(client, h)
+    r = client.post("/api/chat", headers=h, json={"message": "mira", "attachments": [str(home / "grande.xlsx")]})
+    cid = sse(r)[0]["conversation_id"]
+    msgs = client.get(f"/api/conversations/{cid}", headers=h).json()["messages"]
+    um = next(m for m in msgs if m["role"] == "user")
+    expanded = um["meta"]["expanded"]
+    assert "demasiado para pegarla entera" in expanded and "table_query" in expanded
+    assert "OPERARIO NUMERO 2999" not in expanded and len(expanded) < 5000      # no se pegó entera
+    assert um["meta"]["attachments"][0]["table"] is True
+    # la hoja pequeña se pega entera y también marca «table» para poder cruzarla luego
+    r = client.post("/api/chat", headers=h, json={"message": "mira", "attachments": [str(home / "pequeno.xlsx")]})
+    cid2 = sse(r)[0]["conversation_id"]
+    um2 = next(m for m in client.get(f"/api/conversations/{cid2}", headers=h).json()["messages"] if m["role"] == "user")
+    assert "Documento adjunto" in um2["meta"]["expanded"] and "demasiado" not in um2["meta"]["expanded"]
+    # y con una hoja adjunta se ofrecen las herramientas de tablas aun sin modo Agente
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    assert {"table_info", "table_query"} <= set(ToolContext(Files(cfg), cfg, agent=False, tables=True).names())
+    assert "table_query" not in ToolContext(Files(cfg), cfg, agent=False).names()
+
+
+def test_create_document_reads_back_what_it_made(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    cfg.data["write_roots"] = [str(home)]; cfg.data["ai_write"] = "auto"
+    ctx = ToolContext(Files(cfg), cfg, agent=False)
+    run = lambda path, content: asyncio.run(ctx.run("create_document", {"path": path, "content": content}))
+    r = run("r.docx", "# Informe\n\n## Retenciones\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n## Pagos\n\ntexto de prueba")
+    assert "3 títulos" in r and "1 tablas" in r and "Retenciones" in r and "SOLO lo que figura" in r
+    r = run("t.xlsx", '{"sheets": [{"name": "S", "rows": [["A", "B"], [1, 2], [3, 4]]}]}')
+    assert "hoja «S» 3 filas × 2 columnas" in r

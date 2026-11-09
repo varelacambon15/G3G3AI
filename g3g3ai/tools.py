@@ -214,8 +214,10 @@ def numbers_in(text: str) -> set[str]:
 class ToolContext:
     def __init__(self, files: Files, cfg, local_chat: Callable[[str], Awaitable[str]] | None = None, *,
                  agent: bool = True, web: bool = False, session_allow: set | None = None,
-                 memory=None, source: str | None = None, image_gen=None):
+                 memory=None, source: str | None = None, image_gen=None, tables: bool = False):
         self.files = files
+        self.tables = tables  # hay una hoja de cálculo adjunta: se ofrecen las herramientas de tablas aun sin modo Agente
+        self.calls: dict[str, int] = {}
         self.cfg = cfg
         self.local_chat = local_chat
         self.agent = agent
@@ -280,9 +282,13 @@ class ToolContext:
                 out += ["steam_games", "game_diagnostics"]
             if self.local_chat:
                 out.append("ask_local_model")
-        elif self.mode("create_document") != "off" and self.files.write_roots:
-            # Crear documentos (docx/xlsx/pptx/pdf) no requiere activar el modo Agente (pide permiso igualmente).
-            out.append("create_document")
+        else:
+            can_write = self.mode("create_document") != "off" and bool(self.files.write_roots)
+            if can_write:
+                # Crear documentos (docx/xlsx/pptx/pdf) no requiere activar el modo Agente (pide permiso igualmente).
+                out.append("create_document")
+            if self.tables:
+                out += ["table_info", "table_query"] + (["table_export"] if can_write else [])
         if self.web:
             out += ["web_search", "fetch_url"]
         if self.memory is not None:
@@ -329,11 +335,6 @@ class ToolContext:
                     parts.append("Para crear un programa ejecutable escribe el script de Python y compílalo con build_exe "
                                  + ("(genera un .exe de Windows)." if sys.platform == "win32" else
                                     "(en este equipo genera un binario de Linux; los .exe de Windows se crean en un PC con Windows)."))
-            if "table_query" in names:
-                parts.append("Para Excel o CSV grandes NO uses read_file: llama a table_info para ver las columnas y a "
-                             "table_query para filtrar, contar o cruzar dos archivos (por ejemplo «los que NO están en el "
-                             "otro archivo»); con table_export guardas el resultado completo en un .xlsx sin escribir las "
-                             "filas a mano. Si tras table_info no sabes qué columna usar para cruzar, pregunta al usuario.")
             if "ask_local_model" in names:
                 parts.append("Para subtareas sencillas y voluminosas (resumir archivos largos, traducir, extraer) "
                              "puedes usar ask_local_model y ahorrar coste.")
@@ -344,6 +345,11 @@ class ToolContext:
             hint = steam_hint()
             if hint:
                 parts.append(hint)
+        if "table_query" in names:
+            parts.append("Para Excel o CSV grandes NO uses read_file: llama a table_info para ver las columnas y a "
+                         "table_query para filtrar, contar o cruzar dos archivos (por ejemplo «los que NO están en el "
+                         "otro archivo»); con table_export guardas el resultado completo en un .xlsx sin escribir las "
+                         "filas a mano. Si tras table_info no sabes qué columna usar para cruzar, pregunta al usuario.")
         if "create_document" in names or "table_export" in names:
             parts.append("CIFRAS: al resumir o crear documentos copia los importes, códigos y fechas literalmente del original; "
                          "no los recalcules, redondees ni reescribas de memoria. Si un dato no está en el original, no lo "
@@ -511,6 +517,9 @@ class ToolContext:
                 return f"Error al crear el documento: {e}"
             self.files_out.append(str(p))
             msg = f"Documento creado: {p} ({p.stat().st_size} bytes). El usuario ya puede descargarlo."
+            readback = office.describe(p)
+            if readback:
+                msg += "\n" + readback + " Describe al usuario SOLO lo que figura aquí."
             bad = self.unverified_numbers(a.get("content", "") if isinstance(a.get("content"), str)
                                           else json.dumps(a.get("content", ""), ensure_ascii=False))
             if bad:
@@ -688,24 +697,64 @@ class ToolContext:
         return f"Código de salida{tag}: {r.returncode}\n{out}"
 
 
-def parse_args(raw) -> dict:
+def parse_args_ex(raw) -> tuple[dict | None, str | None]:
+    """Argumentos de una llamada a herramienta. Tolera lo que suelen producir los modelos pequeños: bloque ```json,
+    coma final, comillas simples o JSON codificado dos veces. Devuelve (args, None) o (None, motivo)."""
     if isinstance(raw, dict):
-        return raw
-    try:
-        v = json.loads(raw or "{}")
-        return v if isinstance(v, dict) else {}
-    except json.JSONDecodeError:
-        return {}
+        return raw, None
+    text = (raw or "").strip() if isinstance(raw, str) else ""
+    if not text:
+        return {}, None
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text).strip()
+    candidates = [text, re.sub(r",\s*([}\]])", r"\1", text)]
+    last = "JSON no válido"
+    for c in candidates:
+        try:
+            v = json.loads(c)
+            if isinstance(v, str):          # doble codificación: "{\"a\": 1}"
+                v = json.loads(v)
+            if isinstance(v, dict):
+                return v, None
+            last = "los argumentos deben ser un objeto JSON {…}"
+        except json.JSONDecodeError as e:
+            last = f"{e.msg} (línea {e.lineno}, columna {e.colno})"
+    try:                                     # estilo Python: comillas simples, True/None
+        import ast
+        v = ast.literal_eval(text)
+        if isinstance(v, dict):
+            return v, None
+    except (ValueError, SyntaxError):
+        pass
+    return None, last
+
+
+def parse_args(raw) -> dict:
+    return parse_args_ex(raw)[0] or {}
+
+
+# Herramientas que crean o modifican algo: repetirlas con los mismos argumentos es casi siempre un error del modelo.
+NON_REPEATABLE = {"create_document", "table_export", "write_file", "git_commit", "generate_image", "memory_save"}
+MAX_REPEATS = 3
 
 
 async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) -> AsyncIterator[dict]:
     """Ejecuta una herramienta emitiendo eventos para la interfaz; deja el resultado en `sink`."""
-    args = parse_args(raw_args)
+    args, arg_err = parse_args_ex(raw_args)
+    args = args if args is not None else {}
     yield {"type": "tool_call", "name": name,
            "args": raw_args if isinstance(raw_args, str) else json.dumps(raw_args, ensure_ascii=False)}
     result = None
+    key = name + json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
+    ctx.calls[key] = ctx.calls.get(key, 0) + 1
     if name not in ctx.names():
         result = f"Error: la herramienta {name} no está disponible o está desactivada."
+    elif arg_err:
+        result = (f"Error: los argumentos de {name} no son un JSON válido ({arg_err}). Vuelve a llamar a la herramienta "
+                  "con un objeto JSON correcto (comillas dobles, sin comas finales). No se ha hecho nada.")
+    elif ctx.calls[key] >= (2 if name in NON_REPEATABLE else MAX_REPEATS):
+        result = (f"Ya llamaste a {name} con exactamente los mismos argumentos {ctx.calls[key] - 1} vez/veces"
+                  + (": ya está hecho, no lo repitas." if name in NON_REPEATABLE else " y obtuviste el mismo resultado. "
+                     "No lo repitas: usa lo que ya sabes, cambia de enfoque o responde al usuario."))
     else:
         error, strong, soft = ctx.precheck(name, args)
         if error:

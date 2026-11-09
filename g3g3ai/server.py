@@ -30,7 +30,7 @@ from . import router, sandbox
 from .engine import EngineInstaller
 from . import documents as D
 from . import devtools, hardware, images, ollama
-from .context import HistoryBuilder
+from .context import CHARS_PER_TOKEN, HistoryBuilder, clip_middle
 from .sync import INTERVAL as SYNC_INTERVAL, Sync, SyncError, new_key as new_sync_key
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
 from .tools import ToolContext, resolve_approval
@@ -253,9 +253,18 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         return db.get_conversation(cid)
 
     # --- Chat ---------------------------------------------------------------------
-    def expand_attachments(paths: list[str]) -> tuple[str, list[dict]]:
+    def attach_budget(chosen_pid: str) -> int:
+        """Caracteres máximos de texto por adjunto: con un modelo local, una fracción de su contexto (un Excel grande
+        pegado entero no cabe en 8K/16K y acababa recortado a ciegas)."""
+        if chosen_pid == LOCAL_PROVIDER:
+            ctx = int((llama.params or {}).get("ctx") or cfg["llama_ctx"])
+            return max(4000, min(D.TEXT_LIMIT, int(ctx * 0.35 * CHARS_PER_TOKEN)))
+        return D.TEXT_LIMIT
+
+    def expand_attachments(paths: list[str], max_chars: int = D.TEXT_LIMIT) -> tuple[str, list[dict]]:
         """Texto de los adjuntos + metadatos. Imágenes y PDF escaneados se envían aparte (context.py)."""
         parts, meta = [], []
+        max_chars = max(2000, max_chars // max(1, len(paths)))
         for p in paths:
             try:
                 path = files.resolve(p)
@@ -279,8 +288,27 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                     if not text.strip() and path.suffix.lower() == ".pdf":
                         meta.append({"name": path.name, "path": str(path), "kind": "pdf_scan"})
                         continue
-                    parts.append(f"Documento adjunto `{path}`:\n```\n{text}\n```")
-                    meta.append({"name": path.name, "path": str(path), "kind": "document"})
+                    is_sheet = path.suffix.lower() in (".xlsx", ".xlsm", ".xls")
+                    if len(text) > max_chars and is_sheet:
+                        from . import tables as T
+                        try:
+                            desc = T.describe(path)
+                        except (T.TableError, OSError, ValueError):
+                            desc = None
+                        if desc:
+                            parts.append(
+                                f"Hoja de cálculo adjunta `{path}`: tiene {len(text):,} caracteres de contenido, demasiado para "
+                                f"pegarla entera. Estructura:\n```\n{desc}\n```\nPara leer datos usa las herramientas table_info "
+                                "y table_query con esa ruta (filtrar, contar, cruzar con otro archivo). No inventes filas.")
+                            meta.append({"name": path.name, "path": str(path), "kind": "document", "table": True})
+                            continue
+                    note = ""
+                    if len(text) > max_chars:
+                        note = (f" (recortado: tiene {len(text):,} caracteres; se muestran el principio y el final, "
+                                "falta la parte central)")
+                        text = clip_middle(text, int(max_chars / CHARS_PER_TOKEN))
+                    parts.append(f"Documento adjunto `{path}`{note}:\n```\n{text}\n```")
+                    meta.append({"name": path.name, "path": str(path), "kind": "document", **({"table": True} if is_sheet else {})})
                     continue
                 f = files.read_text(str(path), 60_000)
             except (FileAccessError, D.DocumentError) as e:
@@ -322,7 +350,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         model = body.get("model") or "local"
         text = (body.get("message") or "").strip()
         attachments = body.get("attachments") or []
-        attach_text, attach_meta = expand_attachments(attachments)
+        attach_text, attach_meta = expand_attachments(attachments, attach_budget(pid))
         if not text and not attach_text and not body.get("continue"):
             raise HTTPException(400, "Mensaje vacío")
         agent = bool(body.get("use_tools"))
@@ -378,15 +406,17 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         async def image_gen(prompt: str, size=None):
             return await images.generate(cfg, provider_for, prompt, size)
 
+        has_tables = any(a.get("table") for m in conv["messages"]
+                         for a in ((m.get("meta") or {}).get("attachments") or []))
+
         def make_ctx(chosen_pid: str):
             mem = memory if (memory_for(chosen_pid) and cfg["memory_auto"]) else None
             img = image_gen if cfg["image_provider"] else None
-            if not (agent or use_web or mem or img):
-                return None
             delegate = local_complete if (agent and chosen_pid != LOCAL_PROVIDER and llama.ready) else None
-            return ToolContext(files, cfg, delegate, agent=agent, web=use_web,
+            tctx = ToolContext(files, cfg, delegate, agent=agent, web=use_web,
                                session_allow=session_allow.setdefault(cid, set()), memory=mem, source=cid,
-                               image_gen=img)
+                               image_gen=img, tables=has_tables)
+            return tctx if tctx.names() else None
 
         async def gen():
             content, reasoning, trace, stats, route = "", "", [], {}, None

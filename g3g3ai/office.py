@@ -314,6 +314,36 @@ def create_pdf(path: Path, markdown: str) -> None:
     pdf.output(str(path))
 
 
+def describe(path: Path) -> str:
+    """Resumen de lo que contiene un archivo recién creado (se lee de vuelta), para que el modelo lo verifique."""
+    ext = path.suffix.lower()
+    try:
+        if ext == ".docx":
+            from docx import Document
+            d = Document(str(path))
+            heads = [p.text.strip() for p in d.paragraphs if p.style.name.lower().startswith(("heading", "title", "título")) and p.text.strip()]
+            words = sum(len(p.text.split()) for p in d.paragraphs)
+            return (f"Contenido verificado: {len(heads)} títulos ({'; '.join(h[:40] for h in heads[:8])}), "
+                    f"{len(d.tables)} tablas, ~{words} palabras.")
+        if ext == ".xlsx":
+            from openpyxl import load_workbook
+            wb = load_workbook(path, read_only=True)
+            try:
+                return "Contenido verificado: " + "; ".join(
+                    f"hoja «{ws.title}» {ws.max_row} filas × {ws.max_column} columnas" for ws in wb.worksheets)
+            finally:
+                wb.close()
+        if ext == ".pptx":
+            from pptx import Presentation
+            return f"Contenido verificado: {len(Presentation(str(path)).slides)} diapositivas."
+        if ext == ".pdf":
+            from pypdf import PdfReader
+            return f"Contenido verificado: {len(PdfReader(str(path)).pages)} páginas."
+    except Exception as e:  # noqa: BLE001 — el archivo existe pero no se pudo releer
+        return f"⚠ El archivo se creó pero no se pudo releer para verificarlo ({e})."
+    return ""
+
+
 def create(path: Path, content) -> Path:
     ext = path.suffix.lower()
     if ext not in FORMATS:
