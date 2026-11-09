@@ -685,10 +685,48 @@ $("#image-btn").addEventListener("click", () => {
   if (!input.value.startsWith("/imagen ")) input.value = "/imagen " + input.value;
   input.focus(); toast("Describe la imagen y pulsa Enviar (o pídeselo a la IA en el chat)", 3000);
 });
+// Arrastrar y soltar archivos en cualquier punto de la ventana:
+//  - vista Chat (o selector de adjuntos): se suben y se adjuntan al mensaje
+//  - vista Archivos: se suben a la carpeta que se está viendo
 const composer = $(".composer");
-composer.addEventListener("dragover", (e) => { e.preventDefault(); composer.classList.add("drop"); });
-composer.addEventListener("dragleave", () => composer.classList.remove("drop"));
-composer.addEventListener("drop", (e) => { e.preventDefault(); composer.classList.remove("drop"); attachLocalFiles(e.dataTransfer.files); });
+const dropOverlay = h("div", { id: "drop-overlay", class: "hidden" }, h("div", {}, "📎 Suelta aquí los archivos"));
+document.body.append(dropOverlay);
+const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+let dragDepth = 0;
+function endDrag() { dragDepth = 0; dropOverlay.classList.add("hidden"); composer.classList.remove("drop"); }
+function dropHint() {
+  const files = S.view === "files";
+  dropOverlay.firstChild.textContent = files ? "⬆ Suelta para subir a esta carpeta" : "📎 Suelta aquí para adjuntar al chat";
+  return files || S.view === "chat";
+}
+window.addEventListener("dragenter", (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); dragDepth++;
+  if (dropHint()) { dropOverlay.classList.remove("hidden"); composer.classList.add("drop"); }
+});
+window.addEventListener("dragover", (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = "copy";
+});
+window.addEventListener("dragleave", (e) => {
+  if (!hasFiles(e)) return;
+  if (--dragDepth <= 0) endDrag();
+});
+window.addEventListener("drop", async (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); endDrag();
+  const files = [...e.dataTransfer.files].filter((f) => f.type || f.size || /\.[^.]+$/.test(f.name)); // descarta carpetas sin extensión ni tamaño
+  if (!files.length) { toast("Arrastra archivos, no carpetas"); return; }
+  if (S.view === "files") {
+    toast("Subiendo…", 1500);
+    const res = await uploadFiles(files, S.filesPath);
+    if (res.length) toast(`${res.length} archivo(s) subido(s)`);
+    loadFiles(S.filesPath);
+  } else if (S.view === "chat") {
+    if ($("#picker").open) $("#picker").close();
+    await attachLocalFiles(files);
+  } else toast("Ve a Chat o Archivos para soltar documentos");
+});
 input.addEventListener("paste", (e) => {
   const imgs = [...(e.clipboardData?.files || [])];
   if (imgs.length) { e.preventDefault(); attachLocalFiles(imgs); }
