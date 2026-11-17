@@ -315,5 +315,5 @@ android/        instalación experimental en Termux
 packaging/      especificación de PyInstaller e icono
 ```
 
-Pruebas: `pip install -r requirements.txt pytest && python -m pytest tests`.
+Pruebas: `pip install -r requirements.txt pytest && python -m pytest tests` (la prueba de interfaz usa Playwright: `pip install playwright && playwright install chromium`; si no está, se omite).
 Generar el ejecutable: `pip install pyinstaller pywebview && pyinstaller packaging/g3g3ai.spec`. GitHub Actions lo compila en cada push, y crea una Release con `G3G3AI.exe` al subir una etiqueta `v*`.
