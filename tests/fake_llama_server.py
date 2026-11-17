@@ -37,6 +37,11 @@ class H(BaseHTTPRequestHandler):
         if req.get("modalities"):
             return self.json_reply({"choices": [{"message": {"role": "assistant", "content": "",
                                     "images": [{"image_url": {"url": "data:image/png;base64," + PNG_B64}}]}}]})
+        if "tope tokens" in str(req["messages"][-1].get("content")) and req.get("max_tokens", 0) > 4096:
+            body = json.dumps({"error": {"message": "This request requires more credits, or fewer max_tokens. "
+                                                    "You requested up to %d tokens, but can only afford 3000" % req["max_tokens"]}}).encode()
+            self.send_response(402); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
         self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
         msgs = req["messages"]
         last = msgs[-1]
@@ -90,6 +95,16 @@ class H(BaseHTTPRequestHandler):
                 path = os.environ.get("FAKE_READ_PATH", "")
                 call = json.dumps({"name": "read_file", "arguments": {"path": path}})
                 self.chunk({"choices": [{"delta": {"content": f"Voy a leerlo.\n<tool_call>{call}</tool_call>"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if "error a mitad" in str(first_user):  # el proveedor falla después de haber enviado texto
+            self.chunk({"choices": [{"delta": {"content": "empiezo bien… "}}]})
+            self.chunk({"error": {"message": "upstream exploded", "code": 502}})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if "con filtro" in str(first_user):
+            self.chunk({"choices": [{"delta": {"content": "no puedo"}, "finish_reason": "content_filter"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if "tope tokens" in str(first_user):
+            self.chunk({"choices": [{"delta": {"content": "respuesta con tope"}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
         if "texto largo" in str(first_user):  # simula un corte por longitud y su continuación
             if "límite de longitud" in str(last["content"]):

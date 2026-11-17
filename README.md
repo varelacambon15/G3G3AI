@@ -211,6 +211,14 @@ El modo **🛠 Agente** sigue unas reglas de trabajo pensadas para que se compor
 - **Proyectos:** en «📝 Instrucciones y carpeta del proyecto» puedes dar a cada conversación su carpeta de trabajo. Si dentro hay un archivo `G3G3AI.md`, la IA lo lee como instrucciones del proyecto (lenguaje, cómo ejecutar las pruebas, estilo…), como hace `CLAUDE.md` con Claude Code.
 - **Robustez:** si un modelo escribe la llamada a una herramienta como texto (`<tool_call>…`), se ejecuta igualmente; si anuncia un paso y se para, se le pide que lo haga; si repite la misma acción sin avanzar, se le avisa y se corta; si la respuesta se corta por longitud, continúa sola. Los pasos máximos por respuesta se ajustan en Ajustes (por defecto 40).
 
+### ✂ Respuestas largas que se cortan
+Cuando una respuesta termina antes de tiempo, G3G3AI ya no falla en silencio: explica el motivo y deja un botón **▶ Continuar**.
+- **Límite de longitud**: continúa solo hasta 3 veces; si aun así no basta, avisa y ofrece «Continuar».
+- **Tope del proveedor** (créditos de OpenRouter, 8192 en DeepSeek…): lee el máximo admitido y reintenta solo con ese valor.
+- **Error o filtro del proveedor / conexión perdida**: se muestra el motivo en el propio mensaje.
+- **Contexto local lleno**: el error indica subir «Contexto» en Ajustes o abrir otra conversación.
+- Se envían latidos cada 15 s para que proxys y túneles no corten durante razonamientos largos, y el chat deja de repintar a cada frame cuando el texto es enorme.
+
 ### 🔎 Buscador de modelos
 
 En **Modelos → Buscar y descargar modelos**:

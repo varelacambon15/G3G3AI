@@ -31,6 +31,15 @@ _ANNOUNCE = re.compile(
     r"ejecuto|cambio|aplico|let me|now i|next,? i|i'll|i will)\b", re.I)
 
 
+FINISH_NOTES = {
+    "length": "[⚠ Respuesta cortada por el límite de longitud. Pulsa «Continuar» o sube «Máx. tokens» en Ajustes.]",
+    "content_filter": "[⚠ El proveedor detuvo la respuesta por su filtro de contenido. Reformula la petición o prueba otro modelo.]",
+    "error": "[⚠ El proveedor terminó la respuesta con un error. Pulsa «Continuar» para reintentar.]",
+    "dropped": "[⚠ La conexión se cerró antes de terminar y la respuesta quedó incompleta. Pulsa «Continuar».]",
+    "max_tokens": "[⚠ Respuesta cortada por el límite de longitud. Pulsa «Continuar» o sube «Máx. tokens» en Ajustes.]",
+    "refusal": "[⚠ El modelo se negó a continuar con esta petición.]",
+}
+
 _TOOL_TAG = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
 _FENCE = re.compile(r"```(?:json|tool_call|tool)?\s*(\{.*?\})\s*```", re.S)
 
@@ -173,7 +182,32 @@ async def _raise_for(r: httpx.Response):
             body = msg or body
         except json.JSONDecodeError:
             pass
-        raise ProviderError(f"HTTP {r.status_code}: {body[:800]}")
+        raise ProviderError(f"HTTP {r.status_code}: {hint_for(body)[:800]}")
+
+
+_CAP_PATTERNS = (r"can only afford (\d+)", r"\[1,\s*(\d+)\]", r"at most (\d+)", r"maximum (?:of )?(\d+)",
+                 r"max_tokens(?: is)? (?:too large|must be)[^0-9]*(\d+)")
+
+
+def cap_from_error(msg: str, current: int) -> int | None:
+    """Algunos proveedores rechazan max_tokens si es demasiado alto (créditos de OpenRouter, tope de DeepSeek…)
+    y dicen cuál es el máximo admitido. Devuelve un valor menor para reintentar, o None."""
+    if not re.search(r"max_tokens|max_completion_tokens|credits|afford|maximum|valid range", msg, re.I):
+        return None
+    for rx in _CAP_PATTERNS:
+        m = re.search(rx, msg, re.I)
+        if m:
+            n = int(m.group(1))
+            if 256 <= n < current:
+                return n
+    return None
+
+
+def hint_for(body: str) -> str:
+    if re.search(r"exceed_context_size|context (length|size|window)|n_ctx|too many tokens", body, re.I):
+        return (body + " — Se llenó el contexto del modelo. Sube el «Contexto» del modelo local en Ajustes "
+                "(según tu RAM) o abre una conversación nueva.")
+    return body
 
 
 async def _sse(r: httpx.Response) -> AsyncIterator[dict]:
@@ -223,34 +257,52 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
             if ctx:
                 body["tools"] = ctx.openai_specs()
             content, calls, finish, details = "", {}, None, []
-            async with c.stream("POST", url, json=body, headers=headers) as r:
-                await _raise_for(r)
-                async for j in _sse(r):
-                    if j.get("timings"):
-                        t = j["timings"]
-                        yield {"type": "stats", "tokens_per_second": t.get("predicted_per_second"),
-                               "tokens": t.get("predicted_n"), "prompt_tokens": t.get("prompt_n")}
-                    elif j.get("usage"):
-                        u = j["usage"]
-                        yield {"type": "stats", "tokens": u.get("completion_tokens"),
-                               "prompt_tokens": u.get("prompt_tokens")}
-                    if not j.get("choices"):
+            for attempt in range(3):
+                try:
+                    async with c.stream("POST", url, json=body, headers=headers) as r:
+                        await _raise_for(r)
+                        async for j in _sse(r):
+                            if j.get("error"):  # error a mitad de la respuesta
+                                e = j["error"]
+                                raise ProviderError(hint_for(str(e.get("message") if isinstance(e, dict) else e)))
+                            if j.get("timings"):
+                                t = j["timings"]
+                                yield {"type": "stats", "tokens_per_second": t.get("predicted_per_second"),
+                                       "tokens": t.get("predicted_n"), "prompt_tokens": t.get("prompt_n")}
+                            elif j.get("usage"):
+                                u = j["usage"]
+                                yield {"type": "stats", "tokens": u.get("completion_tokens"),
+                                       "prompt_tokens": u.get("prompt_tokens")}
+                            if not j.get("choices"):
+                                continue
+                            finish = j["choices"][0].get("finish_reason") or finish
+                            delta = j["choices"][0].get("delta") or {}
+                            if delta.get("reasoning_details"):
+                                _merge_reasoning_details(details, delta["reasoning_details"])
+                            if delta.get("reasoning_content") or delta.get("reasoning"):
+                                yield {"type": "reasoning", "text": delta.get("reasoning_content") or delta.get("reasoning")}
+                            if delta.get("content"):
+                                content += delta["content"]
+                                yield {"type": "content", "text": delta["content"]}
+                            for tc in delta.get("tool_calls") or []:
+                                slot = calls.setdefault(tc.get("index", 0), {"id": "", "name": "", "args": ""})
+                                slot["id"] = tc.get("id") or slot["id"]
+                                fn = tc.get("function") or {}
+                                slot["name"] += fn.get("name") or ""
+                                slot["args"] += fn.get("arguments") or ""
+                    break
+                except (ProviderError, httpx.TransportError) as e:
+                    smaller = cap_from_error(str(e), max_tokens) if isinstance(e, ProviderError) else None
+                    if smaller and not content and not calls and attempt < 2:
+                        max_tokens = body["max_tokens"] = smaller
+                        yield {"type": "status", "text": f"↪ El proveedor limita la respuesta a {smaller} tokens; reintentando…"}
                         continue
-                    finish = j["choices"][0].get("finish_reason") or finish
-                    delta = j["choices"][0].get("delta") or {}
-                    if delta.get("reasoning_details"):
-                        _merge_reasoning_details(details, delta["reasoning_details"])
-                    if delta.get("reasoning_content") or delta.get("reasoning"):
-                        yield {"type": "reasoning", "text": delta.get("reasoning_content") or delta.get("reasoning")}
-                    if delta.get("content"):
-                        content += delta["content"]
-                        yield {"type": "content", "text": delta["content"]}
-                    for tc in delta.get("tool_calls") or []:
-                        slot = calls.setdefault(tc.get("index", 0), {"id": "", "name": "", "args": ""})
-                        slot["id"] = tc.get("id") or slot["id"]
-                        fn = tc.get("function") or {}
-                        slot["name"] += fn.get("name") or ""
-                        slot["args"] += fn.get("arguments") or ""
+                    if isinstance(e, httpx.TransportError) and (content or calls):
+                        yield {"type": "finish", "reason": "dropped", "truncated": True}
+                        yield {"type": "content", "text": "\n\n[⚠ Se perdió la conexión con el modelo y la respuesta quedó "
+                                                          "incompleta. Pulsa «Continuar».]"}
+                        return
+                    raise
             if ctx and not calls and content:
                 found, cleaned = extract_text_tool_calls(content, set(ctx.names()))
                 if found:  # el modelo escribió la llamada como texto: se retira del chat y se ejecuta de verdad
@@ -275,9 +327,13 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                     msgs.append({"role": "assistant", "content": content})
                     msgs.append({"role": "user", "content": NUDGE_MSG})
                     continue
-                if finish == "length":
-                    yield {"type": "content", "text": "\n\n[Respuesta cortada por el límite de longitud. "
-                                                      "Escribe «continúa» o sube «Máx. tokens» en Ajustes.]"}
+                note = FINISH_NOTES.get(finish or "")
+                if finish is None and content:
+                    note = FINISH_NOTES["dropped"]
+                    finish = "dropped"
+                if note:
+                    yield {"type": "finish", "reason": finish, "truncated": True}
+                    yield {"type": "content", "text": "\n\n" + note}
                 return
             used_tools = True
             ordered = [calls[i] for i in sorted(calls)]
@@ -363,6 +419,12 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
                     msgs.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
                     msgs.append({"role": "user", "content": NUDGE_MSG})
                     continue
+                note = FINISH_NOTES.get(stop_reason or "")
+                if stop_reason is None and text:
+                    stop_reason, note = "dropped", FINISH_NOTES["dropped"]
+                if note:
+                    yield {"type": "finish", "reason": stop_reason, "truncated": True}
+                    yield {"type": "content", "text": "\n\n" + note}
                 return
             used_tools = True
             assistant_content = []

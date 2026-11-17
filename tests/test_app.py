@@ -903,6 +903,35 @@ def test_chat_does_not_stop_silently(env):
     assert any(e["type"] == "status" and "anunció" in e["text"] for e in evs)
 
 
+def test_cut_off_reasons_are_visible_and_recoverable(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    # error del proveedor a mitad de respuesta
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "error a mitad"}))
+    assert any(e["type"] == "error" and "upstream exploded" in e["message"] for e in evs)
+    # filtro de contenido: aviso visible + marca para el botón «Continuar»
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "responde con filtro"}))
+    assert any(e["type"] == "finish" and e["reason"] == "content_filter" for e in evs)
+    assert "filtro de contenido" in "".join(e["text"] for e in evs if e["type"] == "content")
+    cid = next(e["conversation_id"] for e in evs if e["type"] == "start")
+    msgs = client.get(f"/api/conversations/{cid}", headers=h).json()["messages"]
+    assert msgs[-1]["meta"]["finish"] == "content_filter"
+    # el proveedor rechaza max_tokens por créditos: se reintenta con el máximo que admite
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "tope tokens"}))
+    assert "".join(e["text"] for e in evs if e["type"] == "content") == "respuesta con tope"
+    assert any(e["type"] == "status" and "3000" in e["text"] for e in evs)
+
+
+def test_cap_from_error_and_hints():
+    from g3g3ai.providers import cap_from_error, hint_for
+    assert cap_from_error("You requested up to 8192 tokens, but can only afford 3000", 8192) == 3000
+    assert cap_from_error("Invalid max_tokens value, the valid range of max_tokens is [1, 8192]", 16000) == 8192
+    assert cap_from_error("HTTP 500 internal error", 8192) is None
+    assert "Contexto" in hint_for("request (9000 tokens) exceeds the available context size (8192 tokens)"
+                                  " exceed_context_size_error")
+
+
 def test_announces_action():
     from g3g3ai.providers import announces_action
     assert announces_action("Ya tengo el flujo. Leo las partes que voy a editar: el selector y el HTML.")
@@ -1335,3 +1364,18 @@ def test_conversation_undo_endpoints_and_workdir(env):
     r = client.patch(f"/api/conversations/{cid}", headers=h, json={"workdir": str(home / "mi-proyecto")}).json()
     assert r["workdir"] == str(home / "mi-proyecto")
     client.delete(f"/api/conversations/{cid}", headers=h)
+
+
+def test_keepalive_emits_pings_during_silence():
+    import asyncio
+    from g3g3ai.server import with_keepalive
+
+    async def slow():
+        yield {"type": "content", "text": "a"}
+        await asyncio.sleep(0.35)
+        yield {"type": "content", "text": "b"}
+
+    async def run():
+        return [ev async for ev in with_keepalive(slow(), every=0.1)]
+    out = asyncio.run(run())
+    assert [e["text"] for e in out if e] == ["a", "b"] and out.count(None) >= 2

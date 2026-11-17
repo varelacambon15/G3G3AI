@@ -581,6 +581,8 @@ function messageEl(m) {
     el.append(h("div", { class: "meta" },
       h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, "⧉"),
       h("button", { class: "act", title: "Volver a generar", onclick: () => regenerate(m) }, "↻"),
+      m.meta?.finish ? h("button", { class: "act continue", title: "La respuesta quedó incompleta",
+        onclick: () => { if (!S.streaming) send("Continúa exactamente donde lo dejaste.", []); } }, "▶ Continuar") : null,
       h("span", { title: m.meta?.route || "" }, (m.meta?.provider === "local" ? "💻 " : m.meta?.provider === "imagen" ? "🎨 " : "☁ ") + (m.meta?.model || "")),
       m.meta?.route ? h("span", {}, "🔀 " + m.meta.route) : null,
       st.tokens_per_second ? h("span", {}, `${st.tokens_per_second.toFixed(1)} tok/s`) : null));
@@ -710,7 +712,8 @@ async function send(text, attachments, isContinue = false) {
         else if (ev.type === "compacted") extra.compacted = ev.messages;
         else if (ev.type === "route_fallback") extra.fallbacks.push(ev.message);
         else if (ev.type === "error") errorMsg = ev.message;
-        if (!raf) raf = requestAnimationFrame(paint);
+        // En respuestas muy largas repintar todo el markdown en cada frame congela la página: máx. ~7 veces/s
+        if (!raf) raf = setTimeout(() => requestAnimationFrame(paint), content.length > 4000 ? 140 : 0);
       }
     }
   } catch (e) {

@@ -76,6 +76,27 @@ def lan_addresses() -> list[str]:
     return sorted(ip for ip in ips if not ip.startswith("127."))
 
 
+async def with_keepalive(agen, every: float = 15.0):
+    """Reenvía los eventos de `agen`; si pasan `every` segundos sin ninguno, produce None (latido)."""
+    it = agen.__aiter__()
+    nxt = asyncio.ensure_future(it.__anext__())
+    try:
+        while True:
+            done, _ = await asyncio.wait({nxt}, timeout=every)
+            if not done:
+                yield None
+                continue
+            try:
+                ev = nxt.result()
+            except StopAsyncIteration:
+                return
+            yield ev
+            nxt = asyncio.ensure_future(it.__anext__())
+    finally:
+        nxt.cancel()
+        await it.aclose() if hasattr(it, "aclose") else None
+
+
 def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastAPI:
     cfg = cfg or Config()
     db = DB((data_dir or DATA_DIR) / "g3g3ai.db")
@@ -406,6 +427,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             made: list[str] = []
             out_files: list[str] = []
             todos: list = []
+            finish = None
             yield sse({"type": "start", "conversation_id": cid})
             if direct_image is not None:  # «/imagen …»: sin pasar por el modelo de texto
                 yield sse({"type": "status", "text": "🎨 Generando imagen…"})
@@ -439,8 +461,13 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             else:
                                 yield sse(ev)
                         msgs = ([{"role": "system", "content": system}] if system else []) + history
-                        async for ev in chat_stream(p, cmodel, msgs, opts, ctx):
-                            if ev["type"] == "retract":  # el modelo había escrito una llamada como texto
+                        async for ev in with_keepalive(chat_stream(p, cmodel, msgs, opts, ctx)):
+                            if ev is None:  # latido: evita que proxies/túneles cierren una conexión en silencio
+                                yield ": ping\n\n"
+                                continue
+                            if ev["type"] == "finish":
+                                finish = ev["reason"]
+                            elif ev["type"] == "retract":  # el modelo había escrito una llamada como texto
                                 if content.endswith(ev["text"]):
                                     content = content[: len(content) - len(ev["text"])]
                             elif ev["type"] == "todos":
@@ -471,7 +498,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             "model": route["model"] if route else model,
                             "route": route.get("reason") if route else None,
                             "stats": stats, "tools": trace or None, "images": made or None,
-                            "files": out_files or None, "todos": todos or None, "mode": perm_mode}
+                            "files": out_files or None, "todos": todos or None, "mode": perm_mode,
+                            "finish": finish}
                     stats["message_id"] = db.add_message(cid, "assistant", content, reasoning or None, meta)
             yield sse({"type": "done", **stats})
 
