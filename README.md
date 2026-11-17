@@ -217,6 +217,8 @@ Según el modelo elegido (o lo que fijes en Ajustes → «Exigencia del agente»
 - **Ayudantes (`delegate`):** para investigar sin llenar el contexto, el agente lanza un ayudante de sólo lectura con contexto propio que devuelve un informe breve con rutas y datos.
 - **Escribe mientras trabaja:** pulsa Intro y el mensaje queda en cola; se envía al terminar.
 - **Atajos:** `Esc` detiene · `Mayús+Tab` cambia de modo (Normal → Aceptar ediciones → Plan) · `Ctrl/Cmd+Mayús+O` conversación nueva.
+- **Contexto a la vista:** junto al cuadro de texto ves el % de contexto usado; `/compact` resume la conversación ahora y conserva el último intercambio.
+- **Volver atrás (↶):** en cada mensaje tuyo, el botón ↶ devuelve los archivos que la IA tocó desde ahí a su estado anterior y borra esa parte de la conversación para que reformules. Lo que hagan los comandos no se deshace.
 - **Permisos a tu medida:** en el aviso de un comando pulsa «Permitir este comando siempre»; se guarda en Ajustes → «Comandos permitidos» (admite `*`, p.ej. `npm test*`). Los peligrosos siguen pidiendo permiso y un comando encadenado (`;`, `&&`, `|`) solo pasa si coincide exacto.
 - **Comprueba lo que hace:** si edita archivos de un proyecto con pruebas reconocibles (pytest, npm, cargo, go) y no las ejecuta, se le pide que las pase antes de dar la tarea por terminada.
 

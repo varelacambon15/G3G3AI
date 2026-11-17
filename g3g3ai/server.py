@@ -308,6 +308,24 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         conv = db.get_conversation(cid)
         return {"before": before, **builder.usage(conv, pid, int(cfg["max_tokens"] or 2048))}
 
+    @app.get("/api/conversations/{cid}/checkpoints")
+    async def conversation_checkpoints(cid: str):
+        return {"checkpoints": [{"id": c["id"], "files": [f["path"] for f in c["files"]]}
+                                for c in UndoJournal(cid).checkpoints()]}
+
+    @app.post("/api/conversations/{cid}/restore")
+    async def conversation_restore(cid: str, body: dict):
+        """Vuelve los archivos a como estaban antes del mensaje `id`; con truncate también borra ese mensaje y los siguientes."""
+        try:
+            mid = int(body.get("id"))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Falta «id» del mensaje")
+        res = await asyncio.to_thread(UndoJournal(cid).restore_to, mid)
+        session_state.get(cid, {}).get("read", {}).clear()
+        if body.get("truncate"):
+            db.delete_messages_from(cid, mid)
+        return res
+
     @app.get("/api/conversations/{cid}/changes")
     async def conversation_changes(cid: str):
         """Archivos que la IA ha modificado o creado en esta conversación (se pueden deshacer)."""
@@ -401,6 +419,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         perm_mode = body.get("mode") if body.get("mode") in ("normal", "plan", "edits") else "normal"
 
         conv = db.get_conversation(cid) if cid else None
+        last_user_id = next((m["id"] for m in reversed((conv or {}).get("messages", [])) if m["role"] == "user"), None)
         # Último mensaje del usuario (para decidir la ruta al regenerar)
         last_user = text or next((m["content"] for m in reversed((conv or {}).get("messages", []))
                                   if m["role"] == "user"), "")
@@ -417,13 +436,14 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                 raise HTTPException(409, "No hay ningún modelo local cargado. Cárgalo en la pestaña Modelos.")
             candidates = [(pid, model, None)]
 
+        turn_mid = None
         if not conv:
             conv = db.create_conversation(provider=pid, model=model, system=body.get("system"))
             cid = conv["id"]
         if text or attach_text:
             meta = ({"attachments": attach_meta, "expanded": f"{attach_text}\n\n{text}".strip() or text}
                     if attach_meta else None)
-            db.add_message(cid, "user", text, meta=meta)
+            turn_mid = db.add_message(cid, "user", text, meta=meta)
             if conv["title"] == "Nueva conversación":
                 title = text or (attach_meta[0]["name"] if attach_meta else "Conversación")
                 db.update_conversation(cid, title=title[:60])
@@ -455,7 +475,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             tc = ToolContext(files, cfg, delegate, agent=agent, web=use_web,
                              session_allow=session_allow.setdefault(cid, set()), memory=mem, source=cid,
                              image_gen=img, state=state_for(cid, conv), perm_mode=perm_mode,
-                             workdir=conv.get("workdir") or None)
+                             workdir=conv.get("workdir") or None, checkpoint=turn_mid or last_user_id)
             tc.profile = profile_for(chosen_pid, (llama.status()["model"] or "") if chosen_pid == LOCAL_PROVIDER else chosen_model,
                                      chosen_pid == LOCAL_PROVIDER,
                                      cfg["agent_profile"] or "auto")

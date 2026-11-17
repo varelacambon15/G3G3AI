@@ -709,7 +709,8 @@ function messageEl(m) {
     el.append(h("div", { class: "meta" },
       att.filter((a) => !imgs.includes(a)).map((a) => h("span", { class: "chip" }, (a.kind === "document" || a.kind === "pdf_scan" ? "📄 " : "📎 ") + a.name)),
       h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, "⧉"),
-      h("button", { class: "act", title: "Editar", onclick: () => editFrom(m) }, "✎")));
+      h("button", { class: "act", title: "Editar", onclick: () => editFrom(m) }, "✎"),
+      (S.checkpoints || []).some((c) => c.id >= m.id) ? h("button", { class: "act", title: "Volver aquí: los archivos que la IA tocó desde este mensaje vuelven a como estaban antes", onclick: () => rewindTo(m) }, "↶") : null));
   } else {
     el.append(assistantInner(m.content, m.reasoning, m.meta?.tools, false, { images: m.meta?.images || [], files: m.meta?.files || [], todos: m.meta?.todos || [] }));
     const st = m.meta?.stats || {};
@@ -752,6 +753,22 @@ $("#artifact-code").addEventListener("click", () => {
   $("#artifact-frame").classList.toggle("hidden", showCode); $("#artifact-src").classList.toggle("hidden", !showCode);
   $("#artifact-code").textContent = showCode ? "Vista previa" : "Código";
 });
+async function loadCheckpoints() {
+  if (!S.convId) { S.checkpoints = []; return; }
+  try { S.checkpoints = (await api(`/api/conversations/${S.convId}/checkpoints`)).checkpoints; } catch { S.checkpoints = []; }
+}
+async function rewindTo(m) {
+  if (S.streaming) return;
+  const touched = (S.checkpoints || []).filter((c) => c.id >= m.id).flatMap((c) => c.files);
+  const list = [...new Set(touched)].slice(0, 12).map((p) => "• " + p).join("\n");
+  if (!confirm(`Volver a antes de este mensaje:\n\n• Los archivos que la IA modificó desde aquí vuelven a su estado anterior:\n${list}\n• Se borran este mensaje y los siguientes (tu texto vuelve al cuadro para editarlo).\n\nLo que hicieran los comandos no se deshace. ¿Continuar?`)) return;
+  try {
+    const r = await api(`/api/conversations/${S.convId}/restore`, { method: "POST", body: { id: m.id, truncate: true } });
+    toast(`Restaurado: ${r.restored.length} archivos, ${r.deleted.length} borrados` + (r.failed.length ? `, ${r.failed.length} con problemas` : ""), 5000);
+    input.value = m.content; input.dispatchEvent(new Event("input")); input.focus();
+    await openConversation(S.convId);
+  } catch (e) { toast(e.message); }
+}
 async function editFrom(m) {
   if (S.streaming) return;
   const t = prompt("Editar mensaje (se borrarán las respuestas posteriores):", m.content);

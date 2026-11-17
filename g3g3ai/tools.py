@@ -244,7 +244,7 @@ class ToolContext:
     def __init__(self, files: Files, cfg, local_chat: Callable[[str], Awaitable[str]] | None = None, *,
                  agent: bool = True, web: bool = False, session_allow: set | None = None,
                  memory=None, source: str | None = None, image_gen=None, state: dict | None = None,
-                 perm_mode: str = "normal", workdir: str | None = None):
+                 perm_mode: str = "normal", workdir: str | None = None, checkpoint: int | None = None):
         self.files = files
         self.cfg = cfg
         self.local_chat = local_chat
@@ -272,7 +272,7 @@ class ToolContext:
         self.cancel = threading.Event()
         self.counts: dict = {}       # llamadas idénticas repetidas en este turno
         self.abort_loop = False
-        self._undo = UndoJournal(source) if source else None
+        self._undo = UndoJournal(source, checkpoint) if source else None
 
     # Permisos ------------------------------------------------------------------
     def mode(self, name: str) -> str:

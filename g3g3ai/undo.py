@@ -20,9 +20,46 @@ def _dir(cid: str) -> Path:
 
 
 class UndoJournal:
-    def __init__(self, cid: str):
-        self.dir = _dir(cid)
+    """Diario de cambios de una conversación. Además del diario global (estado original de cada archivo), guarda un
+    «checkpoint» por turno (`cp` = id del mensaje del usuario que lo provocó): con él se puede volver al estado
+    de los archivos justo antes de cualquier mensaje."""
+
+    def __init__(self, cid: str, cp: int | str | None = None, _dir_override: Path | None = None):
+        self.cid, self.cp = cid, cp
+        self.dir = _dir_override or _dir(cid)
         self.path = self.dir / "journal.json"
+
+    # --- checkpoints
+    def _cp_journal(self, cp) -> "UndoJournal":
+        return UndoJournal(self.cid, None, self.dir / "cp" / str(cp))
+
+    def checkpoints(self) -> list[dict]:
+        """[{id, files}] de los turnos que modificaron archivos, del más antiguo al más reciente."""
+        base = self.dir / "cp"
+        out = []
+        if base.is_dir():
+            for d in base.iterdir():
+                if d.name.isdigit():
+                    files = self._cp_journal(d.name).changes()
+                    if files:
+                        out.append({"id": int(d.name), "files": files})
+        return sorted(out, key=lambda c: c["id"])
+
+    def restore_to(self, cp: int) -> dict:
+        """Deja los archivos como estaban justo antes del mensaje `cp`: deshace ese turno y los posteriores."""
+        res = {"restored": [], "deleted": [], "failed": []}
+        for c in sorted(self.checkpoints(), key=lambda c: c["id"], reverse=True):
+            if c["id"] < int(cp):
+                break
+            part = self._cp_journal(c["id"]).undo_all()  # undo_all limpia el checkpoint si todo fue bien
+            for k in res:
+                res[k] += part[k]
+        # el diario global ya no describe el estado actual con fidelidad: se descarta lo restaurado
+        main = self._load()
+        for p in res["restored"] + res["deleted"]:
+            main.pop(p, None)
+        self._save(main)
+        return res
 
     def _load(self) -> dict:
         try:
@@ -37,7 +74,9 @@ class UndoJournal:
         tmp.replace(self.path)
 
     def record(self, target: Path) -> None:
-        """Guarda el estado original de `target` la primera vez que se toca en esta conversación."""
+        """Guarda el estado original de `target` la primera vez que se toca en esta conversación (y en este turno)."""
+        if self.cp is not None:
+            self._cp_journal(self.cp).record(target)
         data = self._load()
         key = str(target)
         if key in data:

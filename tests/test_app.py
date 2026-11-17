@@ -1565,3 +1565,48 @@ def test_context_meter_and_compact(env):
     r = r.json()
     assert r["summarized"] and r["used"] < r["before"]
     assert client.get("/api/conversations/nope/context", headers=h).status_code == 404
+
+
+def test_checkpoints_restore_files_to_before_a_message(tmp_path, monkeypatch):
+    from g3g3ai import undo
+    monkeypatch.setattr(undo, "DATA_DIR", tmp_path / "data")
+    f, g = tmp_path / "f.txt", tmp_path / "g.txt"
+    f.write_text("v0")
+    # turno del mensaje 10: modifica f y crea g
+    j = undo.UndoJournal("c", 10)
+    j.record(f); f.write_text("v1"); j.record(g); g.write_text("nuevo")
+    # turno del mensaje 20: vuelve a modificar f
+    j = undo.UndoJournal("c", 20)
+    j.record(f); f.write_text("v2")
+    cps = undo.UndoJournal("c").checkpoints()
+    assert [c["id"] for c in cps] == [10, 20]
+    # volver a antes del mensaje 20: sólo se deshace ese turno
+    res = undo.UndoJournal("c").restore_to(20)
+    assert res["restored"] == [str(f)] and f.read_text() == "v1" and g.read_text() == "nuevo"
+    assert [c["id"] for c in undo.UndoJournal("c").checkpoints()] == [10]
+    # volver a antes del mensaje 10: f vuelve a v0 y g desaparece
+    res = undo.UndoJournal("c").restore_to(10)
+    assert f.read_text() == "v0" and not g.exists()
+    assert undo.UndoJournal("c").checkpoints() == []
+
+
+def test_checkpoint_endpoints_rewind_files_and_messages(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    from g3g3ai.undo import UndoJournal
+    cid = client.post("/api/conversations", headers=h, json={}).json()["id"]
+    from g3g3ai.server import create_app  # noqa: F401  (el estado de db se toma del propio cliente)
+    m1 = client.app.state.db.add_message(cid, "user", "primero")
+    m2 = client.app.state.db.add_message(cid, "assistant", "hecho")
+    m3 = client.app.state.db.add_message(cid, "user", "segundo")
+    f = home / "cp.txt"
+    f.write_text("a")
+    UndoJournal(cid, m1).record(f); f.write_text("b")
+    UndoJournal(cid, m3).record(f); f.write_text("c")
+    cps = client.get(f"/api/conversations/{cid}/checkpoints", headers=h).json()["checkpoints"]
+    assert [c["id"] for c in cps] == [m1, m3]
+    r = client.post(f"/api/conversations/{cid}/restore", headers=h, json={"id": m3, "truncate": True}).json()
+    assert f.read_text() == "b" and r["restored"] == [str(f)]
+    msgs = client.get(f"/api/conversations/{cid}", headers=h).json()["messages"]
+    assert [m["id"] for m in msgs] == [m1, m2]                       # «segundo» desapareció
+    assert client.post(f"/api/conversations/{cid}/restore", headers=h, json={}).status_code == 400
