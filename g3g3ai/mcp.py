@@ -41,7 +41,8 @@ def parse_servers(lines) -> list[dict]:
             parts = shlex.split(m.group(2), posix=sys.platform != "win32")
         except ValueError:
             continue
-        parts = [p.strip('"') if sys.platform == "win32" else p for p in parts]
+        if sys.platform == "win32":  # shlex no quita las comillas en modo Windows
+            parts = [p[1:-1] if len(p) >= 2 and p[0] == p[-1] and p[0] in "\"'" else p for p in parts]
         env = {}
         while parts and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", parts[0]):
             k, v = parts.pop(0).split("=", 1)

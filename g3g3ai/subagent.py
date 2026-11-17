@@ -75,7 +75,8 @@ def make_copy(src: Path) -> tuple[Path, dict[str, str]]:
         if total > MAX_COPY_BYTES:
             raise SubagentError(f"El proyecto es demasiado grande para copiarlo ({MAX_COPY_BYTES // 1_000_000} MB máx.). "
                                 "Abre una subcarpeta más pequeña como proyecto.")
-    dst = Path(tempfile.mkdtemp(prefix="g3g3ai-helper-"))
+    # resolve(): en Windows mkdtemp devuelve nombres cortos (RUNNER~1) y las comprobaciones de carpeta usan rutas largas
+    dst = Path(tempfile.mkdtemp(prefix="g3g3ai-helper-")).resolve()
     for p in files:
         rel = p.relative_to(src)
         t = dst / rel
