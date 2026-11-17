@@ -10,7 +10,7 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Servidores G3G3AI guardados (Konkr, PC...): nombre, dirección y contraseña. */
+/** Servidores G3G3AI guardados (PC, portátil...): nombre, dirección y contraseña. */
 final class Servers {
     static final class Server {
         String name;

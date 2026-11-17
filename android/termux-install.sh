@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # EXPERIMENTAL: ejecutar G3G3AI como servidor en Android con Termux (instala Termux desde F-Droid).
 #   pkg install git && git clone https://github.com/varelacambon15/G3G3AI && cd G3G3AI && bash android/termux-install.sh
-# Para usar el móvil sólo como cliente no hace falta nada de esto: abre la dirección del Konkr/PC en el navegador.
+# Para usar el móvil sólo como cliente no hace falta nada de esto: abre la dirección del PC en el navegador.
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="$HOME/.local/share/g3g3ai"

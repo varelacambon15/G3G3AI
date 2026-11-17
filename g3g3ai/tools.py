@@ -266,6 +266,7 @@ class ToolContext:
         self.profile = "standard"  # small | standard | full (ver profiles.py)
         self.result_limit: int | None = None  # caracteres máximos por resultado (se fija en modelos locales)
         self.todos_dirty = False
+        self.dirty = False  # se han modificado archivos y aún no se ha ejecutado nada para comprobarlo
         self.subagent: Callable[[str], Awaitable[str]] | None = None  # lo fija el servidor
         self.live = None            # callback para emitir la salida de un comando mientras corre
         self.cancel = threading.Event()
@@ -281,6 +282,47 @@ class ToolContext:
         if name in COMMAND_TOOLS:
             return self.cfg["ai_commands"] or "off"
         return "auto"
+
+    SHELL_META = set(";&|<>`$\n\r")
+
+    def command_allowed(self, command) -> bool:
+        """¿Coincide el comando con una regla «permitir siempre»? Un comando con encadenados (; & | $ > …) sólo
+        pasa si coincide EXACTAMENTE con una regla: un patrón como «npm test*» no debe colar «npm test; rm -r x»."""
+        import fnmatch
+        cmd = str(command or "").strip()
+        if not cmd:
+            return False
+        for rule in self.cfg["command_allow"] or []:
+            rule = str(rule).strip()
+            if not rule:
+                continue
+            if cmd == rule or (not (self.SHELL_META & set(cmd)) and "*" in rule and fnmatch.fnmatchcase(cmd, rule)):
+                return True
+        return False
+
+    def add_command_rule(self, command: str) -> None:
+        rules = list(self.cfg["command_allow"] or [])
+        if command.strip() and command.strip() not in rules:
+            rules.append(command.strip())
+            self.cfg.set("command_allow", rules)
+
+    def verify_hint(self) -> str | None:
+        """Comando de pruebas del proyecto, si se reconoce (para exigir una comprobación tras editar)."""
+        wd = self.workdir()
+        for d in [wd, *list(wd.parents)[:2]]:
+            try:
+                if (d / "pytest.ini").is_file() or (d / "tox.ini").is_file() or (d / "tests").is_dir() and (d / "pyproject.toml").is_file():
+                    return "python -m pytest -q"
+                pj = d / "package.json"
+                if pj.is_file() and '"test"' in pj.read_text("utf-8", errors="replace"):
+                    return "npm test"
+                if (d / "Cargo.toml").is_file():
+                    return "cargo test"
+                if (d / "go.mod").is_file():
+                    return "go test ./..."
+            except OSError:
+                continue
+        return None
 
     def names(self) -> list[str]:
         out = []
@@ -853,6 +895,8 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
         else:
             mode = ctx.mode(name)
             must_ask = mode == "ask" or bool(strong) or (mode == "auto" and bool(soft))
+            if name == "run_command" and not strong and ctx.command_allowed(args.get("command")):
+                must_ask = False  # regla «permitir siempre» del usuario
             if must_ask and not strong and name in ctx.session_allow:
                 must_ask = False
             if must_ask:
@@ -861,6 +905,7 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
                 PENDING[aid] = fut
                 yield {"type": "approval", "id": aid, "name": name, "args": args, "diff": ctx.preview(name, args),
                        "warnings": strong + soft, "dangerous": bool(strong), "can_always": not strong,
+                       "can_rule": name == "run_command" and not strong,
                        "sandboxed": ctx.sandboxed if name == "run_command" else None}
                 try:
                     answer = await asyncio.wait_for(fut, APPROVAL_TIMEOUT)
@@ -870,8 +915,10 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
                     PENDING.pop(aid, None)
                 if answer == "always" and not strong:
                     ctx.session_allow.add(name)
-                yield {"type": "approval_result", "id": aid, "approved": answer in ("yes", "always")}
-                if answer not in ("yes", "always"):
+                if answer == "rule" and name == "run_command" and not strong:
+                    ctx.add_command_rule(str(args.get("command", "")))
+                yield {"type": "approval_result", "id": aid, "approved": answer in ("yes", "always", "rule")}
+                if answer not in ("yes", "always", "rule"):
                     result = "El usuario ha denegado esta acción. Pregunta o propón otra alternativa."
     if result is None and name == "run_command":
         # La salida del comando se emite mientras se ejecuta; si la conversación se cancela, se mata el comando.
@@ -912,6 +959,10 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
             prev["n"] += 1
         else:
             ctx.counts[key] = {"n": 1, "res": result}
+    if name in WRITE_TOOLS and not result.startswith(("Error", "El usuario")):
+        ctx.dirty = True
+    elif name == "run_command" and not result.startswith(("Error", "El usuario", "Bloqueado")):
+        ctx.dirty = False
     if ctx.result_limit and len(result) > ctx.result_limit:  # el contexto local es pequeño: no lo llenes de una sola salida
         keep = ctx.result_limit
         result = (result[: keep * 2 // 3] + f"\n[… recortado: {len(result) - keep} caracteres; pide una parte concreta "
@@ -933,7 +984,7 @@ def resolve_approval(aid: str, answer) -> bool:
         return False
     if answer is True:
         answer = "yes"
-    elif answer is False or answer not in ("yes", "always", "no"):
+    elif answer is False or answer not in ("yes", "always", "rule", "no"):
         answer = "no"
     fut.set_result(answer)
     return True

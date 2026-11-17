@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Instalador de G3G3AI para Konkr Pocket Fit (SteamOS ARM) y otros Linux.
+# Instalador de G3G3AI para Linux (x64 y ARM, incluido SteamOS).
 # No necesita root: todo se instala en tu carpeta personal.
 #
 #   ./install.sh               instala todo (entorno Python + llama.cpp + servicio)
@@ -7,7 +7,6 @@
 #   ./install.sh --skip-llama  no compila llama.cpp (sólo APIs o ya lo tienes)
 #   ./install.sh --no-service  no instala el servicio de arranque automático
 #   ./install.sh --update-llama  vuelve a descargar y compilar llama.cpp
-#   ./install.sh --no-steam    no crea el acceso en Steam / menú de aplicaciones
 #   ./install.sh --with-sd     compila también stable-diffusion.cpp (generar imágenes en local)
 set -euo pipefail
 
@@ -17,14 +16,13 @@ VENV="$DATA_DIR/venv"
 LLAMA_DIR="$DATA_DIR/llama.cpp"
 BIN_DIR="$HOME/.local/bin"
 
-VULKAN=0; SKIP_LLAMA=0; SERVICE=1; UPDATE_LLAMA=0; STEAM=1; WITH_SD=0
+VULKAN=0; SKIP_LLAMA=0; SERVICE=1; UPDATE_LLAMA=0; WITH_SD=0
 for a in "$@"; do
   case "$a" in
     --vulkan) VULKAN=1 ;;
     --skip-llama) SKIP_LLAMA=1 ;;
     --no-service) SERVICE=0 ;;
     --update-llama) UPDATE_LLAMA=1 ;;
-    --no-steam) STEAM=0 ;;
     --with-sd) WITH_SD=1 ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "Opción desconocida: $a"; exit 1 ;;
@@ -60,7 +58,7 @@ if [ "$SKIP_LLAMA" = 0 ]; then
     git clone --depth 1 https://github.com/ggml-org/llama.cpp "$LLAMA_DIR"
   fi
   if [ ! -x "$LLAMA_DIR/build/bin/llama-server" ] || [ "$UPDATE_LLAMA" = 1 ] || [ "$VULKAN" = 1 ]; then
-    say "Compilando llama-server (puede tardar 10-20 min en el Konkr)"
+    say "Compilando llama-server (puede tardar 10-20 min en equipos lentos)"
     # GGML_NATIVE detecta las extensiones ARM de tu CPU (dotprod, i8mm…).
     FLAGS=(-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON -DBUILD_SHARED_LIBS=OFF
            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_CURL=OFF)
@@ -113,17 +111,11 @@ if [ "$SERVICE" = 1 ] && command -v systemctl >/dev/null; then
   systemctl --user --no-pager --lines=0 status g3g3ai.service || true
 fi
 
-# 5) Acceso en Steam (Big Picture) y en el menú de aplicaciones ------------------------------
-if [ "$STEAM" = 1 ]; then
-  bash "$REPO_DIR/konkr/steam-setup.sh" || true
-fi
-
 TOKEN="$("$VENV/bin/python" -c 'import sys; sys.path.insert(0, sys.argv[1]); from g3g3ai.config import Config; print(Config()["token"])' "$REPO_DIR")"
 IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' || true)"
 say "¡Listo!"
-echo "  En el Konkr:          http://127.0.0.1:8800"
+echo "  En este equipo:        http://127.0.0.1:8800"
 [ -n "$IP" ] && echo "  Desde móvil/portátil: http://$IP:8800/?token=$TOKEN"
 echo "  Contraseña:           $TOKEN"
 [ "$SERVICE" = 1 ] || echo "  Arranque manual:      g3g3ai"
 echo "  Registro del servicio: journalctl --user -u g3g3ai -f"
-[ "$STEAM" = 1 ] && echo "  En modo juego:        Biblioteca → No de Steam → G3G3AI"

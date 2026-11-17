@@ -41,7 +41,7 @@ DEFAULTS: dict = {
     "port": 8800,
     # Contraseña de acceso para móvil/portátil. Se genera en el primer arranque.
     "token": "",
-    # Si es True, el propio Konkr (127.0.0.1) entra sin contraseña.
+    # Si es True, el propio equipo (127.0.0.1) entra sin contraseña.
     "localhost_without_token": True,
     # Modelos GGUF descargados.
     "models_dir": str(HOME / "Models"),
@@ -49,6 +49,7 @@ DEFAULTS: dict = {
     "llama_server_path": "",  # vacío = autodetectar
     "llama_port": 8801,
     "github_token": "",         # token de GitHub para la herramienta `github` (o variable GITHUB_TOKEN)
+    "command_allow": [],        # comandos que el agente puede ejecutar sin preguntar (exactos o con comodines *)
     "agent_profile": "auto",    # auto | small | standard | full: cuánto se le exige al modelo
     "llama_ctx": 0,   # 0 = automático según la memoria libre y el tamaño del modelo
     "llama_threads": 0,  # 0 = automático
@@ -80,7 +81,7 @@ DEFAULTS: dict = {
     "sd_model": "",             # modelo local de imagen (.gguf / .safetensors)
     "sd_steps": 4,              # 1-4 para modelos «turbo»; 20+ para modelos normales
     "sd_cfg": 1.0,              # 1.0 para «turbo»; ~7 para modelos normales
-    "sd_max_side": 512,         # límite de tamaño en local (la Konkr tarda mucho con imágenes grandes)
+    "sd_max_side": 512,         # límite de tamaño en local (en equipos lentos las imágenes grandes tardan mucho)
     # Selector de modelos: favoritos (arriba) y ocultos ("proveedor::modelo")
     "model_favorites": [],
     "model_hidden": [],

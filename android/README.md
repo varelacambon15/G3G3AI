@@ -2,7 +2,7 @@
 
 Dos formas de uso:
 
-1. **Conectar a un equipo** (Konkr o PC con G3G3AI): todas las funciones, incluidos modelos locales,
+1. **Conectar a un equipo** (otro equipo con G3G3AI): todas las funciones, incluidos modelos locales,
    agente, búsqueda web y archivos.
 2. **💬 Chat directo con API**: sin equipo encendido. La app habla directamente con DeepSeek, Claude, OpenAI,
    Gemini, OpenRouter, Groq o cualquier API compatible con OpenAI. Respuestas en streaming, razonamiento,

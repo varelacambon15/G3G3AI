@@ -1,4 +1,4 @@
-"""Sincronización entre equipos con G3G3AI (p.ej. Konkr ↔ PC).
+"""Sincronización entre equipos con G3G3AI (p.ej. PC ↔ portátil).
 
 - Los equipos se emparejan con una **clave de sincronización** común (se genera en uno y se pega en el otro)
   y la dirección del otro equipo.
@@ -24,7 +24,7 @@ import httpx
 SYNC_KEYS = [
     "providers", "default_system_prompt", "temperature", "max_tokens",
     "router_mode", "router_fast", "router_strong", "ai_write", "ai_commands",
-    "web_provider", "web_api_key", "hf_token", "github_token", "agent_profile", "memory_enabled", "memory_auto", "memory_api",
+    "web_provider", "web_api_key", "hf_token", "github_token", "agent_profile", "command_allow", "memory_enabled", "memory_auto", "memory_api",
     "vision_fallback", "context_budget", "image_provider", "image_model", "image_mode", "image_size",
     "sd_steps", "sd_cfg", "model_favorites", "model_hidden",
 ]

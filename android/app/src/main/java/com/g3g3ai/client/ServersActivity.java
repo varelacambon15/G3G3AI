@@ -33,7 +33,7 @@ public class ServersActivity extends Activity {
         scroll.addView(root);
 
         TextView intro = new TextView(this);
-        intro.setText("Conéctate a G3G3AI en tu Konkr o tu PC. Ambos deben estar en la misma Wi-Fi que el móvil "
+        intro.setText("Conéctate a G3G3AI en tu PC. Ambos deben estar en la misma Wi-Fi que el móvil "
                 + "(o en Tailscale). La dirección y la contraseña aparecen en Ajustes → Acceso remoto.");
         intro.setTextColor(Color.parseColor("#75716A"));
         intro.setTextSize(14);
@@ -138,7 +138,7 @@ public class ServersActivity extends Activity {
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(dp(20), dp(8), dp(20), 0);
-        EditText name = field("Nombre (p.ej. Konkr)", cur != null ? cur.name : "", InputType.TYPE_CLASS_TEXT);
+        EditText name = field("Nombre (p.ej. Portátil)", cur != null ? cur.name : "", InputType.TYPE_CLASS_TEXT);
         EditText url = field("Dirección (p.ej. 192.168.1.50)", cur != null ? cur.url : "", InputType.TYPE_TEXT_VARIATION_URI);
         EditText token = field("Contraseña", cur != null ? cur.token : "",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
@@ -198,7 +198,7 @@ public class ServersActivity extends Activity {
     public boolean onOptionsItemSelected(MenuItem item) {
         if (item.getItemId() == 1) {
             new AlertDialog.Builder(this).setTitle("G3G3AI")
-                    .setMessage("Cliente de G3G3AI (versión de prueba). La IA se ejecuta en tu Konkr o tu PC; "
+                    .setMessage("Cliente de G3G3AI (versión de prueba). La IA se ejecuta en tu PC; "
                             + "esta app sólo se conecta a ellos.")
                     .setPositiveButton("OK", null).show();
             return true;

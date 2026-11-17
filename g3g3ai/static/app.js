@@ -623,6 +623,7 @@ function approvalCard(a) {
     };
     card.append(h("div", { class: "row" },
       h("button", { class: "primary small", onclick: () => answer("yes") }, "Permitir"),
+      a.can_rule ? h("button", { class: "ghost small", title: "Guarda este comando en Ajustes → «Comandos permitidos» y no vuelve a preguntar", onclick: () => answer("rule") }, "Permitir este comando siempre") : null,
       a.can_always !== false ? h("button", { class: "ghost small", title: "No volver a preguntar por esta herramienta en esta conversación (salvo acciones peligrosas)", onclick: () => answer("always") }, "Permitir siempre aquí") : null,
       h("button", { class: "danger small", onclick: () => answer("no") }, "Denegar")));
   }
@@ -1072,8 +1073,8 @@ async function renderImageEngine() {
 function engineBox(kind = "llama") {
   const box = h("div", { class: "engine" },
     kind === "sd"
-      ? h("p", {}, h("b", {}, "Motor de imágenes (stable-diffusion.cpp)."), " En la Konkr: ./install.sh --with-sd. En PC puedes descargarlo ya compilado:")
-      : h("p", {}, h("b", {}, "Falta el motor llama.cpp."), " En la Konkr se instala con ./install.sh (compilado para su CPU). En PC puedes descargarlo ya compilado:"));
+      ? h("p", {}, h("b", {}, "Motor de imágenes (stable-diffusion.cpp)."), " En Linux: ./install.sh --with-sd. En Windows puedes descargarlo ya compilado:")
+      : h("p", {}, h("b", {}, "Falta el motor llama.cpp."), " En Linux se instala con ./install.sh (compilado para tu CPU). En Windows puedes descargarlo ya compilado:"));
   const list = h("div", {}, h("span", { class: "muted" }, "Consultando versiones…"));
   box.append(list);
   api("/api/engine/assets?kind=" + kind).then((r) => {
@@ -1367,7 +1368,7 @@ const FIELDS = [
   ["image_dir", "🎨 Carpeta de imágenes", "text", "Vacío = ~/G3G3AI-imagenes"],
   ["sd_steps", "🎨 Local: pasos", "number", "1–4 para modelos «turbo»; 20–30 para modelos normales."],
   ["sd_cfg", "🎨 Local: CFG", "number", "1.0 para «turbo»; ~7 para modelos normales."],
-  ["sd_max_side", "🎨 Local: tamaño máximo (px)", "number", "En la Konkr, 512 es razonable; más grande tarda mucho más."],
+  ["sd_max_side", "🎨 Local: tamaño máximo (px)", "number", "En equipos modestos, 512 es razonable; más grande tarda mucho más."],
   ["router_mode", "Modo Auto: estrategia", "router"],
   ["router_fast", "Modo Auto: modelo rápido", "model", "Normalmente el local (gratis, privado)."],
   ["router_strong", "Modo Auto: modelo potente", "model", "Normalmente una API (DeepSeek, Claude…). Se usa para código, análisis, documentos largos y el modo agente."],
@@ -1387,6 +1388,7 @@ const FIELDS = [
   ["agent_max_steps", "Pasos máximos del agente por respuesta", "number", "Cada llamada a una herramienta es un paso. Si se agota, escribe «continúa»."],
   ["agent_workdir", "Carpeta de trabajo del agente", "text", "Debe estar dentro de las carpetas que la IA puede modificar."],
   ["ai_game_write", "🎮 La IA puede trabajar con los juegos de Steam", "checkbox", "Lee y, pidiendo permiso cada vez, modifica las carpetas de los juegos y sus prefijos de Proton. Antes de cambiar un archivo guarda una copia «.g3g3ai-original»."],
+  ["command_allow", "Comandos permitidos sin preguntar (uno por línea)", "lines", "Se ejecutan sin pedir confirmación (salvo los peligrosos). Puedes usar * como comodín, p.ej. «npm test*» o «git status». Un comando encadenado (con ; & | >) sólo se admite si coincide exactamente."],
   ["write_roots", "Carpetas que la IA puede modificar (una por línea)", "lines", "Añade aquí tus proyectos. Fuera de estas carpetas la IA sólo puede leer."],
   ["blocked_paths", "Rutas protegidas (una por línea)", "lines", "Nadie puede verlas desde G3G3AI, ni la IA ni la interfaz. Sin barra = patrón de nombre (p.ej. .env, *.pem)."],
   ["command_sandbox", "Aislamiento de comandos", "sandbox"],
@@ -1395,7 +1397,7 @@ const FIELDS = [
   ["hf_token", "Token de Hugging Face (opcional)", "password", "Sólo para modelos restringidos."],
   ["github_token", "Token de GitHub (opcional)", "password", "Permite a la IA leer issues, PR y CI, y —pidiendo permiso— crear issues y pull requests. Crea uno en github.com/settings/tokens con acceso a los repos que quieras."],
   ["agent_profile", "Exigencia del agente según el modelo", "profile", "Automático ajusta herramientas y reglas a la potencia del modelo (pequeño, mediano, grande). Fuérzalo si un modelo local rinde mejor o peor de lo esperado."],
-  ["localhost_without_token", "El propio Konkr entra sin contraseña", "checkbox"],
+  ["localhost_without_token", "Este mismo equipo entra sin contraseña", "checkbox"],
   ["port", "Puerto", "number", "Requiere reiniciar el servicio."],
 ];
 async function loadSettings() {
@@ -1405,7 +1407,7 @@ async function loadSettings() {
   acc.append(h("p", {}, "Conecta el móvil o portátil a la misma red Wi-Fi y abre:"));
   for (const u of st.urls) acc.append(h("code", { class: "access-url" }, st.token ? `${u}/?token=${st.token}` : u));
   if (!st.urls.length) acc.append(h("p", { class: "muted" }, "No se detectó ninguna IP de red local."));
-  acc.append(h("p", {}, "Contraseña: ", st.token ? h("code", {}, st.token) : h("span", { class: "muted" }, "(sólo visible desde el propio Konkr)")));
+  acc.append(h("p", {}, "Contraseña: ", st.token ? h("code", {}, st.token) : h("span", { class: "muted" }, "(sólo visible desde el propio equipo)")));
   acc.append(h("p", { class: "muted" }, "Consejo: en el móvil usa «Añadir a pantalla de inicio» para tenerla como app. Para acceder fuera de casa, instala Tailscale en ambos dispositivos. ",
     "Otras apps compatibles con OpenAI pueden usar ", h("code", {}, `${st.urls[0] || "http://IP:" + S.settings.port}/v1`), " con la contraseña como API key."));
 
@@ -1496,7 +1498,7 @@ async function renderDevtools(refresh = false) {
 async function renderSync() {
   const box = $("#sync-box"); box.innerHTML = "";
   const st = await api("/api/sync/status");
-  box.append(h("p", { class: "muted" }, "Pon la misma clave en todos tus equipos con G3G3AI (Konkr, PC…) y añade la dirección del otro. "
+  box.append(h("p", { class: "muted" }, "Pon la misma clave en todos tus equipos con G3G3AI (PC, portátil…) y añade la dirección del otro. "
     + "Se sincronizan conversaciones, memoria y proveedores API (con sus claves). Cada equipo conserva sus carpetas, modelos locales y contraseña. "
     + `Todo viaja cifrado con la clave. Se sincroniza cada ${Math.round(st.interval / 60)} min.`));
   const keyRow = h("div", { class: "row" });
@@ -1613,11 +1615,11 @@ function loadSettingsProvidersOnly() {
   S.settings.providers.forEach((p, idx) => pe.append(providerBox(p, idx)));
 }
 $("#add-provider").addEventListener("click", () => {
-  const kind = prompt("¿Qué quieres añadir?\n1 = Otro equipo con G3G3AI (Konkr ↔ PC)\n2 = Ollama / LM Studio / servidor compatible con OpenAI", "1");
+  const kind = prompt("¿Qué quieres añadir?\n1 = Otro equipo con G3G3AI (PC ↔ portátil)\n2 = Ollama / LM Studio / servidor compatible con OpenAI", "1");
   if (!kind) return;
   let name, url, key = "";
   if (kind.trim() === "1") {
-    const ip = prompt("IP o nombre del otro equipo (p.ej. 192.168.1.50 o konkr-pocket-fit.local)"); if (!ip) return;
+    const ip = prompt("IP o nombre del otro equipo (p.ej. 192.168.1.50 o mi-portatil.local)"); if (!ip) return;
     name = prompt("Nombre", "G3G3AI en " + ip) || ip;
     url = `http://${ip.replace(/^https?:\/\//, "").replace(/\/.*$/, "")}${ip.includes(":") ? "" : ":8800"}/v1`;
     key = prompt("Contraseña de G3G3AI en ese equipo (Ajustes → Acceso remoto)") || "";

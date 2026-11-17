@@ -11,7 +11,7 @@ from .server import create_app, lan_addresses
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(prog="g3g3ai", description="Cliente de IA local + API para Konkr")
+    ap = argparse.ArgumentParser(prog="g3g3ai", description="Cliente de IA local + API")
     ap.add_argument("--host", help="Dirección de escucha (por defecto la de config, 0.0.0.0)")
     ap.add_argument("--port", type=int, help="Puerto (por defecto 8800)")
     ap.add_argument("--show-token", action="store_true", help="Muestra la contraseña de acceso y sale")

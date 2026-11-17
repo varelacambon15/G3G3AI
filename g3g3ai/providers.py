@@ -106,6 +106,18 @@ def limit_message(ctx) -> str:
             "o sube el límite en Ajustes.]")
 
 
+VERIFY_MSG = ("Has modificado archivos pero aún no has comprobado el resultado. Ejecuta {cmd} (o la verificación "
+              "que corresponda a lo que cambiaste), corrige lo que falle y entonces resume qué hiciste.")
+
+
+def verify_message(ctx) -> str | None:
+    """Mensaje para exigir una comprobación si hubo ediciones y el proyecto tiene pruebas reconocibles."""
+    if not ctx or not ctx.dirty or "run_command" not in ctx.names():
+        return None
+    hint = ctx.verify_hint()
+    return VERIFY_MSG.format(cmd=f"`{hint}`") if hint else None
+
+
 def announces_action(text: str) -> bool:
     """¿La respuesta termina anunciando un paso («Ahora leo X…») en vez de preguntar o concluir?"""
     tail = (text or "").strip()[-240:]
@@ -245,7 +257,7 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
     msgs = list(messages)
     local = p["base_url"].startswith(("http://127.0.0.1", "http://localhost"))
     max_tokens = max(int(opts.get("max_tokens") or 0), OPENAI_MIN_TOKENS)
-    continuations = nudges = 0
+    continuations = nudges = verifies = 0
     used_tools = False
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), trust_env=not local) as c:
         for _ in range(steps_for(ctx)):
@@ -327,6 +339,13 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                     msgs.append({"role": "assistant", "content": content})
                     msgs.append({"role": "user", "content": NUDGE_MSG})
                     continue
+                vmsg = verify_message(ctx) if verifies < 1 and finish in ("stop", None) else None
+                if vmsg:
+                    verifies += 1
+                    yield {"type": "status", "text": "↪ Se pide comprobar los cambios antes de terminar…"}
+                    msgs.append({"role": "assistant", "content": content or "(sin texto)"})
+                    msgs.append({"role": "user", "content": vmsg})
+                    continue
                 note = FINISH_NOTES.get(finish or "")
                 if finish is None and content:
                     note = FINISH_NOTES["dropped"]
@@ -364,7 +383,7 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
     system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
     msgs = [{"role": m["role"], "content": _anthropic_content(m["content"])}
             for m in messages if m["role"] in ("user", "assistant")]
-    continuations = nudges = 0
+    continuations = nudges = verifies = 0
     used_tools = False
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600)) as c:
         for _ in range(steps_for(ctx)):
@@ -418,6 +437,13 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
                     yield {"type": "status", "text": "↪ El modelo anunció un paso sin hacerlo; se le pide que continúe…"}
                     msgs.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
                     msgs.append({"role": "user", "content": NUDGE_MSG})
+                    continue
+                vmsg = verify_message(ctx) if verifies < 1 and stop_reason in ("end_turn", None) else None
+                if vmsg:
+                    verifies += 1
+                    yield {"type": "status", "text": "↪ Se pide comprobar los cambios antes de terminar…"}
+                    msgs.append({"role": "assistant", "content": [{"type": "text", "text": text or "(sin texto)"}]})
+                    msgs.append({"role": "user", "content": vmsg})
                     continue
                 note = FINISH_NOTES.get(stop_reason or "")
                 if stop_reason is None and text:

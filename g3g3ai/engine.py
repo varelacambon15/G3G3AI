@@ -1,6 +1,6 @@
 """Descarga del motor llama.cpp precompilado desde GitHub (para Windows, macOS y Linux x64).
 
-En la Konkr (ARM) se recomienda compilarlo con install.sh, que lo optimiza para su CPU.
+En Linux ARM se recomienda compilarlo con install.sh, que lo optimiza para la CPU.
 """
 from __future__ import annotations
 

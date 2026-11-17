@@ -215,7 +215,7 @@ function renderMessages() {
   if (!S.current?.messages.length) {
     box.append(h("div", { class: "empty" }, h("h1", {}, h("span", { class: "logo" }, "✦ "), "Hola"),
       h("p", {}, ready().length ? "Escribe abajo. Hablas directamente con la API, sin necesidad de tener el equipo encendido."
-        : "Pulsa ⚙ para importar tus APIs desde la Konkr o el PC, o pega una clave.")));
+        : "Pulsa ⚙ para importar tus APIs desde tu PC, o pega una clave.")));
     return;
   }
   for (const m of S.current.messages) box.append(messageEl(m));

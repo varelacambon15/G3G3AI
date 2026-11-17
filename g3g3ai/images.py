@@ -116,7 +116,7 @@ def _generate_local(cfg, prompt: str, size: str) -> Path:
     exe = find_sd(cfg)
     if not exe:
         raise ImageError("No está instalado stable-diffusion.cpp. Instálalo en Modelos → Imágenes "
-                         "(o con ./install.sh --with-sd en Linux/Konkr).")
+                         "(o con ./install.sh --with-sd en Linux).")
     model = cfg["sd_model"] or ""
     if not model or not Path(model).is_file():
         raise ImageError("Elige un modelo de imagen local en Modelos (botón «🎨 Usar para imágenes»).")
@@ -124,7 +124,7 @@ def _generate_local(cfg, prompt: str, size: str) -> Path:
     w, h = int(w or 512), int(h or w or 512)
     if cfg["sd_max_side"]:
         m = int(cfg["sd_max_side"])
-        if max(w, h) > m:  # en la Konkr, imágenes grandes tardan muchísimo
+        if max(w, h) > m:  # en equipos lentos, las imágenes grandes tardan muchísimo
             w, h = (m, int(h * m / w)) if w >= h else (int(w * m / h), m)
     w, h = w - w % 64 or 64, h - h % 64 or 64
     out = _target(cfg, prompt)

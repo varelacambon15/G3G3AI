@@ -1,6 +1,6 @@
 # G3G3AI
 
-Cliente de IA al estilo de LM Studio para tu **Konkr Pocket Fit** (SteamOS ARM) y tu **PC**, al que te conectas también desde el **móvil**. Combina modelos locales (llama.cpp) con modelos por API (DeepSeek, Claude, OpenAI…) y puede trabajar como **agente** sobre tus archivos.
+Cliente de IA al estilo de LM Studio para tus **PC** (Windows, Linux, macOS), al que te conectas también desde el **móvil**. Combina modelos locales (llama.cpp) con modelos por API (DeepSeek, Claude, OpenAI…) y puede trabajar como **agente** sobre tus archivos.
 
 ## Qué hace
 
@@ -14,31 +14,26 @@ Cliente de IA al estilo de LM Studio para tu **Konkr Pocket Fit** (SteamOS ARM) 
 - 🗜 **Conversaciones largas**: cuando no caben en el contexto, lo antiguo se resume solo, y en las tareas largas del agente se recortan las salidas viejas de las herramientas.
 - 🎨 **Generación de imágenes**: por API (OpenAI, Gemini, OpenRouter…) o en local con stable-diffusion.cpp. Escribe `/imagen descripción` o pídeselo a la IA.
 - 🧠 **Memoria entre conversaciones**: recuerda datos duraderos sobre ti (preferencias, proyectos…). Cada recuerdo nuevo se ve en el chat y puedes editarlos o borrarlos en Ajustes → Memoria.
-- 🔄 **Sincronización Konkr ↔ PC**: con una clave común se sincronizan conversaciones, memoria y APIs. Además, cada equipo puede usar el modelo local del otro (Ajustes → Añadir proveedor → «Otro equipo con G3G3AI»).
+- 🔄 **Sincronización entre equipos**: con una clave común se sincronizan conversaciones, memoria y APIs. Además, cada equipo puede usar el modelo local del otro (Ajustes → Añadir proveedor → «Otro equipo con G3G3AI»).
 - ✦ **Interfaz cuidada**: barra lateral con búsqueda y conversaciones por fecha, compositor con menú «+» y herramientas, vista previa de HTML/SVG en un panel lateral, modo claro y oscuro.
 - 📱 **Desde el móvil**: interfaz web protegida con contraseña, instalable como app.
 - 📁 Explorador de archivos, subida y descarga, adjuntos en el chat.
 
 ## Instalación
 
-### Konkr (SteamOS ARM) — con acceso desde Big Picture
+### Linux (x64 y ARM, incluido SteamOS)
 
-No necesita root ni desbloquear el sistema. En el **modo escritorio**, abre Konsole:
+No necesita root. En una terminal:
 
 ```bash
 git clone https://github.com/varelacambon15/G3G3AI.git ~/G3G3AI
 cd ~/G3G3AI && ./install.sh
 ```
 
-También puedes hacer doble clic en `konkr/Instalar G3G3AI.desktop`.
-
 El instalador:
-1. compila llama.cpp optimizado para el procesador de la Konkr (unos 10–20 minutos);
+1. compila llama.cpp optimizado para tu procesador (unos 10–20 minutos);
 2. crea un servicio que arranca G3G3AI solo al iniciar sesión;
-3. instala Chromium (Flatpak, solo para tu usuario) si no tienes navegador;
-4. añade **G3G3AI a Steam**: en el modo juego, ve a **Biblioteca → No de Steam → G3G3AI**. Se abre a pantalla completa, y al salir con el botón Steam el servidor sigue encendido para el móvil.
-
-Si no se puede añadir a Steam automáticamente, el instalador te explica cómo hacerlo a mano (son 3 pasos). Para el teclado en pantalla en modo juego, pulsa **Steam + X**. Para cambiar el tamaño de la interfaz, usa la variable `G3G3AI_SCALE` (por defecto 1.25).
+3. instala Chromium (Flatpak, solo para tu usuario) si no tienes navegador.
 
 Para actualizar: `cd ~/G3G3AI && git pull && ./install.sh`
 
@@ -61,7 +56,7 @@ En Linux x64 también hay un binario `G3G3AI-linux-x64` en Releases/Actions.
 
 ### Android
 
-- **App (APK):** se conecta a tu Konkr o PC, y además tiene un **💬 Chat directo con API** para usar DeepSeek, Claude, OpenAI… desde el móvil sin ningún equipo encendido. Las claves se importan de un equipo con un toque. Ver `android/README.md`.
+- **App (APK):** se conecta a tu PC, y además tiene un **💬 Chat directo con API** para usar DeepSeek, Claude, OpenAI… desde el móvil sin ningún equipo encendido. Las claves se importan de un equipo con un toque. Ver `android/README.md`.
 - **Como cliente web** (sin instalar nada): abre en el navegador la dirección que aparece en Ajustes → Acceso remoto, y usa «Añadir a pantalla de inicio».
 - **Como servidor** (experimental): con [Termux](https://f-droid.org/packages/com.termux/) y `bash android/termux-install.sh`. Funciona con modelos pequeños (1–3B). Android puede cerrar Termux en segundo plano.
 
@@ -100,7 +95,7 @@ Junto al selector de modelo hay tres casillas: **🔀 Auto**, **🌐 Web** (busc
 **Permisos** (Ajustes): escribir/editar y ejecutar comandos pueden estar en *Desactivado*, *Preguntar* (por defecto) o *Automático*. Con *Preguntar* verás el cambio exacto o el comando, con **Permitir**, **Permitir siempre aquí** (no vuelve a preguntar por esa herramienta en esa conversación) y **Denegar**. Si la pestaña está en segundo plano, recibirás una notificación.
 
 **Comandos:**
-- 🛡 **Aislamiento (Linux y Konkr):** se ejecutan con *bubblewrap*, el mismo aislamiento que usa Flatpak. Ven el sistema en solo lectura, solo pueden escribir en las carpetas modificables (y en un `/tmp` temporal), y las rutas protegidas aparecen vacías. El aislamiento no puede ocultar las rutas protegidas por patrón (como `.env`): solo las indicadas con ruta completa.
+- 🛡 **Aislamiento Linux:** se ejecutan con *bubblewrap*, el mismo aislamiento que usa Flatpak. Ven el sistema en solo lectura, solo pueden escribir en las carpetas modificables (y en un `/tmp` temporal), y las rutas protegidas aparecen vacías. El aislamiento no puede ocultar las rutas protegidas por patrón (como `.env`): solo las indicadas con ruta completa.
 - **Sin aislamiento (Windows, macOS):** se pide confirmación siempre, aunque estén en *Automático*. «Permitir siempre aquí» sí lo evita dentro de una conversación.
 - **Bloqueados siempre:** `rm -rf /` o `~`, formatear discos, escribir directamente en discos, bombas fork…
 - **Siempre preguntan**, incluso en *Automático* o con «permitir siempre»: `sudo`, `curl … | sh`, apagar o reiniciar, borrados recursivos, `git push --force`, servicios del sistema, el registro de Windows…
@@ -113,7 +108,7 @@ Junto al selector de modelo hay tres casillas: **🔀 Auto**, **🌐 Web** (busc
 - Al empezar cada conversación recibe tus recuerdos como contexto.
 - En **Ajustes → 🧠 Memoria** puedes ver, editar, añadir y borrar recuerdos. En «General» puedes desactivar la memoria, impedir que la IA guarde recuerdos por su cuenta, o no enviar la memoria a las APIs externas (así solo la conoce el modelo local).
 - No guarda nada que parezca una contraseña o una clave.
-- Cada equipo (Konkr, PC) tiene su propia memoria.
+- Cada equipo (PC, portátil) tiene su propia memoria.
 
 ### Fotos y documentos
 
@@ -132,15 +127,15 @@ Cuando una conversación no cabe en el contexto (el del modelo local, o «Contex
 
 - **Uso:** escribe `/imagen un gato astronauta` (o pulsa 🎨), o pide en el chat «dibújame…» y la IA usará la herramienta `generate_image`. Las imágenes aparecen en el chat y se guardan en `~/G3G3AI-imagenes`.
 - **Por API** (Ajustes → 🎨 Imágenes): elige el proveedor y el modelo. Por ejemplo, OpenAI con `gpt-image-1`, Gemini con `imagen-3.0-generate-002` u OpenRouter con `google/gemini-2.5-flash-image`.
-- **En local** (Modelos → 🎨 Generación de imágenes): instala stable-diffusion.cpp (en el PC, con un botón; en la Konkr, con `./install.sh --with-sd`), descarga un modelo de imagen GGUF (por ejemplo, SD Turbo) y pulsa 🎨 en él. En la Konkr, cuenta con bastante espera por imagen y calidad modesta. En un PC con tarjeta gráfica va mucho mejor.
+- **En local** (Modelos → 🎨 Generación de imágenes): instala stable-diffusion.cpp (en Windows con un botón; en Linux con `./install.sh --with-sd`), descarga un modelo de imagen GGUF (por ejemplo, SD Turbo) y pulsa 🎨 en él. En el otro equipo, cuenta con bastante espera por imagen y calidad modesta. En un PC con tarjeta gráfica va mucho mejor.
 
-### Sincronizar la Konkr y el PC
+### Sincronizar tus equipos
 
 1. En uno de los equipos: **Ajustes → 🔄 Sincronización → Generar clave nueva**. Copia la clave (6 grupos de 4 letras y números).
 2. En el otro equipo: pega la clave en el mismo sitio y pulsa **Guardar clave**.
 3. En cualquiera de los dos, añade la dirección del otro (por ejemplo `192.168.1.50`, la ves en su *Ajustes → Acceso remoto*) y pulsa **Sincronizar ahora**. A partir de ahí se sincronizan solos cada 2 minutos.
 
-**Qué se sincroniza:** conversaciones, memoria, proveedores API **con sus claves** (si configuras DeepSeek en el PC, aparece en la Konkr), modo Auto, instrucciones, permisos del agente y ajustes de imágenes y búsqueda web.
+**Qué se sincroniza:** conversaciones, memoria, proveedores API **con sus claves** (si configuras DeepSeek en el PC, aparece en el otro equipo), modo Auto, instrucciones, permisos del agente y ajustes de imágenes y búsqueda web.
 **Qué no:** las carpetas, los modelos locales, el puerto y la contraseña de cada equipo. Los archivos adjuntos y las imágenes tampoco se copian: en el otro equipo se verá el texto de la conversación.
 **Seguridad:** todo viaja cifrado y autenticado con la clave (AES + HMAC). Un equipo sin la clave no puede leer ni enviar nada. Si el mismo dato cambia en los dos equipos, gana el cambio más reciente.
 
@@ -162,7 +157,7 @@ En el modo 🛠 Agente, la IA tiene dos herramientas:
 - Se desactiva en Ajustes → «La IA puede trabajar con los juegos de Steam».
 - De `config.vdf` (que contiene datos de tu sesión de Steam) solo se lee la sección de Proton.
 
-**Comandos para Konsole:**
+**Comandos:**
 - Los comandos van aislados.
 - Si uno necesita escribir fuera de las carpetas permitidas (por ejemplo `flatpak install --user`), la IA puede pedir ejecutarlo **fuera del aislamiento**. Esos comandos siempre piden permiso, con aviso.
 - La IA sabe que SteamOS tiene el sistema de solo lectura (usa Flatpak o la carpeta personal en vez de pacman) y que en ARM los juegos x86 pasan por una capa de traducción.
@@ -189,7 +184,7 @@ En el modo 🛠 Agente, la IA tiene dos herramientas:
 **Permisos:**
 - Compilar ejecuta código, así que pide permiso igual que los comandos.
 - Si el programa necesita librerías de internet (`pip`), **siempre** te lo pregunta.
-- En Linux y la Konkr, `build_exe` crea ejecutables de Linux. Los `.exe` de Windows se crean en el PC con Windows.
+- En Linux, `build_exe` crea ejecutables de Linux. Los `.exe` de Windows se crean en el PC con Windows.
 
 ### ⭐ Favoritos y modelos ocultos
 
@@ -222,6 +217,8 @@ Según el modelo elegido (o lo que fijes en Ajustes → «Exigencia del agente»
 - **Ayudantes (`delegate`):** para investigar sin llenar el contexto, el agente lanza un ayudante de sólo lectura con contexto propio que devuelve un informe breve con rutas y datos.
 - **Escribe mientras trabaja:** pulsa Intro y el mensaje queda en cola; se envía al terminar.
 - **Atajos:** `Esc` detiene · `Mayús+Tab` cambia de modo (Normal → Aceptar ediciones → Plan) · `Ctrl/Cmd+Mayús+O` conversación nueva.
+- **Permisos a tu medida:** en el aviso de un comando pulsa «Permitir este comando siempre»; se guarda en Ajustes → «Comandos permitidos» (admite `*`, p.ej. `npm test*`). Los peligrosos siguen pidiendo permiso y un comando encadenado (`;`, `&&`, `|`) solo pasa si coincide exacto.
+- **Comprueba lo que hace:** si edita archivos de un proyecto con pruebas reconocibles (pytest, npm, cargo, go) y no las ejecuta, se le pide que las pase antes de dar la tarea por terminada.
 
 ### 🛠 Cómo trabaja el agente
 
@@ -272,9 +269,9 @@ En **Modelos → Ollama**:
 
 ## Modelos recomendados
 
-En la Konkr (8 GB de RAM), mejor modelos de 3–4B en versión Q4_K_M: **Qwen3 4B** (bueno con herramientas y en modo agente), **Gemma 3 4B**, **Llama 3.2 3B**, **Qwen2.5 Coder 3B**. En un PC con 16 GB o más y tarjeta gráfica puedes usar modelos de 7–14B.
+Con 8 GB de RAM, mejor modelos de 3–4B en versión Q4_K_M: **Qwen3 4B** (bueno con herramientas y en modo agente), **Gemma 3 4B**, **Llama 3.2 3B**, **Qwen2.5 Coder 3B**. En un PC con 16 GB o más y tarjeta gráfica puedes usar modelos de 7–14B.
 
-## Comandos útiles (Linux / Konkr)
+## Comandos útiles (Linux)
 
 ```bash
 systemctl --user restart g3g3ai     # reiniciar
@@ -310,7 +307,6 @@ g3g3ai/
   hub.py        Hugging Face
   desktop.py    app de escritorio (.exe)
   static/       interfaz web
-konkr/          lanzador para Big Picture, integración con Steam
 android/        instalación experimental en Termux
 packaging/      especificación de PyInstaller e icono
 ```

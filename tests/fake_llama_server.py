@@ -52,7 +52,7 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(b"data: [DONE]\n\n"); return
         if "generate_image" in names and last["role"] == "user" and "dibuja" in str(last["content"]):
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "g1", "function": {
-                "name": "generate_image", "arguments": json.dumps({"prompt": "a cat on a Konkr"})}}]}}]})
+                "name": "generate_image", "arguments": json.dumps({"prompt": "a cat on a desk"})}}]}}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
         if "memory_save" in names and last["role"] == "user" and "recuerda que" in last["content"]:
             fact = last["content"].split("recuerda que", 1)[1].strip()
