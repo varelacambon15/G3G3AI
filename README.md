@@ -206,6 +206,15 @@ Con un **token de GitHub** (Ajustes → «Token de GitHub», o la variable `GITH
 - **Git** con `run_command`: crea ramas, commits y `git push` (el push siempre pide confirmación; los push forzados avisan como peligrosos). Usa el remoto `origin` de la carpeta del proyecto.
 Flujo típico: «arregla el issue #12» → lee el issue, crea una rama, edita, ejecuta los tests, hace commit, te pide permiso para el push, abre el PR y comprueba el CI.
 
+### 🔌 Servidores MCP
+Conecta herramientas externas con el estándar **MCP** (archivos, bases de datos, Jira, navegador…). En Ajustes → «Servidores MCP» añade una línea por servidor:
+
+```
+archivos = npx -y @modelcontextprotocol/server-filesystem C:\Proyectos
+basedatos = DB_URL=postgres://… npx -y @modelcontextprotocol/server-postgres
+```
+Sus herramientas aparecen al agente como `mcp__servidor__herramienta`. **Cada llamada te pide permiso** (puedes marcar «Permitir siempre aquí»), no se usan en modo Plan y un servidor roto no afecta a los demás. «Probar servidores» muestra su estado y sus herramientas. Los servidores se ejecutan con tus permisos de usuario: instala sólo los que conozcas.
+
 ### 🎚 Se adapta al modelo
 Según el modelo elegido (o lo que fijes en Ajustes → «Exigencia del agente»):
 - **Pequeño** (≤8B o desconocido en local): pocas herramientas, reglas cortas, una llamada a la vez y salidas de herramientas más pequeñas, para que acierte más.

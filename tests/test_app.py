@@ -1705,3 +1705,30 @@ def test_parallel_write_helpers_work_in_isolated_copies(env):
     assert len(results) == 2 and all("Propuesta" in r["result"] and ".txt" in r["result"] for r in results)
     assert "Propuestas listas" in "".join(e["text"] for e in evs if e["type"] == "content")
     assert not (proj / "uno.txt").exists() and not (proj / "dos.txt").exists()   # nada tocó los archivos reales
+
+
+def test_mcp_servers_expose_tools_with_permission(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    from g3g3ai import mcp
+    fake = Path(__file__).parent / "fake_mcp_server.py"
+    py = sys.executable.replace("\\", "/")
+    assert mcp.parse_servers(["fake = FOO=1 python -u 'a b' c", "mal formado", "  = nada"]) == [
+        {"name": "fake", "argv": ["python", "-u", "a b", "c"], "env": {"FOO": "1"}}]
+    cfg.set("mcp_servers", [f'fake = "{py}" "{fake}"', "roto = no-existe-este-programa"])
+    st = client.get("/api/mcp", headers=h).json()["servers"]
+    by = {s["name"]: s for s in st}
+    assert by["fake"]["ok"] and {t["name"] for t in by["fake"]["tools"]} == {"echo", "falla"}
+    assert not by["roto"]["ok"] and by["roto"]["error"]                        # un servidor roto no tumba a los demás
+    ctx = _ctx(cfg)
+    ctx.mcp = client.app.state.mcp
+    assert "mcp__fake__echo" in ctx.names() and "mcp__fake__falla" in ctx.names()
+    assert any(t["function"]["name"] == "mcp__fake__echo" and t["function"]["parameters"]["required"] == ["text"]
+               for t in ctx.openai_specs())
+    assert ctx.mode("mcp__fake__echo") == "ask"                                # siempre con permiso
+    # el servidor MCP vive en el bucle de eventos de la app: las llamadas se hacen desde él
+    assert client.portal.call(ctx.run, "mcp__fake__echo", {"text": "hola"}) == "eco: hola"
+    assert client.portal.call(ctx.run, "mcp__fake__falla", {}).startswith("Error de la herramienta: boom")
+    ctx.perm_mode = "plan"
+    assert not any(n.startswith("mcp__") for n in ctx.names())                 # en modo Plan no se usan

@@ -29,6 +29,7 @@ from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
 from . import backup, costs, profiles, subagent
+from .mcp import MCPManager
 from .profiles import profile_for
 from .undo import UndoJournal
 from .engine import EngineInstaller
@@ -109,6 +110,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     engines = {"llama": EngineInstaller(cfg, "llama"), "sd": EngineInstaller(cfg, "sd")}
     memory = Memory(db)
     sync = Sync(cfg, db, memory)
+    mcp_mgr = MCPManager(cfg)
     session_allow: dict[str, set] = {}  # conversación -> herramientas permitidas «siempre»
     session_state: dict[str, dict] = {}  # conversación -> {"read": archivos leídos, "todos": plan de la tarea}
 
@@ -130,9 +132,11 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         sync.start()
         yield
         sync.stop()
+        await mcp_mgr.stop()
         await llama.unload()
 
     app = FastAPI(title="G3G3AI", version=__version__, lifespan=lifespan)
+    app.state.mcp = mcp_mgr
     app.state.cfg, app.state.db, app.state.llama, app.state.hub = cfg, db, llama, hub
 
     # --- Autenticación --------------------------------------------------------------
@@ -305,6 +309,14 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             return await asyncio.to_thread(backup.import_bytes, sync, raw, str(body.get("password") or ""))
         except backup.BackupError as e:
             raise HTTPException(400, str(e))
+
+    @app.get("/api/mcp")
+    async def mcp_status(refresh: bool = True):
+        if refresh:
+            await mcp_mgr.refresh(force=True)
+        else:
+            mcp_mgr._sync_servers()
+        return {"servers": mcp_mgr.status()}
 
     @app.get("/api/usage")
     async def usage(days: int = 0):
@@ -503,6 +515,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                              session_allow=session_allow.setdefault(cid, set()), memory=mem, source=cid,
                              image_gen=img, state=state_for(cid, conv), perm_mode=perm_mode,
                              workdir=conv.get("workdir") or None, checkpoint=turn_mid or last_user_id)
+            tc.mcp = mcp_mgr if (agent and mcp_mgr.map) else None
             tc.profile = profile_for(chosen_pid, (llama.status()["model"] or "") if chosen_pid == LOCAL_PROVIDER else chosen_model,
                                      chosen_pid == LOCAL_PROVIDER,
                                      cfg["agent_profile"] or "auto")
@@ -575,6 +588,11 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                 stats["message_id"] = db.add_message(cid, "assistant", content, None, meta)
                 yield sse({"type": "done", **stats})
                 return
+            if agent and cfg["mcp_servers"]:
+                try:
+                    await asyncio.wait_for(mcp_mgr.refresh(), 45)
+                except asyncio.TimeoutError:
+                    pass
             try:
                 for i, (cpid, cmodel, why) in enumerate(candidates):
                     p = provider_for(cpid)

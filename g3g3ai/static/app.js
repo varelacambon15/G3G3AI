@@ -1437,6 +1437,7 @@ const FIELDS = [
   ["ai_game_write", "🎮 La IA puede trabajar con los juegos de Steam", "checkbox", "Lee y, pidiendo permiso cada vez, modifica las carpetas de los juegos y sus prefijos de Proton. Antes de cambiar un archivo guarda una copia «.g3g3ai-original»."],
   ["monthly_budget_usd", "Límite de gasto mensual estimado ($)", "number", "Te avisa al llegar al 80% y al 100%. 0 = sin aviso."],
   ["model_prices", "Precios por modelo ($ por millón de tokens, uno por línea)", "lines", "Formato: «modelo = entrada, salida», p.ej. «deepseek-chat = 0.27, 1.10». Sobrescribe los precios orientativos."],
+  ["mcp_servers", "Servidores MCP (uno por línea)", "lines", "Formato: nombre = [VAR=valor] comando args. Se guardan al pulsar «Guardar ajustes»; luego usa «Probar servidores»."],
   ["command_allow", "Comandos permitidos sin preguntar (uno por línea)", "lines", "Se ejecutan sin pedir confirmación (salvo los peligrosos). Puedes usar * como comodín, p.ej. «npm test*» o «git status». Un comando encadenado (con ; & | >) sólo se admite si coincide exactamente."],
   ["write_roots", "Carpetas que la IA puede modificar (una por línea)", "lines", "Añade aquí tus proyectos. Fuera de estas carpetas la IA sólo puede leer."],
   ["blocked_paths", "Rutas protegidas (una por línea)", "lines", "Nadie puede verlas desde G3G3AI, ni la IA ni la interfaz. Sin barra = patrón de nombre (p.ej. .env, *.pem)."],
@@ -1473,6 +1474,20 @@ $("#bk-file").addEventListener("change", async (e) => {
     $("#bk-pass").value = ""; loadSettings();
   } catch (er) { toast(er.message, 6000); }
 });
+async function renderMcp(refresh = false) {
+  const box = $("#mcp-box"); box.innerHTML = "";
+  box.append(h("p", { class: "muted" }, "Conecta herramientas externas (archivos, bases de datos, Jira, navegador…) con el estándar MCP. Añade una línea por servidor en «Servidores MCP» más abajo, p. ej. ",
+    h("code", {}, "archivos = npx -y @modelcontextprotocol/server-filesystem C:\\Proyectos"), ". Cada llamada te pide permiso."));
+  try {
+    const { servers } = await api("/api/mcp?refresh=" + refresh);
+    if (!servers.length) box.append(h("p", { class: "muted" }, "No hay servidores configurados."));
+    for (const s of servers) box.append(h("div", { class: "mcp-server" },
+      h("b", {}, (s.ok ? "🟢 " : "🔴 ") + s.name), " ", h("code", {}, s.command),
+      s.error ? h("div", { class: "muted" }, "⚠ " + s.error) : null,
+      s.tools.length ? h("ul", { class: "mcp-tools" }, s.tools.map((t) => h("li", { title: t.description }, t.name))) : null));
+  } catch (e) { box.append(h("p", { class: "muted" }, e.message)); }
+  box.append(h("button", { class: "ghost small", onclick: async (ev) => { ev.target.disabled = true; ev.target.textContent = "Comprobando…"; await renderMcp(true); } }, "Probar servidores"));
+}
 async function renderUsage() {
   const box = $("#usage-box"); box.innerHTML = "";
   try {
@@ -1512,6 +1527,7 @@ async function loadSettings() {
   renderSync();
   renderDevtools();
   renderUsage();
+  renderMcp();
 
   const f = $("#settings-form"); f.innerHTML = "";
   for (let [key, label, type, hint] of FIELDS) {

@@ -278,6 +278,7 @@ class ToolContext:
         self.todos_dirty = False
         self.dirty = False  # se han modificado archivos y aún no se ha ejecutado nada para comprobarlo
         self.subagent: Callable[..., Awaitable[str]] | None = None  # lo fija el servidor: (tarea, write=False)
+        self.mcp = None              # MCPManager (herramientas externas), lo fija el servidor
         self.auto_all = False        # ayudante en copia aislada: edita y ejecuta sin pedir permiso (nunca pide nada)
         self.live = None            # callback para emitir la salida de un comando mientras corre
         self.cancel = threading.Event()
@@ -294,6 +295,8 @@ class ToolContext:
             return "auto" if (self.perm_mode == "edits" and m != "off") else m
         if name in COMMAND_TOOLS:
             return self.cfg["ai_commands"] or "off"
+        if name.startswith("mcp__"):
+            return "ask"  # herramientas externas: siempre con permiso (se puede «permitir siempre aquí»)
         return "auto"
 
     SHELL_META = set(";&|<>`$\n\r")
@@ -357,6 +360,8 @@ class ToolContext:
                 out += ["delegate", "delegate_edit", "apply_patch"]
         if self.agent and github.token(self.cfg):
             out.append("github")
+        if self.agent and self.mcp and not plan:
+            out += list(self.mcp.map)
         if self.web:
             out += ["web_search", "fetch_url"]
         if self.memory is not None:
@@ -364,15 +369,18 @@ class ToolContext:
         if self.image_gen is not None and not plan:
             out.append("generate_image")
         if self.profile == "small":  # modelos pequeños: pocas herramientas, para que acierten al elegir
-            out = [n for n in out if n in profiles.SMALL_TOOLS]
+            out = [n for n in out if n in profiles.SMALL_TOOLS or n.startswith("mcp__")]
         return out
 
+    def _spec(self, n: str) -> tuple[str, dict]:
+        return ALL_SPECS[n] if n in ALL_SPECS else self.mcp.specs()[n]
+
     def openai_specs(self) -> list[dict]:
-        return [{"type": "function", "function": {"name": n, "description": ALL_SPECS[n][0],
-                                                  "parameters": ALL_SPECS[n][1]}} for n in self.names()]
+        return [{"type": "function", "function": {"name": n, "description": self._spec(n)[0],
+                                                  "parameters": self._spec(n)[1]}} for n in self.names()]
 
     def anthropic_specs(self) -> list[dict]:
-        return [{"name": n, "description": ALL_SPECS[n][0], "input_schema": ALL_SPECS[n][1]} for n in self.names()]
+        return [{"name": n, "description": self._spec(n)[0], "input_schema": self._spec(n)[1]} for n in self.names()]
 
     def _steam_present(self) -> bool:
         if not hasattr(self, "_steam"):
@@ -588,6 +596,8 @@ class ToolContext:
             if name == "github":
                 default = await asyncio.to_thread(github.repo_from_remote, self.workdir())
                 return await github.call(self.cfg, args, default)
+            if self.mcp and name in self.mcp.map:
+                return await self.mcp.call(name, args)
             if name in ("delegate", "delegate_edit"):
                 if not self.subagent:
                     return "Error: los ayudantes no están disponibles."
