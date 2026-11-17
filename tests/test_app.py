@@ -228,6 +228,7 @@ def test_edit_file_tool(env):
     import asyncio
     (home / "a.py").write_text("x = 1\ny = 2\n")
     ctx = ToolContext(Files(cfg), cfg)
+    asyncio.run(ctx.run("read_file", {"path": str(home / "a.py")}))  # hay que leer antes de editar
     r = asyncio.run(ctx.run("edit_file", {"path": str(home / "a.py"), "old_text": "y = 2", "new_text": "y = 3"}))
     assert r.startswith("Editado") and (home / "a.py").read_text() == "x = 1\ny = 3\n"
     r = asyncio.run(ctx.run("edit_file", {"path": str(home / "a.py"), "old_text": "nada", "new_text": ""}))
@@ -777,7 +778,8 @@ def test_steam_game_diagnostics_and_safe_edits(env, monkeypatch):
     assert "TOKEN-SECRETO" not in out  # de config.vdf sólo se lee la sección de Proton
     # La IA puede leer y modificar archivos del juego (fuera de sus carpetas normales) siempre con permiso + copia
     ini = root / "steamapps" / "common" / "Elden Ring" / "Game" / "settings.ini"
-    err, strong, _ = ctx.precheck("edit_file", {"path": str(ini)})
+    asyncio.run(ctx.run("read_file", {"path": str(ini)}))
+    err, strong, _ = ctx.precheck("edit_file", {"path": str(ini), "old_text": "fullscreen=1", "new_text": "fullscreen=0"})
     assert err is None and strong and "juego" in strong[0]
 
     async def edit():
@@ -1065,3 +1067,199 @@ def test_model_favorites_and_hidden_are_saved_and_synced(env):
     assert cfg["settings_updated"] > before  # cuenta como cambio de ajustes comunes: viaja con la sincronización
     from g3g3ai.sync import SYNC_KEYS
     assert {"model_favorites", "model_hidden"} <= set(SYNC_KEYS)
+
+
+# --- Disciplina del agente: leer antes de editar, edición robusta, grep, plan, deshacer ---------------
+def _ctx(cfg, **kw):
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    return ToolContext(Files(cfg), cfg, **kw)
+
+
+def test_must_read_before_edit_and_detect_external_changes(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    f = home / "m.txt"
+    f.write_text("uno\ndos\n")
+    ctx = _ctx(cfg)
+    err, _, _ = ctx.precheck("edit_file", {"path": str(f), "old_text": "uno", "new_text": "1"})
+    assert err and "léelo con read_file" in err
+    assert asyncio.run(ctx.run("edit_file", {"path": str(f), "old_text": "uno", "new_text": "1"})).startswith("Error")
+    assert f.read_text() == "uno\ndos\n"                          # y no se tocó
+    err, _, _ = ctx.precheck("write_file", {"path": str(f), "content": "x"})
+    assert err and "léelo con read_file" in err
+    asyncio.run(ctx.run("read_file", {"path": str(f)}))
+    assert ctx.precheck("edit_file", {"path": str(f), "old_text": "uno", "new_text": "1"})[0] is None
+    import os, time
+    time.sleep(0.01)
+    f.write_text("uno\ndos\ntres\n")  # alguien lo cambia por fuera
+    os.utime(f, ns=(time.time_ns(), time.time_ns() + 5_000_000))
+    err, _, _ = ctx.precheck("edit_file", {"path": str(f), "old_text": "uno", "new_text": "1"})
+    assert err and "ha cambiado desde que lo leíste" in err
+    # Un archivo nuevo no necesita lectura previa
+    assert ctx.precheck("write_file", {"path": str(home / "nuevo.txt"), "content": "x"})[0] is None
+
+
+def test_edit_file_multiple_edits_eol_bom_and_hints(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    f = home / "win.txt"
+    f.write_bytes(b"\xef\xbb\xbfalfa\r\nbeta\r\ngamma\r\n")
+    ctx = _ctx(cfg)
+    asyncio.run(ctx.run("read_file", {"path": str(f)}))
+    r = asyncio.run(ctx.run("edit_file", {"path": str(f), "edits": [
+        {"old_text": "alfa", "new_text": "ALFA"}, {"old_text": "beta\ngamma", "new_text": "BETA\nGAMMA"}]}))
+    assert r.startswith("Editado") and "2 cambios" in r
+    assert f.read_bytes() == b"\xef\xbb\xbfALFA\r\nBETA\r\nGAMMA\r\n"  # BOM y CRLF intactos
+    # Si un cambio falla no se aplica ninguno, y la pista señala la línea parecida
+    err, _, _ = ctx.precheck("edit_file", {"path": str(f), "edits": [
+        {"old_text": "ALFA", "new_text": "x"}, {"old_text": "BETA  ", "new_text": "y"}]})
+    assert err and "Cambio 2" in err
+    err, _, _ = ctx.precheck("edit_file", {"path": str(f), "old_text": "BTA", "new_text": "y"})
+    assert err and "línea más parecida" in err
+    g = home / "rep.txt"
+    g.write_text("a a a\n")
+    asyncio.run(ctx.run("read_file", {"path": str(g)}))
+    assert "aparece 3 veces" in ctx.precheck("edit_file", {"path": str(g), "old_text": "a", "new_text": "b"})[0]
+    r = asyncio.run(ctx.run("edit_file", {"path": str(g), "old_text": "a", "new_text": "b", "replace_all": True}))
+    assert r.startswith("Editado") and g.read_text() == "b b b\n"
+
+
+def test_approval_includes_diff(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    from g3g3ai.tools import PENDING, resolve_approval, tool_events
+    f = home / "d.py"
+    f.write_text("a = 1\nb = 2\n")
+    cfg.data.update(ai_write="ask")
+    ctx = _ctx(cfg)
+    asyncio.run(ctx.run("read_file", {"path": str(f)}))
+
+    async def go():
+        evs, sink = [], []
+        async def ok():
+            while not PENDING:
+                await asyncio.sleep(0.01)
+            resolve_approval(next(iter(PENDING)), "yes")
+        t = asyncio.create_task(ok())
+        async for ev in tool_events(ctx, "edit_file", {"path": str(f), "old_text": "b = 2", "new_text": "b = 3"}, sink):
+            evs.append(ev)
+        t.cancel()
+        return evs
+    evs = asyncio.run(go())
+    ap = next(e for e in evs if e["type"] == "approval")
+    assert "-b = 2" in ap["diff"] and "+b = 3" in ap["diff"]
+    assert f.read_text() == "a = 1\nb = 3\n"
+
+
+def test_grep_files_tool(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    (home / "src").mkdir()
+    (home / "src" / "a.py").write_text("def cargar_modelos():\n    return 1\n")
+    (home / "src" / "b.js").write_text("function cargarModelos() {}\n// cargar_modelos aquí\n")
+    (home / ".oculto").mkdir()
+    (home / ".oculto" / "c.py").write_text("cargar_modelos\n")
+    ctx = _ctx(cfg)
+    r = asyncio.run(ctx.run("grep_files", {"pattern": "cargar_modelos", "path": str(home)}))
+    assert "a.py:1:" in r and "b.js:2:" in r and ".oculto" not in r
+    r = asyncio.run(ctx.run("grep_files", {"pattern": "cargarmodelos", "path": str(home), "ignore_case": True, "glob": "*.js"}))
+    assert "b.js:1:" in r and "a.py" not in r                       # ignore_case + filtro por tipo de archivo
+    r = asyncio.run(ctx.run("grep_files", {"pattern": "cargarmodelos", "path": str(home), "glob": "*.js"}))
+    assert "Sin coincidencias" in r                                 # sin ignore_case no coincide
+    r = asyncio.run(ctx.run("grep_files", {"pattern": "cargar_modelos", "path": str(home / "src"), "context": 1}))
+    assert ">1: def cargar_modelos" in r and " 2:     return 1" in r
+    r = asyncio.run(ctx.run("grep_files", {"pattern": "x", "path": str(tmp)}))
+    assert r.startswith("Error")  # fuera de las carpetas visibles
+
+
+def test_todo_plan_persists_and_is_injected(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    from g3g3ai.tools import tool_events
+    state = {}
+    ctx = _ctx(cfg, state=state)
+
+    async def go():
+        evs, sink = [], []
+        async for ev in tool_events(ctx, "todo_write", {"todos": [
+                {"content": "Leer el código", "status": "completed"}, {"content": "Cambiar el selector", "status": "in_progress"},
+                {"content": "Probar", "status": "pending"}]}, sink):
+            evs.append(ev)
+        return evs, sink[0]
+    evs, res = asyncio.run(go())
+    assert any(e["type"] == "todos" and len(e["items"]) == 3 for e in evs)
+    assert "1/3" in res and "Cambiar el selector" in res
+    # El plan sobrevive entre turnos (mismo estado) y se inyecta en las instrucciones
+    hint = _ctx(cfg, state=state).system_hint()
+    assert "Plan actual de la tarea" in hint and "[~] Cambiar el selector" in hint and "[x] Leer el código" in hint
+
+
+def test_plan_mode_is_read_only_and_accept_edits_mode(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    from g3g3ai.tools import tool_events
+    cfg.data.update(ai_write="ask", ai_commands="ask")
+    plan = _ctx(cfg, perm_mode="plan")
+    names = plan.names()
+    assert "read_file" in names and "grep_files" in names and "todo_write" in names
+    assert not {"write_file", "edit_file", "run_command", "create_document", "build_exe"} & set(names)
+    assert "MODO PLAN" in plan.system_hint()
+
+    async def go():
+        sink = []
+        evs = [e async for e in tool_events(plan, "write_file", {"path": str(home / "x.txt"), "content": "x"}, sink)]
+        return sink[0]
+    assert "modo Plan" in asyncio.run(go()) and not (home / "x.txt").exists()
+    edits = _ctx(cfg, perm_mode="edits")
+    assert edits.mode("edit_file") == "auto" and edits.mode("run_command") == "ask"
+    cfg.data.update(ai_write="off")
+    assert _ctx(cfg, perm_mode="edits").mode("edit_file") == "off"  # no salta un «desactivado»
+
+
+def test_undo_journal_restores_and_deletes(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    from g3g3ai.undo import UndoJournal
+    f = home / "u.txt"
+    f.write_text("original\n")
+    ctx = _ctx(cfg, source="conv-undo-1")
+    asyncio.run(ctx.run("read_file", {"path": str(f)}))
+    asyncio.run(ctx.run("edit_file", {"path": str(f), "old_text": "original", "new_text": "cambiado"}))
+    asyncio.run(ctx.run("edit_file", {"path": str(f), "old_text": "cambiado", "new_text": "otra vez"}))  # 2.º cambio: no pisa la copia
+    asyncio.run(ctx.run("write_file", {"path": str(home / "creado.txt"), "content": "nuevo"}))
+    j = UndoJournal("conv-undo-1")
+    ch = {c["path"]: c for c in j.changes()}
+    assert ch[str(f)]["created"] is False and ch[str(home / "creado.txt")]["created"] is True
+    res = j.undo_all()
+    assert f.read_text() == "original\n" and not (home / "creado.txt").exists()
+    assert str(f) in res["restored"] and str(home / "creado.txt") in res["deleted"] and not res["failed"]
+    assert j.changes() == []
+
+
+def test_project_instructions_file(env):
+    client, cfg, home, tmp = env
+    (home / "G3G3AI.md").write_text("Este proyecto usa Python 3.12 y pytest.\n")
+    cfg.data.update(agent_workdir=str(home))
+    hint = _ctx(cfg).system_hint()
+    assert "Instrucciones del proyecto" in hint and "Python 3.12 y pytest" in hint
+    # Carpeta de proyecto propia de la conversación
+    (home / "otro").mkdir()
+    (home / "otro" / "G3G3AI.md").write_text("Otro proyecto: Rust.\n")
+    assert "Otro proyecto: Rust." in _ctx(cfg, workdir=str(home / "otro")).system_hint()
+
+
+def test_repeated_identical_calls_are_cut_off(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    from g3g3ai.tools import tool_events
+    ctx = _ctx(cfg)
+
+    async def call():
+        sink = []
+        _ = [e async for e in tool_events(ctx, "list_dir", {"path": str(tmp / "no-existe")}, sink)]
+        return sink[0]
+    for i in range(3):                                   # 3 intentos reales, todos fallidos
+        assert asyncio.run(call()).startswith("Error") and not ctx.abort_loop
+    assert "has repetido esta misma llamada" in asyncio.run(call()).lower() and not ctx.abort_loop   # 4.ª: se avisa
+    assert "has repetido esta misma llamada" in asyncio.run(call()).lower() and ctx.abort_loop       # 5.ª: se corta

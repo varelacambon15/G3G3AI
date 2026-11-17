@@ -181,6 +181,60 @@ class Files:
                         return out
         return out
 
+    def grep(self, pattern: str, path: str | None = None, glob: str = "", ignore_case: bool = False,
+             max_results: int = 100, context: int = 0) -> dict:
+        """Busca un texto o una expresión regular DENTRO de los archivos de texto de una carpeta."""
+        import re
+        import time
+        base = self.resolve(path)
+        note = ""
+        try:
+            rx = re.compile(pattern, re.I if ignore_case else 0)
+        except re.error:
+            rx = re.compile(re.escape(pattern), re.I if ignore_case else 0)
+            note = "(el patrón no era una expresión regular válida: se buscó como texto literal)"
+        globs = [g.strip().lower() for g in glob.split(",") if g.strip()]
+        skip_dirs = {"node_modules", "__pycache__", "venv", ".venv", "dist", "build", "target", "site-packages"}
+        results, scanned, files_with, truncated = [], 0, set(), False
+        deadline = time.time() + 20
+        files = [base] if base.is_file() else []
+        if base.is_dir():
+            for dirpath, dirnames, filenames in os.walk(base):
+                dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in skip_dirs
+                               and not self.is_blocked(Path(dirpath) / d)]
+                files += [Path(dirpath) / n for n in sorted(filenames)]
+        for fp in files:
+            if globs and not any(fnmatch.fnmatch(fp.name.lower(), g) for g in globs):
+                continue
+            if fp.name.startswith(".") and not base.is_file() or self.is_blocked(fp):
+                continue
+            if scanned >= 20000 or time.time() > deadline:
+                truncated = True
+                break
+            try:
+                if fp.stat().st_size > 2_000_000:
+                    continue
+                with open(fp, "rb") as fh:
+                    head = fh.read(4096)
+                    if b"\x00" in head:
+                        continue
+                    data = head + fh.read()
+            except OSError:
+                continue
+            scanned += 1
+            lines = data.decode("utf-8", errors="replace").split("\n")
+            for i, line in enumerate(lines):
+                if rx.search(line):
+                    files_with.add(str(fp))
+                    block = [(j + 1, lines[j]) for j in range(max(0, i - context), min(len(lines), i + context + 1))]
+                    results.append({"path": str(fp), "line": i + 1, "text": line, "block": block})
+                    if len(results) >= max_results:
+                        truncated = True
+                        break
+            if len(results) >= max_results:
+                break
+        return {"results": results, "files": len(files_with), "scanned": scanned, "truncated": truncated, "note": note}
+
     def safe_child(self, directory: str | None, filename: str) -> Path:
         name = Path(filename).name  # evita ../ en el nombre subido
         if not name or name in (".", ".."):

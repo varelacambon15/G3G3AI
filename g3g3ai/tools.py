@@ -10,6 +10,7 @@ Seguridad:
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import platform
 import subprocess
@@ -23,6 +24,7 @@ import httpx
 from . import sandbox, web
 from .documents import DocumentError
 from .files import FileAccessError, Files, is_under
+from .undo import UndoJournal
 
 READ_LIMIT_FOR_AI = 30_000
 OUTPUT_LIMIT = 20_000
@@ -34,12 +36,77 @@ PENDING: dict[str, asyncio.Future] = {}
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-FILE_TOOLS = {"list_dir", "read_file", "search_files"}
+FILE_TOOLS = {"list_dir", "read_file", "search_files", "grep_files"}
 WRITE_TOOLS = {"write_file", "edit_file", "create_document"}
 COMMAND_TOOLS = {"run_command", "build_exe"}
 WEB_TOOLS = {"web_search", "fetch_url"}
 MEMORY_TOOLS = {"memory_save", "memory_delete"}
 GAME_TOOLS = {"steam_games", "game_diagnostics"}
+
+
+# --- Edición de texto que respeta saltos de línea y BOM --------------------------------------
+def read_text_exact(p: Path) -> tuple[str, str, bool]:
+    """(texto con «\\n», salto de línea original, tenía BOM). Falla si no es texto UTF-8."""
+    raw = p.read_bytes()
+    bom = raw.startswith(b"\xef\xbb\xbf")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as e:
+        raise FileAccessError(f"«{p.name}» no es un archivo de texto UTF-8: no se puede editar como texto.") from e
+    eol = "\r\n" if "\r\n" in text else "\n"
+    return text.replace("\r\n", "\n"), eol, bom
+
+
+def write_text_exact(p: Path, text: str, eol: str = "\n", bom: bool = False) -> int:
+    data = text.replace("\r\n", "\n").replace("\n", eol).encode("utf-8")
+    p.write_bytes((b"\xef\xbb\xbf" if bom else b"") + data)
+    return len(data)
+
+
+def closest_hint(text: str, old: str) -> str:
+    """Pista para cuando old_text no se encuentra: la línea más parecida del archivo."""
+    first = next((l for l in old.split("\n") if l.strip()), "")
+    if not first:
+        return ""
+    lines = text.split("\n")
+    for i, l in enumerate(lines, 1):  # mismo texto pero distinta sangría/espacios
+        if l.strip() == first.strip() and l != first:
+            return f" La línea {i} es igual pero con otra sangría o espacios: «{l[:120]}». Copia el texto exacto."
+    stripped = [l.strip() for l in lines]
+    near = difflib.get_close_matches(first.strip(), stripped, n=1, cutoff=0.6)
+    if near:
+        i = stripped.index(near[0])
+        return f" La línea más parecida es la {i + 1}: «{lines[i][:120]}»."
+    return " Vuelve a leer el archivo con read_file y copia el fragmento exacto."
+
+
+def apply_edits(text: str, edits: list[dict], replace_all: bool = False) -> tuple[str | None, str | None]:
+    """Aplica los cambios en orden, en memoria. Devuelve (texto nuevo, error); si hay error no se cambia nada."""
+    for i, e in enumerate(edits, 1):
+        old = str(e.get("old_text", "")).replace("\r\n", "\n")
+        new = str(e.get("new_text", "")).replace("\r\n", "\n")
+        tag = f"Cambio {i}: " if len(edits) > 1 else ""
+        if not old:
+            return None, f"{tag}old_text está vacío. Para crear un archivo nuevo usa write_file."
+        if old == new:
+            return None, f"{tag}old_text y new_text son iguales: no hay nada que cambiar."
+        n = text.count(old)
+        everywhere = bool(e.get("replace_all") or replace_all)
+        if n == 0:
+            return None, f"{tag}no se encontró old_text en el archivo." + closest_hint(text, old)
+        if n > 1 and not everywhere:
+            return None, (f"{tag}old_text aparece {n} veces; añade líneas de contexto para que sea único, "
+                          "o usa replace_all=true si quieres cambiarlas todas.")
+        text = text.replace(old, new) if everywhere else text.replace(old, new, 1)
+    return text, None
+
+
+def make_diff(old: str, new: str, name: str = "", limit: int = 160) -> str:
+    lines = list(difflib.unified_diff(old.splitlines(), new.splitlines(), f"antes/{name}", f"después/{name}",
+                                      lineterm="", n=2))
+    if len(lines) > limit:
+        lines = lines[:limit] + [f"… ({len(lines) - limit} líneas más)"]
+    return "\n".join(lines)
 
 
 def _schema(props: dict, required: list[str] | None = None) -> dict:
@@ -52,13 +119,30 @@ def _schema(props: dict, required: list[str] | None = None) -> dict:
 ALL_SPECS = {
     "list_dir": ("Lista archivos y carpetas de una ruta. Sin ruta = carpeta personal.",
                  _schema({"path": {"type": "string", "description": "Ruta absoluta o relativa a la carpeta personal"}})),
-    "read_file": ("Lee un archivo de texto. Usa start_line/max_lines para archivos grandes.",
-                  _schema({"path": {"type": "string"}, "start_line": {"type": "integer"},
-                           "max_lines": {"type": "integer"}}, ["path"])),
-    "search_files": ("Busca archivos o carpetas por nombre (admite comodines * y ?).",
+    "read_file": ("Lee un archivo (texto, Word, Excel, PowerPoint o PDF). Cada línea sale con su número («12: texto»): "
+                  "ese prefijo NO forma parte del archivo. Usa start_line/max_lines para archivos grandes.",
+                  _schema({"path": {"type": "string"}, "start_line": {"type": "integer", "description": "Primera línea (desde 1)"},
+                           "max_lines": {"type": "integer", "description": "Cuántas líneas leer"}}, ["path"])),
+    "search_files": ("Busca archivos o carpetas por NOMBRE (admite comodines * y ?). Para buscar texto dentro de "
+                     "los archivos usa grep_files.",
                      _schema({"query": {"type": "string", "description": "Texto o patrón, p.ej. '*.pdf'"},
                               "path": {"type": "string", "description": "Carpeta donde buscar (opcional)"}}, ["query"])),
-    "write_file": ("Crea o sobrescribe un archivo de texto completo (sólo en las carpetas modificables).",
+    "grep_files": ("Busca un texto o una expresión regular DENTRO de los archivos de una carpeta (como grep). "
+                   "Devuelve ruta:línea: texto. Úsalo para localizar dónde se define o se usa algo antes de leer archivos enteros.",
+                   _schema({"pattern": {"type": "string", "description": "Texto o expresión regular"},
+                            "path": {"type": "string", "description": "Carpeta o archivo donde buscar (opcional)"},
+                            "glob": {"type": "string", "description": "Filtrar por nombre de archivo, p.ej. '*.py' o '*.js,*.html'"},
+                            "ignore_case": {"type": "boolean"},
+                            "context": {"type": "integer", "description": "Líneas de contexto alrededor (0-5)"},
+                            "max_results": {"type": "integer", "description": "Por defecto 100"}}, ["pattern"])),
+    "todo_write": ("Crea o actualiza el plan de la tarea: lista de pasos con su estado. Úsalo en tareas de 3 o más pasos "
+                   "y actualízalo al terminar cada uno (un solo paso «in_progress» a la vez). Sustituye la lista entera.",
+                   _schema({"todos": {"type": "array", "items": _schema({
+                       "content": {"type": "string", "description": "El paso, en imperativo breve"},
+                       "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]}}, ["content", "status"])}},
+                       ["todos"])),
+    "write_file": ("Crea un archivo de texto nuevo o lo reescribe entero (sólo en las carpetas modificables). "
+                   "Si el archivo ya existe, léelo antes con read_file; para cambios parciales usa edit_file.",
                    _schema({"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"])),
     "create_document": ("Crea un documento Word (.docx), Excel (.xlsx), PowerPoint (.pptx) o PDF (.pdf); el formato sale "
                         "de la extensión de path. Para .docx y .pdf, content es Markdown (títulos #, listas, tablas |, "
@@ -70,9 +154,16 @@ ALL_SPECS = {
                         _schema({"path": {"type": "string", "description": "Ruta del archivo, p.ej. informe.docx"},
                                  "content": {"type": "string", "description": "Markdown o JSON según el formato"}},
                                 ["path", "content"])),
-    "edit_file": ("Reemplaza un fragmento exacto de texto en un archivo (old_text debe aparecer una sola vez).",
-                  _schema({"path": {"type": "string"}, "old_text": {"type": "string"},
-                           "new_text": {"type": "string"}}, ["path", "old_text", "new_text"])),
+    "edit_file": ("Modifica un archivo existente reemplazando fragmentos EXACTOS de texto (sin el prefijo de número de línea "
+                  "de read_file). Debes haberlo leído antes. Un cambio: old_text/new_text; varios: edits. "
+                  "old_text debe ser único en el archivo (añade líneas de contexto) o usa replace_all. "
+                  "Si algún cambio falla no se aplica ninguno.",
+                  _schema({"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"},
+                           "replace_all": {"type": "boolean", "description": "Reemplazar todas las apariciones"},
+                           "edits": {"type": "array", "description": "Varios cambios que se aplican en orden",
+                                     "items": _schema({"old_text": {"type": "string"}, "new_text": {"type": "string"},
+                                                       "replace_all": {"type": "boolean"}}, ["old_text", "new_text"])}},
+                          ["path"])),
     "run_command": ("Ejecuta un comando de terminal y devuelve su salida. "
                     "Úsalo para compilar, probar, instalar o inspeccionar el sistema.",
                     _schema({"command": {"type": "string"},
@@ -123,7 +214,8 @@ ALL_SPECS = {
 class ToolContext:
     def __init__(self, files: Files, cfg, local_chat: Callable[[str], Awaitable[str]] | None = None, *,
                  agent: bool = True, web: bool = False, session_allow: set | None = None,
-                 memory=None, source: str | None = None, image_gen=None):
+                 memory=None, source: str | None = None, image_gen=None, state: dict | None = None,
+                 perm_mode: str = "normal", workdir: str | None = None):
         self.files = files
         self.cfg = cfg
         self.local_chat = local_chat
@@ -136,22 +228,34 @@ class ToolContext:
         self.files_out: list[str] = []  # archivos creados para ofrecer al usuario
         # Herramientas que el usuario permitió «siempre» en esta conversación
         self.session_allow = session_allow if session_allow is not None else set()
+        # Estado de la conversación: archivos leídos (para exigir leer antes de editar) y plan de la tarea
+        self.state = state if state is not None else {}
+        self.state.setdefault("read", {})
+        self.state.setdefault("todos", [])
+        self.perm_mode = perm_mode if perm_mode in ("normal", "plan", "edits") else "normal"
+        self.workdir_override = workdir
+        self.todos_dirty = False
+        self.counts: dict = {}       # llamadas idénticas repetidas en este turno
+        self.abort_loop = False
+        self._undo = UndoJournal(source) if source else None
 
     # Permisos ------------------------------------------------------------------
     def mode(self, name: str) -> str:
         if name in WRITE_TOOLS:
-            return self.cfg["ai_write"] or "off"
+            m = self.cfg["ai_write"] or "off"
+            return "auto" if (self.perm_mode == "edits" and m != "off") else m
         if name in COMMAND_TOOLS:
             return self.cfg["ai_commands"] or "off"
         return "auto"
 
     def names(self) -> list[str]:
         out = []
+        plan = self.perm_mode == "plan"  # modo Plan: sólo lectura
         if self.agent:
-            out += ["list_dir", "read_file", "search_files"]
-            if self.mode("write_file") != "off" and self.files.write_roots:
+            out += ["list_dir", "read_file", "search_files", "grep_files", "todo_write"]
+            if not plan and self.mode("write_file") != "off" and self.files.write_roots:
                 out += ["write_file", "edit_file", "create_document"]
-            if self.mode("run_command") != "off":
+            if not plan and self.mode("run_command") != "off":
                 out.append("run_command")
                 from .devtools import devenv_python
                 if devenv_python(self.cfg):
@@ -164,7 +268,7 @@ class ToolContext:
             out += ["web_search", "fetch_url"]
         if self.memory is not None:
             out += ["memory_save", "memory_delete"]
-        if self.image_gen is not None:
+        if self.image_gen is not None and not plan:
             out.append("generate_image")
         return out
 
@@ -186,49 +290,76 @@ class ToolContext:
         return sandbox.available(self.cfg)
 
     def system_hint(self) -> str:
+        from .agent_prompt import AGENT_PROMPT, EDITS_MODE, PLAN_MODE
         names = self.names()
         parts = []
         if self.agent:
             roots = ", ".join(str(r) for r in self.files.roots)
             wroots = ", ".join(str(r) for r in self.files.write_roots) or "ninguna"
             osname = f"{platform.system()} {platform.machine()}"
-            parts.append(f"Tienes herramientas para trabajar en el dispositivo del usuario ({osname}). "
-                         f"Puedes leer en: {roots}. Sólo puedes modificar archivos en: {wroots}.")
+            env = [f"Equipo del usuario: {osname}. Puedes leer en: {roots}. Sólo puedes modificar archivos en: {wroots}."]
             if "run_command" in names:
                 shell = "cmd.exe" if sys.platform == "win32" else "bash"
-                parts.append(f"Los comandos se ejecutan con {shell} en {self.workdir()} salvo que indiques cwd"
-                             + (" dentro de un entorno aislado donde el resto del sistema es de sólo lectura."
-                                if self.sandboxed else "."))
-            if "run_command" in names:
+                env.append(f"Los comandos se ejecutan con {shell} en {self.workdir()} salvo que indiques cwd"
+                           + (" dentro de un entorno aislado donde el resto del sistema es de sólo lectura."
+                              if self.sandboxed else "."))
                 from .devtools import summary as dev_summary
-                parts.append(f"Herramientas de programación instaladas: {dev_summary(self.cfg)}.")
+                env.append(f"Herramientas de programación instaladas: {dev_summary(self.cfg)}.")
                 if "build_exe" in names:
-                    parts.append("Para crear un programa ejecutable escribe el script de Python y compílalo con build_exe "
-                                 + ("(genera un .exe de Windows)." if sys.platform == "win32" else
-                                    "(en este equipo genera un binario de Linux; los .exe de Windows se crean en un PC con Windows)."))
+                    env.append("Para crear un programa ejecutable escribe el script de Python y compílalo con build_exe "
+                               + ("(genera un .exe de Windows)." if sys.platform == "win32" else
+                                  "(en este equipo genera un binario de Linux; los .exe de Windows se crean en un PC con Windows)."))
             if "ask_local_model" in names:
-                parts.append("Para subtareas sencillas y voluminosas (resumir archivos largos, traducir, extraer) "
-                             "puedes usar ask_local_model y ahorrar coste.")
-            parts.append("Trabaja paso a paso: inspecciona antes de modificar y verifica el resultado. "
-                         "No anuncies lo que vas a hacer («ahora leo…»): llama directamente a la herramienta. "
-                         "Termina tu respuesta sólo cuando la tarea esté hecha o necesites que el usuario decida algo.")
+                env.append("Para subtareas sencillas y voluminosas (resumir archivos largos, traducir, extraer) "
+                           "puedes usar ask_local_model y ahorrar coste.")
             from .steam import system_hint as steam_hint
             hint = steam_hint()
             if hint:
-                parts.append(hint)
+                env.append(hint)
+            parts.append(AGENT_PROMPT)
+            parts.append("## Entorno\n" + " ".join(env))
+            if self.perm_mode == "plan":
+                parts.append(PLAN_MODE)
+            elif self.perm_mode == "edits":
+                parts.append(EDITS_MODE)
+            proj = self.project_instructions()
+            if proj:
+                parts.append(f"## Instrucciones del proyecto ({proj[1]})\n{proj[0]}")
+            todos = self.state.get("todos") or []
+            if todos:
+                mark = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}
+                parts.append("## Plan actual de la tarea\n" + "\n".join(f"- {mark.get(t['status'], '[ ]')} {t['content']}" for t in todos))
         if self.memory is not None:
             from .memory import SAVE_GUIDE
             parts.append(SAVE_GUIDE)
-        if self.image_gen is not None:
+        if self.image_gen is not None and self.perm_mode != "plan":
             parts.append("Puedes crear imágenes con generate_image cuando el usuario lo pida.")
         if self.web:
             parts.append("Puedes buscar en internet con web_search y leer páginas con fetch_url. "
                          "Cuando uses información de la web, cita las fuentes con enlaces.")
-        return " ".join(parts)
+        return "\n\n".join(parts)
+
+    def project_instructions(self) -> tuple[str, str] | None:
+        """Contenido de G3G3AI.md en la carpeta de trabajo (o en sus carpetas superiores dentro de la zona de trabajo)."""
+        wd = self.workdir()
+        for d in [wd, *list(wd.parents)[:3]]:
+            if d != wd and not any(is_under(d, r) for r in self.files.write_roots):
+                break
+            f = d / "G3G3AI.md"
+            if f.is_file():
+                try:
+                    text = f.read_text("utf-8", errors="replace").strip()
+                except OSError:
+                    return None
+                if len(text) > 6000:
+                    text = text[:6000] + "\n[... recortado ...]"
+                return (text, str(f)) if text else None
+        return None
 
     def workdir(self) -> Path:
         wroots = self.files.write_roots
-        p = Path(self.cfg["agent_workdir"] or (wroots[0] if wroots else Path.home())).expanduser().resolve()
+        want = self.workdir_override or self.cfg["agent_workdir"] or (wroots[0] if wroots else Path.home())
+        p = Path(want).expanduser().resolve()
         if wroots and not self.files.can_ai_write(p):
             p = wroots[0]
         p.mkdir(parents=True, exist_ok=True)
@@ -240,6 +371,20 @@ class ToolContext:
         try:
             if name in WRITE_TOOLS:
                 p = self.files.resolve(args.get("path"), "ai_write")
+                if name in ("edit_file", "write_file"):
+                    if name == "edit_file" and not p.is_file():
+                        return f"Error: «{p}» no existe. Para crear un archivo nuevo usa write_file.", [], []
+                    err = self._check_read(p)
+                    if err:
+                        return "Error: " + err, [], []
+                if name == "edit_file":
+                    edits = self._edits_of(args)
+                    if not edits:
+                        return "Error: indica old_text y new_text, o una lista edits.", [], []
+                    text, _, _ = read_text_exact(p)
+                    _, err = apply_edits(text, edits, bool(args.get("replace_all")))
+                    if err:  # se rechaza ya, sin molestar al usuario con un cambio que no se puede aplicar
+                        return "Error: " + err, [], []
                 if self.files.is_game_path(p) and not any(is_under(p, r) for r in self.files.write_roots):
                     return None, ["modifica archivos de un juego (se guarda una copia de seguridad del original)"], []
             if name == "build_exe":
@@ -268,6 +413,62 @@ class ToolContext:
             return f"Error: {e}", [], []
         return None, [], []
 
+    # Estado de lectura y vista previa ------------------------------------------------------
+    def _mark_read(self, p: Path) -> None:
+        try:
+            self.state["read"][str(p)] = p.stat().st_mtime_ns
+        except OSError:
+            pass
+
+    def _check_read(self, p: Path) -> str | None:
+        """Exige haber leído el archivo (y que no haya cambiado desde entonces) antes de modificarlo."""
+        if not p.exists():
+            return None
+        seen = self.state["read"].get(str(p))
+        if seen is None:
+            return f"antes de modificar «{p.name}» léelo con read_file (no lo has leído en esta conversación)."
+        try:
+            changed = p.stat().st_mtime_ns != seen
+        except OSError:
+            changed = True
+        if changed:
+            return (f"«{p.name}» ha cambiado desde que lo leíste (¿otra persona o programa lo modificó?). "
+                    "Léelo de nuevo con read_file antes de modificarlo.")
+        return None
+
+    @staticmethod
+    def _edits_of(a: dict) -> list[dict]:
+        edits = a.get("edits")
+        if isinstance(edits, str):
+            try:
+                edits = json.loads(edits)
+            except json.JSONDecodeError:
+                edits = None
+        if isinstance(edits, list) and edits:
+            return [e for e in edits if isinstance(e, dict)]
+        if a.get("old_text") is not None:
+            return [{"old_text": a.get("old_text"), "new_text": a.get("new_text", "")}]
+        return []
+
+    def preview(self, name: str, args: dict) -> str | None:
+        """Diff del cambio que se va a pedir aprobar (edit_file / write_file sobre un archivo existente)."""
+        try:
+            if name not in ("edit_file", "write_file"):
+                return None
+            p = self.files.resolve(args.get("path"), "ai_write")
+            if not p.is_file():
+                return None
+            old, _, _ = read_text_exact(p)
+            if name == "edit_file":
+                new, err = apply_edits(old, self._edits_of(args), bool(args.get("replace_all")))
+                if err or new is None:
+                    return None
+            else:
+                new = str(args.get("content", "")).replace("\r\n", "\n")
+            return make_diff(old, new, p.name) or None
+        except (FileAccessError, OSError):
+            return None
+
     # Ejecución -----------------------------------------------------------------
     async def run(self, name: str, args: dict) -> str:
         try:
@@ -283,6 +484,8 @@ class ToolContext:
                 return await web.fetch(str(args.get("url", "")).strip())
             if name in MEMORY_TOOLS:
                 return self._memory(name, args)
+            if name == "todo_write":
+                return self._todo(args)
             if name == "steam_games":
                 from .steam import games_summary
                 return await asyncio.to_thread(games_summary, self.cfg, args.get("query", ""))
@@ -327,6 +530,7 @@ class ToolContext:
                 res = {"path": str(path), "content": text}
             else:
                 res = f.read_text(a["path"], 2_000_000)
+                self._mark_read(path)
             lines = res["content"].splitlines()
             start = max(int(a.get("start_line") or 1), 1)
             maxl = int(a.get("max_lines") or 0)
@@ -340,15 +544,47 @@ class ToolContext:
         if name == "search_files":
             res = f.search(a["query"], a.get("path"))
             return "\n".join(("[D] " if r["is_dir"] else "") + r["path"] for r in res) or "Sin resultados."
-        if name in WRITE_TOOLS:
-            self._backup_if_game(f.resolve(a["path"], "ai_write"))
+        if name == "grep_files":
+            ctxn = max(0, min(int(a.get("context") or 0), 5))
+            r = f.grep(str(a["pattern"]), a.get("path"), str(a.get("glob") or ""), bool(a.get("ignore_case")),
+                       max(1, min(int(a.get("max_results") or 100), 300)), ctxn)
+            if not r["results"]:
+                return (f"Sin coincidencias para «{a['pattern']}» ({r['scanned']} archivos revisados)."
+                        + (" " + r["note"] if r["note"] else ""))
+            out = [f"{len(r['results'])} coincidencias en {r['files']} archivos" + (" (hay más: afina el patrón o la carpeta)" if r["truncated"] else "")
+                   + (" " + r["note"] if r["note"] else "")]
+            if ctxn:
+                last = None
+                for m in r["results"]:
+                    if m["path"] != last:
+                        out.append(f"\n{m['path']}")
+                        last = m["path"]
+                    for ln, txt in m["block"]:
+                        out.append(f"{'>' if ln == m['line'] else ' '}{ln}: {txt[:240]}")
+                    out.append("--")
+            else:
+                out += [f"{m['path']}:{m['line']}: {m['text'].strip()[:240]}" for m in r["results"]]
+            return "\n".join(out)
         if name == "write_file":
-            res = f.write_text(a["path"], a.get("content", ""), scope="ai_write")
-            self.files_out.append(res["path"])
-            return f"Guardado {res['path']} ({res['bytes']} bytes)"
+            p = f.resolve(a["path"], "ai_write")
+            if p.is_dir():
+                return f"Error: «{p}» es una carpeta."
+            eol, bom = "\n", False
+            if p.exists():
+                err = self._check_read(p)
+                if err:
+                    return "Error: " + err
+                _, eol, bom = read_text_exact(p)  # falla si es binario: no se sobrescribe como texto
+            self._before_write(p)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            n = write_text_exact(p, str(a.get("content", "")), eol, bom)
+            self._mark_read(p)
+            self.files_out.append(str(p))
+            return f"Guardado {p} ({n} bytes)"
         if name == "create_document":
             from . import office
             p = f.resolve(a["path"], "ai_write")
+            self._before_write(p)
             try:
                 office.create(p, a.get("content", ""))
             except (office.OfficeError, ValueError, KeyError, TypeError) as e:
@@ -357,19 +593,66 @@ class ToolContext:
             return f"Documento creado: {p} ({p.stat().st_size} bytes). El usuario ya puede descargarlo."
         if name == "edit_file":
             p = f.resolve(a["path"], "ai_write")
-            text = p.read_text("utf-8")
-            n = text.count(a["old_text"])
-            if n == 0:
-                return "Error: no se encontró old_text en el archivo."
-            if n > 1:
-                return f"Error: old_text aparece {n} veces; añade más contexto para que sea único."
-            p.write_text(text.replace(a["old_text"], a["new_text"], 1), "utf-8")
-            return f"Editado {p}"
+            if not p.is_file():
+                return f"Error: «{p}» no existe. Para crear un archivo nuevo usa write_file."
+            err = self._check_read(p)
+            if err:
+                return "Error: " + err
+            edits = self._edits_of(a)
+            if not edits:
+                return "Error: indica old_text y new_text, o una lista edits."
+            text, eol, bom = read_text_exact(p)
+            new, err = apply_edits(text, edits, bool(a.get("replace_all")))
+            if err:
+                return "Error: " + err
+            self._before_write(p)
+            write_text_exact(p, new, eol, bom)
+            self._mark_read(p)
+            delta = new.count("\n") - text.count("\n")
+            return f"Editado {p} ({len(edits)} cambio{'s' if len(edits) > 1 else ''}, {delta:+d} líneas)"
         if name == "run_command":
             return self._run_command(a)
         if name == "build_exe":
             return self._build_exe(a)
         return f"Error: herramienta desconocida {name}"
+
+    def _todo(self, a: dict) -> str:
+        items = a.get("todos")
+        if isinstance(items, str):
+            try:
+                items = json.loads(items)
+            except json.JSONDecodeError:
+                return "Error: todos debe ser una lista de {content, status}."
+        if not isinstance(items, list) or not items:
+            return "Error: todos debe ser una lista de {content, status}."
+        clean = []
+        for it in items[:30]:
+            if isinstance(it, str):
+                it = {"content": it, "status": "pending"}
+            if not isinstance(it, dict) or not str(it.get("content", "")).strip():
+                continue
+            st = str(it.get("status", "pending")).lower().replace(" ", "_")
+            st = {"done": "completed", "complete": "completed", "doing": "in_progress", "en_curso": "in_progress",
+                  "hecho": "completed"}.get(st, st)
+            clean.append({"content": str(it["content"]).strip()[:200], "status": st if st in ("pending", "in_progress", "completed") else "pending"})
+        if not clean:
+            return "Error: ningún paso válido."
+        self.state["todos"] = clean
+        self.todos_dirty = True
+        done = sum(1 for t in clean if t["status"] == "completed")
+        cur = next((t for t in clean if t["status"] == "in_progress"), None) or next((t for t in clean if t["status"] == "pending"), None)
+        if done == len(clean):
+            return f"Plan actualizado: los {len(clean)} pasos están hechos. Resume el resultado al usuario."
+        return f"Plan actualizado: {done}/{len(clean)} pasos hechos. Siguiente: «{cur['content']}»." if cur else f"Plan actualizado ({done}/{len(clean)})."
+
+    def _before_write(self, p: Path) -> None:
+        """Antes de modificar un archivo: copia para los juegos y para poder deshacer los cambios de la conversación."""
+        self._backup_if_game(p)
+        if self._undo is not None:
+            try:
+                self._undo.record(p)
+            except OSError:
+                pass
 
     def _backup_if_game(self, p: Path) -> None:
         """Antes de tocar un archivo de un juego, guarda una copia del original (sólo la primera vez)."""
@@ -460,8 +743,16 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
     yield {"type": "tool_call", "name": name,
            "args": raw_args if isinstance(raw_args, str) else json.dumps(raw_args, ensure_ascii=False)}
     result = None
-    if name not in ctx.names():
-        result = f"Error: la herramienta {name} no está disponible o está desactivada."
+    key = (name, json.dumps(args, sort_keys=True, ensure_ascii=False, default=str))
+    prev = ctx.counts.get(key)
+    if prev and prev["n"] >= 3:  # misma llamada con el mismo resultado ya 3 veces: se corta el bucle
+        prev["blocked"] = prev.get("blocked", 0) + 1
+        ctx.abort_loop = prev["blocked"] >= 2
+        result = ("Has repetido esta misma llamada y has obtenido siempre el mismo resultado. No la repitas: "
+                  "cambia de enfoque, usa otra herramienta o explica al usuario qué te bloquea.")
+    elif name not in ctx.names():
+        result = f"Error: la herramienta {name} no está disponible o está desactivada" + (
+            " (estás en modo Plan: sólo puedes leer y buscar)." if ctx.perm_mode == "plan" else ".")
     else:
         error, strong, soft = ctx.precheck(name, args)
         if error:
@@ -475,7 +766,7 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
                 aid = uuid.uuid4().hex[:10]
                 fut = asyncio.get_running_loop().create_future()
                 PENDING[aid] = fut
-                yield {"type": "approval", "id": aid, "name": name, "args": args,
+                yield {"type": "approval", "id": aid, "name": name, "args": args, "diff": ctx.preview(name, args),
                        "warnings": strong + soft, "dangerous": bool(strong), "can_always": not strong,
                        "sandboxed": ctx.sandboxed if name == "run_command" else None}
                 try:
@@ -491,7 +782,14 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
                     result = "El usuario ha denegado esta acción. Pregunta o propón otra alternativa."
     if result is None:
         result = await ctx.run(name, args)
+        if prev and prev["res"] == result:
+            prev["n"] += 1
+        else:
+            ctx.counts[key] = {"n": 1, "res": result}
     yield {"type": "tool_result", "name": name, "result": result[:TOOL_RESULT_PREVIEW]}
+    if ctx.todos_dirty:
+        ctx.todos_dirty = False
+        yield {"type": "todos", "items": ctx.state["todos"]}
     while ctx.generated:
         yield {"type": "image", "path": ctx.generated.pop(0)}
     while ctx.files_out:
