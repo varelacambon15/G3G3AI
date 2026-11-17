@@ -1732,3 +1732,57 @@ def test_mcp_servers_expose_tools_with_permission(env):
     assert client.portal.call(ctx.run, "mcp__fake__falla", {}).startswith("Error de la herramienta: boom")
     ctx.perm_mode = "plan"
     assert not any(n.startswith("mcp__") for n in ctx.names())                 # en modo Plan no se usan
+
+
+def test_task_schedules_and_store(env):
+    import time as _t
+    from g3g3ai import tasks as TK
+    client, cfg, home, tmp = env
+    for bad in ({"kind": "interval", "minutes": 1}, {"kind": "daily", "time": "25:00"}, {"kind": "x"}, "nada"):
+        try:
+            TK.validate_schedule(bad)
+            raise AssertionError(bad)
+        except TK.TaskError:
+            pass
+    assert TK.next_run({"kind": "interval", "minutes": 30}, 1000.0) == 1000.0 + 1800
+    d = TK.next_run({"kind": "daily", "time": "03:00"}, _t.time())
+    assert d > _t.time() and _t.localtime(d).tm_hour == 3 and d - _t.time() <= 86400 + 3600
+    assert TK.next_run({"kind": "once", "at": 5.0}, 10.0) is None
+    store = TK.TaskStore(client.app.state.db)
+    t = store.create("n", "haz algo", {"kind": "interval", "minutes": 10}, "local", "m", None, "edits")
+    assert t["mode"] == "edits" and t["when"] == "cada 10 min" and store.due(_t.time()) == []
+    assert [x["id"] for x in store.due(_t.time() + 700)] == [t["id"]]
+    store.finish(t, "ok", "c1", 1000.0)
+    assert store.get(t["id"])["next_run"] == 1600.0 and store.get(t["id"])["last_conv"] == "c1"
+    once = store.create("u", "p", {"kind": "once", "at": _t.time() + 100}, None, None, None, "plan")
+    store.finish(once, "ok", None, _t.time() + 200)
+    assert store.get(once["id"])["enabled"] is False                      # una vez: se desactiva sola
+    store.delete(t["id"])
+    assert store.get(t["id"]) is None
+
+
+def test_scheduled_task_runs_unattended_and_denies_permissions(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    r = client.post("/api/tasks", headers=h, json={
+        "name": "Prueba", "prompt": "ejecuta un comando y cuéntame", "schedule": {"kind": "daily", "time": "03:00"},
+        "provider": "local", "model": "local", "mode": "edits"})
+    assert r.status_code == 200, r.text
+    tid = r.json()["id"]
+    assert client.post("/api/tasks", headers=h, json={"name": "", "prompt": "x", "schedule": {"kind": "daily", "time": "03:00"}}).status_code == 400
+    assert client.post(f"/api/tasks/{tid}/run", headers=h).status_code == 200
+    t = None
+    for _ in range(100):
+        t = next(x for x in client.get("/api/tasks", headers=h).json()["tasks"] if x["id"] == tid)
+        if t["last_run"] and not t["running"]:
+            break
+        time.sleep(0.2)
+    assert t["last_conv"] and t["last_status"].startswith("Terminada"), t
+    conv = client.get(f"/api/conversations/{t['last_conv']}", headers=h).json()
+    assert conv["title"].startswith("🕒 Prueba")
+    tools = [x for m in conv["messages"] if m["role"] == "assistant" for x in (m["meta"] or {}).get("tools") or []]
+    res = [x for x in tools if x["type"] == "tool_result" and x["name"] == "run_command"]
+    assert res and "Denegado" in res[0]["result"] and "segundo plano" in res[0]["result"]    # nadie puede aprobar
+    assert client.patch(f"/api/tasks/{tid}", headers=h, json={"enabled": False}).json()["enabled"] is False
+    assert client.delete(f"/api/tasks/{tid}", headers=h).status_code == 200

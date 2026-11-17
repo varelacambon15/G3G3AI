@@ -279,6 +279,7 @@ class ToolContext:
         self.dirty = False  # se han modificado archivos y aún no se ha ejecutado nada para comprobarlo
         self.subagent: Callable[..., Awaitable[str]] | None = None  # lo fija el servidor: (tarea, write=False)
         self.mcp = None              # MCPManager (herramientas externas), lo fija el servidor
+        self.unattended = False      # tarea en segundo plano: nadie puede aprobar nada, todo lo que pida permiso se deniega
         self.auto_all = False        # ayudante en copia aislada: edita y ejecuta sin pedir permiso (nunca pide nada)
         self.live = None            # callback para emitir la salida de un comando mientras corre
         self.cancel = threading.Event()
@@ -978,6 +979,10 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
                 must_ask = False
             if must_ask and ctx.auto_all:
                 result = "Denegado: este ayudante trabaja sin poder pedir permisos; usa otra forma o explica qué falta."
+                must_ask = False
+            elif must_ask and ctx.unattended:
+                result = ("Denegado: esta tarea se ejecuta en segundo plano sin supervisión y esta acción requiere permiso "
+                          "del usuario. Sigue sin ella y menciónalo en tu informe final.")
                 must_ask = False
             if must_ask:
                 aid = uuid.uuid4().hex[:10]

@@ -159,11 +159,12 @@ function setView(v) {
   document.body.classList.toggle("code-mode", S.code);
   $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
   $$(".view").forEach((s) => s.classList.toggle("active", s.id === "view-" + real));
-  $("#top-title").textContent = real === "chat" ? (S.conv?.title || (S.code ? "Code" : "")) : { models: "Modelos", files: "Archivos", settings: "Ajustes" }[real];
+  $("#top-title").textContent = real === "chat" ? (S.conv?.title || (S.code ? "Code" : "")) : { models: "Modelos", tasks: "Tareas", files: "Archivos", settings: "Ajustes" }[real];
   closeSide();
   if (S.code && !wasCode) enterCode();
   if (real === "models") refreshModels();
   if (real === "files") loadFiles(S.filesPath);
+  if (real === "tasks") loadTasks();
   if (real === "settings") loadSettings();
   store.set("view", v);
 }
@@ -379,6 +380,63 @@ $("#undo-btn").addEventListener("click", async () => {
   } catch (e) { toast(e.message); }
   refreshChanges();
 });
+
+// --- Tareas programadas ---------------------------------------------------------------------
+const fmtWhen = (ts) => ts ? new Date(ts * 1000).toLocaleString(undefined, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
+async function loadTasks() {
+  const box = $("#task-list"); box.innerHTML = "";
+  try {
+    const { tasks } = await api("/api/tasks");
+    S.taskSeen = S.taskSeen || {};
+    if (!tasks.length) box.append(h("p", { class: "muted" }, "Aún no hay tareas."));
+    for (const t of tasks) {
+      S.taskSeen[t.id] = t.last_run;
+      box.append(h("div", { class: "task" + (t.enabled ? "" : " off") },
+        h("div", { class: "grow" },
+          h("b", {}, (t.running ? "⏳ " : "") + t.name), " ", h("span", { class: "muted" }, `· ${t.when}${t.mode === "edits" ? " · puede editar" : ""}`),
+          h("div", { class: "muted" }, `${t.provider || "local"} · ${t.model || ""} · próxima: ${t.enabled ? fmtWhen(t.next_run) : "pausada"}`),
+          t.last_status ? h("div", { class: "muted" }, `Última (${fmtWhen(t.last_run)}): ${t.last_status}`) : null),
+        h("div", { class: "row" },
+          t.last_conv ? h("button", { class: "ghost small", onclick: async () => { setView("chat"); await openConversation(t.last_conv); } }, "Ver resultado") : null,
+          h("button", { class: "ghost small", disabled: t.running, onclick: async () => { await api(`/api/tasks/${t.id}/run`, { method: "POST" }).catch((e) => toast(e.message)); toast("Ejecutando…"); setTimeout(loadTasks, 800); } }, "Ejecutar ahora"),
+          h("button", { class: "ghost small", onclick: async () => { await api(`/api/tasks/${t.id}`, { method: "PATCH", body: { enabled: !t.enabled } }); loadTasks(); } }, t.enabled ? "Pausar" : "Reanudar"),
+          h("button", { class: "danger small", onclick: async () => { if (confirm(`¿Borrar la tarea «${t.name}»?`)) { await api(`/api/tasks/${t.id}`, { method: "DELETE" }); loadTasks(); } } }, "Borrar"))));
+    }
+  } catch (e) { box.append(h("p", { class: "muted" }, e.message)); }
+}
+function taskWhenInput() {
+  const f = $("#task-form"), kind = f.elements.kind.value, w = $("#task-when-wrap");
+  w.innerHTML = "";
+  const label = { daily: "Hora", interval: "Minutos", once: "Fecha y hora" }[kind];
+  const inp = h("input", { name: "when", type: kind === "daily" ? "time" : kind === "once" ? "datetime-local" : "number", required: true });
+  if (kind === "daily") inp.value = "03:00"; if (kind === "interval") { inp.value = 60; inp.min = 5; }
+  w.append(label + " ", inp);
+}
+$("#task-form").elements.kind.addEventListener("change", taskWhenInput);
+$("#task-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target, kind = f.elements.kind.value, when = f.elements.when.value;
+  const schedule = kind === "daily" ? { kind, time: when } : kind === "interval" ? { kind, minutes: +when } : { kind, at: new Date(when).getTime() / 1000 };
+  const { provider, model } = currentModel();
+  try {
+    await api("/api/tasks", { method: "POST", body: { name: f.elements.name.value, prompt: f.elements.prompt.value, schedule,
+      provider, model, workdir: f.elements.workdir.value.trim() || null, mode: f.elements.edits.checked ? "edits" : "plan" } });
+    f.reset(); taskWhenInput(); toast("Tarea creada"); loadTasks();
+  } catch (er) { toast(er.message, 6000); }
+});
+// Aviso cuando una tarea termina (sondeo suave mientras la página está abierta)
+setInterval(async () => {
+  if (document.hidden) return;
+  try {
+    const { tasks } = await api("/api/tasks");
+    S.taskSeen = S.taskSeen || {};
+    for (const t of tasks) {
+      if (S.taskSeen[t.id] !== undefined && t.last_run && t.last_run !== S.taskSeen[t.id]) toast(`🕒 «${t.name}»: ${t.last_status}`, 8000);
+      S.taskSeen[t.id] = t.last_run;
+    }
+    if (S.view === "tasks") loadTasks();
+  } catch { /* sin sesión o sin red */ }
+}, 30000);
 
 // --- Medidor de contexto y /compact ----------------------------------------------------------
 async function refreshContext() {

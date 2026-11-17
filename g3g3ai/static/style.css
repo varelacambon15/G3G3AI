@@ -385,4 +385,6 @@ body.code-mode .code-panel { display: flex; }
 .usage-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
 .usage-table th, .usage-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
 .mcp-server { margin: 8px 0; } .mcp-tools { margin: 4px 0 0 18px; padding: 0; font-size: 12.5px; columns: 2; }
+.task { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.task.off { opacity: .55; }
 .live-out { margin: 8px 0; max-height: 220px; overflow: auto; padding: 8px 10px; font: 12px/1.45 ui-monospace, Consolas, monospace; background: var(--code); border-radius: 8px; white-space: pre-wrap; opacity: .9; }

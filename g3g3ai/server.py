@@ -30,6 +30,7 @@ from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
 from . import backup, costs, profiles, subagent
 from .mcp import MCPManager
+from .tasks import Scheduler, TaskError, TaskStore, next_run
 from .profiles import profile_for
 from .undo import UndoJournal
 from .engine import EngineInstaller
@@ -111,6 +112,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     memory = Memory(db)
     sync = Sync(cfg, db, memory)
     mcp_mgr = MCPManager(cfg)
+    task_store = TaskStore(db)
     session_allow: dict[str, set] = {}  # conversación -> herramientas permitidas «siempre»
     session_state: dict[str, dict] = {}  # conversación -> {"read": archivos leídos, "todos": plan de la tarea}
 
@@ -130,10 +132,46 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         if cfg["autoload_last_model"] and last and Path(last).is_file():
             await llama.load(last)
         sync.start()
+        scheduler.start()
         yield
+        scheduler.stop()
         sync.stop()
         await mcp_mgr.stop()
         await llama.unload()
+
+    async def run_task(task: dict) -> tuple[str, str | None]:
+        """Ejecuta una tarea programada llamando al propio /api/chat en modo sin supervisión."""
+        pid, model = task["provider"] or LOCAL_PROVIDER, task["model"] or "local"
+        if pid == LOCAL_PROVIDER and not llama.ready:
+            return "No se ejecutó: no hay un modelo local cargado.", None
+        if pid != LOCAL_PROVIDER and not provider_available(pid):
+            return f"No se ejecutó: el proveedor «{pid}» no está disponible o no tiene clave.", None
+        body = {"message": task["prompt"], "provider": pid, "model": model, "use_tools": True, "use_web": True,
+                "mode": task["mode"], "unattended": True,
+                "system": (cfg["default_system_prompt"] or "") + "\n\nTrabajas en SEGUNDO PLANO, sin supervisión: nadie puede "
+                          "aprobar acciones. Si algo se deniega, sigue sin ello. Termina con un informe breve de lo que hiciste y encontraste."}
+        if task.get("workdir"):
+            body["workdir"] = task["workdir"]
+        cid, text, error = None, "", None
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://tarea", timeout=3600) as c:
+            async with c.stream("POST", "/api/chat", json=body, headers={"Authorization": f"Bearer {cfg['token']}"}) as r:
+                async for line in r.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    ev = json.loads(line[5:])
+                    if ev["type"] == "start":
+                        cid = ev["conversation_id"]
+                    elif ev["type"] == "content":
+                        text += ev["text"]
+                    elif ev["type"] == "error":
+                        error = ev["message"]
+        if cid:
+            db.update_conversation(cid, title=f"🕒 {task['name']} · {time.strftime('%d/%m %H:%M')}"[:60])
+        if error and not text.strip():
+            return f"Falló: {error}", cid
+        return ("Terminada: " + " ".join(text.split())[:240]) if text.strip() else "Terminada (sin texto).", cid
+
+    scheduler = Scheduler(task_store, run_task)
 
     app = FastAPI(title="G3G3AI", version=__version__, lifespan=lifespan)
     app.state.mcp = mcp_mgr
@@ -309,6 +347,44 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             return await asyncio.to_thread(backup.import_bytes, sync, raw, str(body.get("password") or ""))
         except backup.BackupError as e:
             raise HTTPException(400, str(e))
+
+    @app.get("/api/tasks")
+    async def tasks_list():
+        return {"tasks": [{**t, "running": t["id"] in scheduler.running} for t in task_store.list()]}
+
+    @app.post("/api/tasks")
+    async def tasks_create(body: dict):
+        try:
+            return task_store.create(str(body.get("name", "")), str(body.get("prompt", "")), body.get("schedule"),
+                                     body.get("provider"), body.get("model"), body.get("workdir"), body.get("mode", "plan"))
+        except TaskError as e:
+            raise HTTPException(400, str(e))
+
+    @app.patch("/api/tasks/{tid}")
+    async def tasks_update(tid: str, body: dict):
+        try:
+            t = task_store.update(tid, **{k: v for k, v in body.items() if k in
+                                          ("name", "prompt", "schedule", "provider", "model", "workdir", "mode", "enabled")})
+        except TaskError as e:
+            raise HTTPException(400, str(e))
+        if not t:
+            raise HTTPException(404, "Tarea no encontrada")
+        return t
+
+    @app.delete("/api/tasks/{tid}")
+    async def tasks_delete(tid: str):
+        task_store.delete(tid)
+        return {"ok": True}
+
+    @app.post("/api/tasks/{tid}/run")
+    async def tasks_run(tid: str):
+        t = task_store.get(tid)
+        if not t:
+            raise HTTPException(404, "Tarea no encontrada")
+        if tid in scheduler.running:
+            raise HTTPException(409, "Ya se está ejecutando")
+        asyncio.create_task(scheduler.run_now(t))
+        return {"ok": True}
 
     @app.get("/api/mcp")
     async def mcp_status(refresh: bool = True):
@@ -493,6 +569,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             db.update_conversation(cid, workdir=(body.get("workdir") or None))
         conv = db.get_conversation(cid)
 
+        unattended = bool(body.get("unattended"))
         base_system = conv.get("system") if conv.get("system") is not None else cfg["default_system_prompt"]
         opts = {"temperature": body.get("temperature", cfg["temperature"]),
                 "max_tokens": body.get("max_tokens", cfg["max_tokens"])}
@@ -516,6 +593,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                              image_gen=img, state=state_for(cid, conv), perm_mode=perm_mode,
                              workdir=conv.get("workdir") or None, checkpoint=turn_mid or last_user_id)
             tc.mcp = mcp_mgr if (agent and mcp_mgr.map) else None
+            tc.unattended = unattended
             tc.profile = profile_for(chosen_pid, (llama.status()["model"] or "") if chosen_pid == LOCAL_PROVIDER else chosen_model,
                                      chosen_pid == LOCAL_PROVIDER,
                                      cfg["agent_profile"] or "auto")

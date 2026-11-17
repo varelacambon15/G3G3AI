@@ -206,6 +206,12 @@ Con un **token de GitHub** (Ajustes → «Token de GitHub», o la variable `GITH
 - **Git** con `run_command`: crea ramas, commits y `git push` (el push siempre pide confirmación; los push forzados avisan como peligrosos). Usa el remoto `origin` de la carpeta del proyecto.
 Flujo típico: «arregla el issue #12» → lee el issue, crea una rama, edita, ejecuta los tests, hace commit, te pide permiso para el push, abre el PR y comprueba el CI.
 
+### 🕒 Tareas programadas
+En la pestaña **Tareas** el agente trabaja solo a la hora que elijas (cada día a una hora, cada N minutos o una vez), con el modelo que tengas seleccionado, aunque no haya ninguna ventana abierta (G3G3AI debe estar en marcha en ese equipo). Ejemplo: «cada noche a las 03:00 ejecuta los tests y cuéntame qué falla».
+- **Sin supervisión:** nadie puede aprobar acciones, así que todo lo que pediría permiso se **deniega** (comandos fuera de «Comandos permitidos», servidores MCP, escribir en GitHub…) y el agente continúa sin ello y lo cuenta en su informe.
+- **Por defecto solo lee.** Con «puede editar archivos» aplica ediciones dentro de tus carpetas permitidas (deshacibles desde la conversación).
+- El resultado queda en una conversación 🕒; la interfaz avisa al terminar, y puedes ejecutarla ya, pausarla o borrarla. Si G3G3AI estaba apagado, lo vencido hace menos de 6 h se ejecuta al arrancar.
+
 ### 🔌 Servidores MCP
 Conecta herramientas externas con el estándar **MCP** (archivos, bases de datos, Jira, navegador…). En Ajustes → «Servidores MCP» añade una línea por servidor:
 

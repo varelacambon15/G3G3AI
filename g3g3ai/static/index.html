@@ -35,6 +35,7 @@
       <button data-view="chat" class="active"><span class="ico">💬</span> Chats</button>
       <button data-view="code"><span class="ico">💻</span> Code</button>
       <button data-view="models"><span class="ico">🧩</span> Modelos</button>
+      <button data-view="tasks"><span class="ico">🕒</span> Tareas</button>
       <button data-view="files"><span class="ico">📁</span> Archivos</button>
     </nav>
     <div class="side-search"><input id="conv-search" type="search" placeholder="Buscar conversaciones…"></div>
@@ -224,6 +225,34 @@
       </section>
 
       <!-- ARCHIVOS -->
+      <section id="view-tasks" class="view">
+        <div class="page">
+          <h1 class="page-title">Tareas programadas</h1>
+          <div class="card">
+            <p class="muted">El agente trabaja solo a la hora que elijas, aunque no haya ninguna ventana abierta (G3G3AI debe estar en marcha). Es <b>sin supervisión</b>: nada que requiera tu permiso se ejecuta (solo los comandos de «Comandos permitidos»). Por defecto solo lee; marca «puede editar» para que cambie archivos de tus carpetas permitidas. El resultado queda en una conversación 🕒.</p>
+            <div id="task-list"></div>
+          </div>
+          <div class="card">
+            <h2>Nueva tarea</h2>
+            <form id="task-form" class="form-grid">
+              <label>Nombre <input name="name" placeholder="Revisar tests cada noche" required></label>
+              <label>Encargo <textarea name="prompt" rows="4" placeholder="Ejecuta los tests del proyecto; si alguno falla, explica la causa probable." required></textarea></label>
+              <label>Cuándo
+                <select name="kind">
+                  <option value="daily">Cada día a las…</option>
+                  <option value="interval">Cada N minutos</option>
+                  <option value="once">Una vez, el…</option>
+                </select>
+              </label>
+              <label id="task-when-wrap">Hora <input name="when" type="time" value="03:00"></label>
+              <label>Carpeta del proyecto (opcional) <input name="workdir" placeholder="C:\Proyectos\app"></label>
+              <label class="check"><input type="checkbox" name="edits"> Puede editar archivos (sin preguntar, solo en carpetas permitidas)</label>
+              <p class="muted">Usará el modelo seleccionado ahora en el chat.</p>
+              <div class="row end"><button class="primary">Crear tarea</button></div>
+            </form>
+          </div>
+        </div>
+      </section>
       <section id="view-files" class="view">
         <div class="page">
           <h1 class="page-title">Archivos</h1>

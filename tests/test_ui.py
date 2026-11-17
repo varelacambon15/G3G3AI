@@ -82,7 +82,7 @@ def test_ui_end_to_end(live):
 
         # 1) Todas las vistas se abren; el panel de Code sólo se ve en Code
         for view, marker in (("chat", "#messages"), ("code", "#code-panel"), ("models", "#view-models"),
-                             ("files", "#view-files"), ("settings", "#settings-form")):
+                             ("tasks", "#task-form"), ("files", "#view-files"), ("settings", "#settings-form")):
             page.click(f"[data-view={view}]")
             page.wait_for_selector(marker, state="visible", timeout=5000)
             assert page.is_visible("#code-panel") == (view == "code"), view
@@ -122,7 +122,17 @@ def test_ui_end_to_end(live):
             page.click(f"[data-ctab={tab}]")
             assert text in page.inner_text(f"#ctab-{tab}")
 
-        # 4) Un clic en «Permitir…» no rompe nada y la app sigue viva
+        # 4) Tareas programadas: crear una desde el formulario y verla en la lista
+        page.click("[data-view=tasks]")
+        page.fill("#task-form [name=name]", "Prueba UI")
+        page.fill("#task-form [name=prompt]", "Resume el estado del proyecto")
+        page.select_option("#task-form [name=kind]", "interval")
+        page.fill("#task-form [name=when]", "30")
+        page.click("#task-form button.primary")
+        page.wait_for_selector("#task-list >> text=Prueba UI", timeout=5000)
+        page.wait_for_selector("#task-list >> text=cada 30 min", timeout=5000)
+
+        # 5) La app sigue viva
         page.click("[data-view=chat]")
         assert page.is_visible("#input")
         browser.close()
