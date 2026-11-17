@@ -1978,3 +1978,31 @@ def test_mail_endpoints(env, monkeypatch):
     st = client.get("/api/mail/status", headers=h).json()
     assert st["enabled"] is False and st["profiles"] == [] and st["messages"] == 0
     assert client.post("/api/mail/index", headers=h, json={}).status_code == 409      # hay que activarlo antes
+
+
+def test_compare_dirs_finds_missing_different_and_moved(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    a, b = home / "origen", home / "copia"
+    for d in (a, b):
+        (d / "sub").mkdir(parents=True)
+    (a / "igual.txt").write_text("hola"); (b / "igual.txt").write_text("hola")
+    (a / "cambia.txt").write_text("version 1"); (b / "cambia.txt").write_text("version 2")      # mismo tamaño, distinto contenido
+    (a / "falta_en_b.txt").write_text("solo en a")
+    (b / "extra_en_b.txt").write_text("solo en b")
+    (a / "sub" / "informe.docx").write_text("contenido largo del informe"); (b / "archivo_nuevo_nombre.docx").write_text("contenido largo del informe")
+    (a / "node_modules").mkdir(); (a / "node_modules" / "x.js").write_text("ignorado")
+    (a / "app.log").write_text("log a"); (b / "app.log").write_text("log distinto b")
+    ctx = _ctx(cfg)
+    assert "compare_dirs" in ctx.names()
+    out = asyncio.run(ctx.run("compare_dirs", {"a": str(a), "b": str(b), "ignore": ["*.log"]}))
+    assert "Iguales: 1" in out and "Solo en A: 1" in out and "Solo en B: 1" in out and "Distintos: 1" in out and "Movidos/renombrados: 1" in out
+    assert "falta_en_b.txt" in out and "extra_en_b.txt" in out and "cambia.txt" in out and "contenido" in out
+    assert "sub/informe.docx  →  archivo_nuevo_nombre.docx" in out
+    assert "node_modules" not in out and "app.log" not in out                                       # ignorados
+    quick = asyncio.run(ctx.run("compare_dirs", {"a": str(a), "b": str(b), "content": False, "ignore": "*.log"}))
+    assert "comparación rápida" in quick.lower() and "Movidos" in quick
+    assert asyncio.run(ctx.run("compare_dirs", {"a": str(a), "b": str(a)})).startswith("Error")
+    assert asyncio.run(ctx.run("compare_dirs", {"a": str(a), "b": str(tmp)})).startswith("Error")  # fuera de las carpetas visibles
+    same = asyncio.run(ctx.run("compare_dirs", {"a": str(b), "b": str(b / ".")}))
+    assert same.startswith("Error")
