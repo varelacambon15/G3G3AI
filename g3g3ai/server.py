@@ -27,6 +27,7 @@ from .hub import Hub
 from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
+from .undo import UndoJournal
 from .engine import EngineInstaller
 from . import documents as D
 from . import devtools, hardware, images, ollama
@@ -85,6 +86,17 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     memory = Memory(db)
     sync = Sync(cfg, db, memory)
     session_allow: dict[str, set] = {}  # conversación -> herramientas permitidas «siempre»
+    session_state: dict[str, dict] = {}  # conversación -> {"read": archivos leídos, "todos": plan de la tarea}
+
+    def state_for(cid: str, conv: dict | None = None) -> dict:
+        if cid not in session_state:
+            todos = []
+            for m in reversed((conv or {}).get("messages", [])):  # recupera el plan si el servidor se reinició
+                if (m.get("meta") or {}).get("todos"):
+                    todos = m["meta"]["todos"]
+                    break
+            session_state[cid] = {"read": {}, "todos": todos}
+        return session_state[cid]
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -245,7 +257,21 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     @app.delete("/api/conversations/{cid}")
     async def delete_conversation(cid: str):
         db.delete_conversation(cid)
+        UndoJournal(cid).clear()
+        session_state.pop(cid, None)
+        session_allow.pop(cid, None)
         return {"ok": True}
+
+    @app.get("/api/conversations/{cid}/changes")
+    async def conversation_changes(cid: str):
+        """Archivos que la IA ha modificado o creado en esta conversación (se pueden deshacer)."""
+        return {"files": UndoJournal(cid).changes()}
+
+    @app.post("/api/conversations/{cid}/undo")
+    async def conversation_undo(cid: str):
+        res = await asyncio.to_thread(UndoJournal(cid).undo_all)
+        session_state.get(cid, {}).get("read", {}).clear()  # los archivos han cambiado: hay que releerlos
+        return res
 
     @app.delete("/api/conversations/{cid}/messages/{mid}")
     async def truncate_conversation(cid: str, mid: int):
@@ -316,6 +342,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                 raise HTTPException(409, "La generación de imágenes está desactivada. Configúrala en Ajustes → Imágenes.")
             direct_image = m_img.group(2).strip()
         use_web = bool(body.get("use_web"))
+        perm_mode = body.get("mode") if body.get("mode") in ("normal", "plan", "edits") else "normal"
 
         conv = db.get_conversation(cid) if cid else None
         # Último mensaje del usuario (para decidir la ruta al regenerar)
@@ -369,12 +396,14 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             delegate = local_complete if (agent and chosen_pid != LOCAL_PROVIDER and llama.ready) else None
             return ToolContext(files, cfg, delegate, agent=agent, web=use_web,
                                session_allow=session_allow.setdefault(cid, set()), memory=mem, source=cid,
-                               image_gen=img)
+                               image_gen=img, state=state_for(cid, conv), perm_mode=perm_mode,
+                               workdir=conv.get("workdir") or None)
 
         async def gen():
             content, reasoning, trace, stats, route = "", "", [], {}, None
             made: list[str] = []
             out_files: list[str] = []
+            todos: list = []
             yield sse({"type": "start", "conversation_id": cid})
             if direct_image is not None:  # «/imagen …»: sin pasar por el modelo de texto
                 yield sse({"type": "status", "text": "🎨 Generando imagen…"})
@@ -409,7 +438,12 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                                 yield sse(ev)
                         msgs = ([{"role": "system", "content": system}] if system else []) + history
                         async for ev in chat_stream(p, cmodel, msgs, opts, ctx):
-                            if ev["type"] == "content":
+                            if ev["type"] == "retract":  # el modelo había escrito una llamada como texto
+                                if content.endswith(ev["text"]):
+                                    content = content[: len(content) - len(ev["text"])]
+                            elif ev["type"] == "todos":
+                                todos = ev["items"]
+                            elif ev["type"] == "content":
                                 content += ev["text"]
                             elif ev["type"] == "reasoning":
                                 reasoning += ev["text"]
@@ -435,7 +469,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             "model": route["model"] if route else model,
                             "route": route.get("reason") if route else None,
                             "stats": stats, "tools": trace or None, "images": made or None,
-                            "files": out_files or None}
+                            "files": out_files or None, "todos": todos or None, "mode": perm_mode}
                     stats["message_id"] = db.add_message(cid, "assistant", content, reasoning or None, meta)
             yield sse({"type": "done", **stats})
 

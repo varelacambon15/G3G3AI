@@ -400,7 +400,7 @@ def test_config_migration_v2_to_v3(tmp_path):
     p = tmp_path / "config.json"
     p.write_text(json.dumps({"config_version": 2, "token": "t", "agent_workdir": "/x/trabajo", "ai_write": "ask"}))
     c = Config(p)
-    assert c["write_roots"] == ["/x/trabajo"] and c["config_version"] == 4
+    assert c["write_roots"] == ["/x/trabajo"] and c["config_version"] == 5
     assert c.provider("ollama")["base_url"] == "http://127.0.0.1:11434/v1"  # v4 añade Ollama
     assert "~/.ssh" in c["blocked_paths"] and ".env" in c["blocked_paths"]
     p.write_text(json.dumps({"config_version": 1, "token": "t", "allow_ai_file_write": True}))
@@ -1263,3 +1263,75 @@ def test_repeated_identical_calls_are_cut_off(env):
         assert asyncio.run(call()).startswith("Error") and not ctx.abort_loop
     assert "has repetido esta misma llamada" in asyncio.run(call()).lower() and not ctx.abort_loop   # 4.ª: se avisa
     assert "has repetido esta misma llamada" in asyncio.run(call()).lower() and ctx.abort_loop       # 5.ª: se corta
+
+
+def test_default_prompt_migration_keeps_custom(tmp_path):
+    import json
+    from g3g3ai.config import Config
+    from g3g3ai.agent_prompt import BASE_PROMPT
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps({"config_version": 4, "token": "t",
+                             "default_system_prompt": "Eres un asistente útil. Responde en el idioma del usuario."}))
+    assert Config(p)["default_system_prompt"] == BASE_PROMPT and Config(p)["agent_max_steps"] == 40
+    p.write_text(json.dumps({"config_version": 4, "token": "t", "default_system_prompt": "Habla como un pirata."}))
+    assert Config(p)["default_system_prompt"] == "Habla como un pirata."
+
+
+def test_text_tool_calls_are_rescued_and_executed(env, monkeypatch):
+    """Un modelo que escribe la llamada como <tool_call> en el texto: se retira del chat y se ejecuta de verdad."""
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    (home / "dato.txt").write_text("contenido-secreto-42")
+    monkeypatch.setenv("FAKE_READ_PATH", str(home / "dato.txt"))
+    load_model(client, h)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "tool_call_en_texto", "use_tools": True,
+                                                         "provider": "local", "model": "x"}))
+    assert any(e["type"] == "tool_call" and e["name"] == "read_file" for e in evs)
+    assert any(e["type"] == "retract" for e in evs)
+    assert "contenido-secreto-42" in "".join(e["text"] for e in evs if e["type"] == "content")
+
+
+def test_agent_remembers_tools_between_turns_and_plan_mode(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    (home / "hola.txt").write_text("x")
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "lista mis archivos", "use_tools": True}))
+    cid = evs[0]["conversation_id"]
+    assert any(e["type"] == "tool_call" and e["name"] == "list_dir" for e in evs)
+    # 2.º mensaje: el modelo ve el registro de lo que hizo en el 1.º
+    evs = sse(client.post("/api/chat", headers=h, json={"conversation_id": cid, "message": "recuerda qué hiciste", "use_tools": True}))
+    text = "".join(e["text"] for e in evs if e["type"] == "content")
+    assert "REGISTRO:" in text and "list_dir" in text and "hola.txt" in text
+    # Modo Plan: no se ofrece nada que modifique, y las instrucciones lo dicen
+    evs = sse(client.post("/api/chat", headers=h, json={"conversation_id": cid, "message": "ejecuta un comando",
+                                                         "use_tools": True, "mode": "plan"}))
+    assert not any(e["type"] in ("approval", "tool_call") for e in evs)
+    evs = sse(client.post("/api/chat", headers=h, json={"conversation_id": cid, "message": "recuerda qué hiciste",
+                                                         "use_tools": True, "mode": "plan"}))
+    assert "MODOPLAN:sí" in "".join(e["text"] for e in evs if e["type"] == "content")
+
+
+def test_conversation_undo_endpoints_and_workdir(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    from g3g3ai.undo import UndoJournal
+    conv = client.post("/api/conversations", headers=h, json={}).json()
+    cid = conv["id"]
+    f = home / "proyecto.txt"
+    f.write_text("versión 1")
+    j = UndoJournal(cid)
+    j.record(f)
+    f.write_text("versión 2 (cambiada por la IA)")
+    nuevo = home / "nuevo.txt"
+    j.record(nuevo)
+    nuevo.write_text("creado por la IA")
+    ch = client.get(f"/api/conversations/{cid}/changes", headers=h).json()["files"]
+    assert {c["path"] for c in ch} == {str(f), str(nuevo)}
+    res = client.post(f"/api/conversations/{cid}/undo", headers=h).json()
+    assert f.read_text() == "versión 1" and not nuevo.exists() and not res["failed"]
+    assert client.get(f"/api/conversations/{cid}/changes", headers=h).json()["files"] == []
+    # Carpeta de proyecto por conversación
+    r = client.patch(f"/api/conversations/{cid}", headers=h, json={"workdir": str(home / "mi-proyecto")}).json()
+    assert r["workdir"] == str(home / "mi-proyecto")
+    client.delete(f"/api/conversations/{cid}", headers=h)

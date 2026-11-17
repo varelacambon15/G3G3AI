@@ -54,7 +54,23 @@ class H(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "m1", "function": {
                 "name": "memory_save", "arguments": json.dumps({"content": "Al usuario " + fact})}}]}}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if last["role"] == "user" and "qué hiciste" in str(last["content"]):  # repite lo que ve en el historial
+            logs = [m["content"] for m in msgs if m["role"] == "assistant" and "<registro_de_herramientas>" in str(m["content"])]
+            sysmsg = msgs[0]["content"] if msgs[0]["role"] == "system" else ""
+            self.chunk({"choices": [{"delta": {"content": "REGISTRO:" + (logs[-1].split("<registro_de_herramientas>")[1][:200] if logs else "ninguno")
+                                               + "|PLAN:" + ("sí" if "Plan actual de la tarea" in sysmsg else "no")
+                                               + "|MODOPLAN:" + ("sí" if "MODO PLAN" in sysmsg else "no")}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         first_user = next((m["content"] for m in msgs if m["role"] == "user"), "")
+        if "tool_call_en_texto" in str(first_user) and req.get("tools"):
+            if last["role"] == "tool":  # ya se ejecutó: responde con lo leído
+                self.chunk({"choices": [{"delta": {"content": "Leído: " + str(last["content"])[-40:]}, "finish_reason": "stop"}]})
+            else:  # la llamada va como texto, no como tool_calls
+                import os
+                path = os.environ.get("FAKE_READ_PATH", "")
+                call = json.dumps({"name": "read_file", "arguments": {"path": path}})
+                self.chunk({"choices": [{"delta": {"content": f"Voy a leerlo.\n<tool_call>{call}</tool_call>"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "texto largo" in str(first_user):  # simula un corte por longitud y su continuación
             if "límite de longitud" in str(last["content"]):
                 self.chunk({"choices": [{"delta": {"content": "segunda parte."}, "finish_reason": "stop"}]})

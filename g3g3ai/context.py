@@ -25,6 +25,70 @@ SUMMARY_PROMPT = ("Resume la conversación siguiente para poder continuarla sin 
                   "como máximo unas 400 palabras.")
 
 
+# --- Memoria de trabajo del agente --------------------------------------------------------------
+ACTIVITY_PER_MESSAGE = 2500   # caracteres máximos de registro por respuesta
+ACTIVITY_TOTAL = 12000        # caracteres máximos de registro en todo el historial
+ACTIVITY_MESSAGES = 8         # sólo las últimas respuestas llevan registro
+_SKIP_TOOLS = {"todo_write", "memory_save", "memory_delete"}
+_KEYS = ("path", "script", "command", "pattern", "query", "url", "game", "prompt")
+
+
+def _short(v, n: int) -> str:
+    v = " ".join(str(v).split())
+    return v if len(v) <= n else v[: n - 1] + "…"
+
+
+def _tool_line(name: str, args_json: str, result: str) -> str:
+    try:
+        a = json.loads(args_json or "{}")
+        if not isinstance(a, dict):
+            a = {}
+    except json.JSONDecodeError:
+        a = {}
+    key = next((k for k in _KEYS if a.get(k)), None)
+    arg = _short(a[key], 90) if key else ""
+    if name == "edit_file":
+        n_edits = len(a["edits"]) if isinstance(a.get("edits"), list) else 1
+        arg += f" ({n_edits} cambio{'s' if n_edits != 1 else ''})"
+    rows = [r for r in (result or "").splitlines() if r.strip()]
+    first = _short(rows[0], 170) if rows else "(sin salida)"
+    if name == "list_dir" and len(rows) > 1:  # qué había dentro es justo lo que interesa recordar
+        names = []
+        for r in rows[1:16]:
+            r = r.strip()
+            names.append(r[4:].strip() + "/" if r.startswith("[D] ") else r.split("  (")[0])
+        first += " · " + ", ".join(names) + (" …" if len(rows) > 16 else "")
+    # Para comandos interesa también el final de la salida (errores, resumen de pruebas…)
+    if name == "run_command" and len(rows) > 2:
+        first += " … " + _short(rows[-1], 120)
+    return f"- {name}({arg}) → {first}"
+
+
+def activity_note(meta: dict | None) -> str:
+    """Registro compacto de lo que la IA hizo con herramientas en una respuesta, para que lo recuerde después."""
+    meta = meta or {}
+    lines, pending = [], {}
+    for ev in meta.get("tools") or []:
+        if ev.get("type") == "tool_call":
+            pending[ev.get("name")] = ev.get("args", "")
+        elif ev.get("type") == "tool_result":
+            n = ev.get("name")
+            if n in _SKIP_TOOLS:
+                pending.pop(n, None)
+                continue
+            lines.append(_tool_line(n, pending.pop(n, ""), ev.get("result", "")))
+    for f in meta.get("files") or []:
+        lines.append(f"- entregado al usuario: {f}")
+    for i in meta.get("images") or []:
+        lines.append(f"- imagen generada: {i}")
+    if not lines:
+        return ""
+    body = "\n".join(lines)
+    if len(body) > ACTIVITY_PER_MESSAGE:
+        body = body[:ACTIVITY_PER_MESSAGE] + "\n- … (registro recortado)"
+    return f"\n\n<registro_de_herramientas>\n{body}\n</registro_de_herramientas>"
+
+
 def estimate_tokens(messages: list[dict]) -> int:
     total = 0
     for m in messages:
@@ -99,7 +163,7 @@ class HistoryBuilder:
                 live_ids.add(m["id"])
                 live_budget -= len(imgs)
 
-        history = []
+        history, notes = [], {}
         for m in msgs:
             if m["id"] <= upto or m["role"] not in ("user", "assistant"):
                 continue
@@ -108,6 +172,10 @@ class HistoryBuilder:
             atts = [a for a in (meta.get("attachments") or []) if a.get("kind") in ("image", "pdf_scan")]
             if m["role"] != "user" or not atts:
                 history.append({"role": m["role"], "content": text})
+                if m["role"] == "assistant":
+                    note = activity_note(meta)
+                    if note:
+                        notes[len(history) - 1] = note
                 continue
             parts = [{"type": "text", "text": text or "(imagen adjunta)"}]
             descriptions = meta.setdefault("descriptions", {})
@@ -142,6 +210,15 @@ class HistoryBuilder:
                 history.append({"role": "user", "content": "\n\n".join(p["text"] for p in parts)})
             else:
                 history.append({"role": "user", "content": parts})
+
+        # Memoria de trabajo: registro de las herramientas usadas en las últimas respuestas
+        budget_chars = ACTIVITY_TOTAL
+        for idx in sorted(notes, reverse=True)[:ACTIVITY_MESSAGES]:
+            note = notes[idx][:budget_chars]
+            budget_chars -= len(note)
+            if budget_chars <= 0:
+                break
+            history[idx]["content"] = (history[idx]["content"] or "") + note
 
         # Resumen automático si no cabe
         budget = self.budget(pid, max_tokens)

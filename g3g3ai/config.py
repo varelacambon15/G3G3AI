@@ -10,9 +10,11 @@ import threading
 import time
 from pathlib import Path
 
+from .agent_prompt import BASE_PROMPT, OLD_DEFAULTS
+
 APP = "g3g3ai"
 HOME = Path.home()
-CONFIG_VERSION = 4
+CONFIG_VERSION = 5
 
 
 def _default_dirs() -> tuple[Path, Path]:
@@ -108,7 +110,9 @@ DEFAULTS: dict = {
     "router_fast": "local::local",
     "router_strong": "deepseek::deepseek-chat",
     # Chat
-    "default_system_prompt": "Eres un asistente útil. Responde en el idioma del usuario.",
+    "default_system_prompt": BASE_PROMPT,
+    # Pasos máximos (llamadas a herramientas) por respuesta del agente
+    "agent_max_steps": 40,
     "temperature": 0.7,
     "max_tokens": 8192,
     # Proveedores API externos.
@@ -231,6 +235,8 @@ class Config:
         d = self.data
         if d.get("config_version", 1) >= CONFIG_VERSION:
             return False
+        if d.get("default_system_prompt") in OLD_DEFAULTS:  # v5: instrucciones por defecto mejoradas
+            d["default_system_prompt"] = BASE_PROMPT
         if d.get("config_version", 1) < 4:  # v4: proveedor Ollama
             have = {p.get("id") for p in d.get("providers", [])}
             if "ollama" not in have:

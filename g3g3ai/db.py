@@ -46,7 +46,7 @@ class DB:
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
         for table, col in (("conversations", "summary TEXT"), ("conversations", "summary_upto INTEGER"),
-                           ("messages", "uid TEXT")):  # columnas añadidas en versiones posteriores
+                           ("messages", "uid TEXT"), ("conversations", "workdir TEXT")):  # columnas añadidas en versiones posteriores
             try:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:
@@ -93,7 +93,7 @@ class DB:
         return conv
 
     def update_conversation(self, cid: str, **fields) -> None:
-        keys = [k for k in ("title", "provider", "model", "system") if k in fields]
+        keys = [k for k in ("title", "provider", "model", "system", "workdir") if k in fields]
         if not keys:
             return
         sets = ", ".join(f"{k}=?" for k in keys)

@@ -31,6 +31,72 @@ _ANNOUNCE = re.compile(
     r"ejecuto|cambio|aplico|let me|now i|next,? i|i'll|i will)\b", re.I)
 
 
+_TOOL_TAG = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
+_FENCE = re.compile(r"```(?:json|tool_call|tool)?\s*(\{.*?\})\s*```", re.S)
+
+
+def _as_call(obj, names: set):
+    if not isinstance(obj, dict):
+        return None
+    name = obj.get("name") or obj.get("tool") or obj.get("tool_name")
+    if not isinstance(name, str) or name not in names:
+        return None
+    args = obj.get("arguments", obj.get("parameters", obj.get("args", obj.get("input", {}))))
+    if isinstance(args, str):
+        try:
+            json.loads(args)
+        except json.JSONDecodeError:
+            return None
+        return name, args
+    return (name, json.dumps(args or {}, ensure_ascii=False)) if isinstance(args, dict) else None
+
+
+def extract_text_tool_calls(content: str, names: set) -> tuple[list[tuple[str, str]], str]:
+    """Algunos modelos (sobre todo locales o por OpenRouter) escriben la llamada como texto en vez de usar la
+    función de herramientas: <tool_call>{...}</tool_call>, un bloque ```json o un JSON suelto. Se rescatan
+    sólo si el nombre es una herramienta disponible. Devuelve (llamadas, texto sin ellas)."""
+    for rx in (_TOOL_TAG, _FENCE):
+        found, spans = [], []
+        for m in rx.finditer(content):
+            try:
+                call = _as_call(json.loads(m.group(1)), names)
+            except json.JSONDecodeError:
+                continue
+            if call:
+                found.append(call)
+                spans.append(m.span())
+        if found:
+            out, last = [], 0
+            for a, b in spans:
+                out.append(content[last:a])
+                last = b
+            out.append(content[last:])
+            return found, "".join(out).strip()
+    stripped = content.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        try:
+            call = _as_call(json.loads(stripped), names)
+        except json.JSONDecodeError:
+            call = None
+        if call:
+            return [call], ""
+    return [], content
+
+
+def steps_for(ctx) -> int:
+    if not ctx:
+        return MAX_CONTINUATIONS + 2  # charla normal: sólo hacen falta reanudaciones por longitud
+    try:
+        return max(5, int(ctx.cfg["agent_max_steps"] or MAX_TOOL_STEPS))
+    except (TypeError, ValueError):
+        return MAX_TOOL_STEPS
+
+
+def limit_message(ctx) -> str:
+    return (f"\n\n[Se alcanzó el límite de {steps_for(ctx)} pasos con herramientas. Escribe «continúa» para seguir "
+            "o sube el límite en Ajustes.]")
+
+
 def announces_action(text: str) -> bool:
     """¿La respuesta termina anunciando un paso («Ahora leo X…») en vez de preguntar o concluir?"""
     tail = (text or "").strip()[-240:]
@@ -148,7 +214,7 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
     continuations = nudges = 0
     used_tools = False
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), trust_env=not local) as c:
-        for _ in range(MAX_TOOL_STEPS):
+        for _ in range(steps_for(ctx)):
             _trim_openai(msgs)
             body = {"model": model, "messages": msgs, "stream": True,
                     "temperature": opts.get("temperature"), "max_tokens": max_tokens,
@@ -185,6 +251,15 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                         fn = tc.get("function") or {}
                         slot["name"] += fn.get("name") or ""
                         slot["args"] += fn.get("arguments") or ""
+            if ctx and not calls and content:
+                found, cleaned = extract_text_tool_calls(content, set(ctx.names()))
+                if found:  # el modelo escribió la llamada como texto: se retira del chat y se ejecuta de verdad
+                    yield {"type": "retract", "text": content}
+                    if cleaned:
+                        yield {"type": "content", "text": cleaned}
+                    content = cleaned
+                    calls = {i: {"id": "", "name": n, "args": a} for i, (n, a) in enumerate(found)}
+                    finish = "tool_calls"
             if finish == "length" and continuations < MAX_CONTINUATIONS:
                 # Cortada por longitud: las llamadas a medias no sirven; se pide que siga
                 continuations += 1
@@ -218,7 +293,11 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                 async for ev in T.tool_events(ctx, k["name"], k["args"], sink):
                     yield ev
                 msgs.append({"role": "tool", "tool_call_id": k["id"] or f"call_{i}", "content": sink[0]})
-        yield {"type": "content", "text": "\n\n[Se alcanzó el límite de pasos con herramientas]"}
+            if ctx.abort_loop:
+                yield {"type": "content", "text": "\n\n[Detenido: repetí la misma acción varias veces sin avanzar. "
+                                                  "Dime cómo quieres que siga.]"}
+                return
+        yield {"type": "content", "text": limit_message(ctx)}
 
 
 # --- Anthropic ---------------------------------------------------------------------
@@ -232,7 +311,7 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
     continuations = nudges = 0
     used_tools = False
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600)) as c:
-        for _ in range(MAX_TOOL_STEPS):
+        for _ in range(steps_for(ctx)):
             _trim_anthropic(msgs)
             # Los modelos actuales de Claude piensan antes de responder y ese razonamiento cuenta en
             # max_tokens: se deja margen suficiente. Tampoco admiten temperature (devuelven 400).
@@ -304,7 +383,11 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
                     yield ev
                 results.append({"type": "tool_result", "tool_use_id": b["id"], "content": sink[0]})
             msgs.append({"role": "user", "content": results})
-        yield {"type": "content", "text": "\n\n[Se alcanzó el límite de pasos con herramientas]"}
+            if ctx.abort_loop:
+                yield {"type": "content", "text": "\n\n[Detenido: repetí la misma acción varias veces sin avanzar. "
+                                                  "Dime cómo quieres que siga.]"}
+                return
+        yield {"type": "content", "text": limit_message(ctx)}
 
 
 def chat_stream(p: dict, model: str, messages: list[dict], opts: dict,
