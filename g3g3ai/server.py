@@ -29,6 +29,7 @@ from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
 from . import backup, costs, profiles, subagent
+from .mail import MailIndex, thunderbird_profiles, mail_sources
 from .mcp import MCPManager
 from .tasks import Scheduler, TaskError, TaskStore, next_run
 from .profiles import profile_for
@@ -121,6 +122,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     sync = Sync(cfg, db, memory)
     mcp_mgr = MCPManager(cfg)
     task_store = TaskStore(db)
+    mail_index = MailIndex(cfg)
     session_allow: dict[str, set] = {}  # conversación -> herramientas permitidas «siempre»
     session_state: dict[str, dict] = {}  # conversación -> {"read": archivos leídos, "todos": plan de la tarea}
 
@@ -141,8 +143,11 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             await llama.load(last)
         sync.start()
         scheduler.start()
+        if cfg["mail_enabled"]:
+            mail_index.start()          # pone al día el índice del correo en segundo plano
         yield
         scheduler.stop()
+        mail_index._stop = True
         sync.stop()
         await mcp_mgr.stop()
         await llama.unload()
@@ -394,6 +399,20 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         asyncio.create_task(scheduler.run_now(t))
         return {"ok": True}
 
+    @app.get("/api/mail/status")
+    async def mail_status():
+        profs = await asyncio.to_thread(thunderbird_profiles)
+        srcs = await asyncio.to_thread(mail_sources, cfg)
+        return {"enabled": bool(cfg["mail_enabled"]), "profiles": [str(p) for p in profs[:3]],
+                "sources": [str(s) for s in srcs], **mail_index.stats()}
+
+    @app.post("/api/mail/index")
+    async def mail_reindex(body: dict | None = None):
+        if not cfg["mail_enabled"]:
+            raise HTTPException(409, "Activa primero «La IA puede buscar en mi correo»")
+        started = mail_index.start(rebuild=bool((body or {}).get("rebuild")))
+        return {"started": started, **mail_index.stats()}
+
     @app.get("/api/mcp")
     async def mcp_status(refresh: bool = True):
         if refresh:
@@ -601,6 +620,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                              image_gen=img, state=state_for(cid, conv), perm_mode=perm_mode,
                              workdir=conv.get("workdir") or None, checkpoint=turn_mid or last_user_id)
             tc.mcp = mcp_mgr if (agent and mcp_mgr.map) else None
+            tc.mail = mail_index if cfg["mail_enabled"] else None
+            tc.cloud = chosen_pid != LOCAL_PROVIDER
             tc.compact_specs = chosen_pid == LOCAL_PROVIDER
             tc.unattended = unattended
             tc.profile = profile_for(chosen_pid, (llama.status()["model"] or "") if chosen_pid == LOCAL_PROVIDER else chosen_model,

@@ -228,6 +228,14 @@ Los modelos locales reciben un trato propio para que funcionen mejor con el agen
 - **Más rápidos:** `llama-server` con una sola ranura (todo el contexto es para tu conversación), caché de prompt y sin «pensar» por defecto en Qwen3 y similares (actívalo en Ajustes si prefieres razonamiento a costa de velocidad). La salida pedida nunca supera la mitad del contexto.
 - **🧪 Probar con el agente** (Modelos → modelo cargado): comprueba si el modelo llama bien a las herramientas y a qué velocidad va, y te dice qué hacer si no.
 
+### 📧 Buscar en tu correo
+Ajustes → **Correo** → «La IA puede buscar en mi correo» (desactivado por defecto). Lee los buzones del perfil de **Thunderbird** detectado (Mail e ImapMail) y, si quieres, carpetas con archivos `.eml` o buzones mbox extra. Si tu correo está también en Outlook, con Thunderbird basta; los archivos `.pst/.ost` de Outlook no se leen.
+- **Solo lectura:** el correo original no se toca. Se crea un índice local (con búsqueda de texto rápida, sin distinguir acentos) que se actualiza solo con lo nuevo.
+- **Qué puede hacer:** `mail_search` (texto, remitente, destinatario, asunto, fechas AAAA-MM-DD, carpeta; la papelera y el spam se excluyen) y `mail_read` (cabeceras y texto; los adjuntos solo se listan). Ejemplo: «¿Qué mensajes me llegaron esta semana de jmoreno?».
+- **Permiso en cada uso** (puedes marcar «permitir siempre aquí»). Si el modelo es de una API en la nube, el aviso lo dice: **los mensajes que lea se envían a ese servicio**. Con un modelo local no sale nada de tu equipo.
+- **Contra engaños:** el texto de un correo se trata como datos; se le ordena al modelo no obedecer instrucciones escritas dentro de un mensaje.
+- **Límites:** los mensajes IMAP solo están en disco si Thunderbird los guarda sin conexión; si compactas una carpeta en Thunderbird, pulsa «Reconstruir».
+
 ### 🎚 Se adapta al modelo
 Según el modelo elegido (o lo que fijes en Ajustes → «Exigencia del agente»):
 - **Pequeño** (≤8B o desconocido en local): pocas herramientas, reglas cortas, una llamada a la vez y salidas de herramientas más pequeñas, para que acierte más.

@@ -88,6 +88,7 @@ def test_ui_end_to_end(live):
             assert page.is_visible("#code-panel") == (view == "code"), view
         page.wait_for_selector("#usage-box >> text=Este mes", timeout=5000)     # Uso y coste
         assert page.is_visible("#bk-export")                                      # Copia de seguridad
+        page.wait_for_selector("#mail-box >> text=La IA puede buscar en mi correo", timeout=5000)   # Correo
 
         # 2) Cargar el modelo falso y mantener una conversación (con corte por longitud y continuación automática)
         page.evaluate("""async () => {

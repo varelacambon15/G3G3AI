@@ -1506,6 +1506,7 @@ const FIELDS = [
   ["monthly_budget_usd", "Límite de gasto mensual estimado ($)", "number", "Te avisa al llegar al 80% y al 100%. 0 = sin aviso."],
   ["model_prices", "Precios por modelo ($ por millón de tokens, uno por línea)", "lines", "Formato: «modelo = entrada, salida», p.ej. «deepseek-chat = 0.27, 1.10». Sobrescribe los precios orientativos."],
   ["mcp_servers", "Servidores MCP (uno por línea)", "lines", "Formato: nombre = [VAR=valor] comando args. Se guardan al pulsar «Guardar ajustes»; luego usa «Probar servidores»."],
+  ["mail_paths", "Correo: rutas extra (una por línea)", "lines", "Carpetas con buzones mbox o archivos .eml, además del perfil de Thunderbird detectado."],
   ["command_allow", "Comandos permitidos sin preguntar (uno por línea)", "lines", "Se ejecutan sin pedir confirmación (salvo los peligrosos). Puedes usar * como comodín, p.ej. «npm test*» o «git status». Un comando encadenado (con ; & | >) sólo se admite si coincide exactamente."],
   ["write_roots", "Carpetas que la IA puede modificar (una por línea)", "lines", "Añade aquí tus proyectos. Fuera de estas carpetas la IA sólo puede leer."],
   ["blocked_paths", "Rutas protegidas (una por línea)", "lines", "Nadie puede verlas desde G3G3AI, ni la IA ni la interfaz. Sin barra = patrón de nombre (p.ej. .env, *.pem)."],
@@ -1544,6 +1545,30 @@ $("#bk-file").addEventListener("change", async (e) => {
     $("#bk-pass").value = ""; loadSettings();
   } catch (er) { toast(er.message, 6000); }
 });
+async function renderMail() {
+  const box = $("#mail-box"); box.innerHTML = "";
+  box.append(h("p", { class: "muted" }, "Deja que la IA busque en tu correo (solo lectura): «mensajes de esta semana de Pérez», «qué me pidió Ana sobre la nómina»… Usa los buzones de Thunderbird (si el mismo correo está también en Outlook, Thunderbird basta) o carpetas con archivos .eml. El correo original no se modifica; se crea un índice local. ",
+    h("b", {}, "Privacidad:"), " cada búsqueda te pide permiso, y si usas un modelo en la nube (OpenRouter, DeepSeek…) los mensajes que lea se envían a ese servicio. Con un modelo local no sale nada de tu equipo."));
+  try {
+    const st = await api("/api/mail/status");
+    box.append(h("label", { class: "check" }, h("input", { type: "checkbox", checked: st.enabled, onchange: async (e) => {
+      await api("/api/settings", { method: "PUT", body: { ...(await api("/api/settings")), mail_enabled: e.target.checked } }).catch((er) => toast(er.message));
+      if (e.target.checked) await api("/api/mail/index", { method: "POST", body: {} }).catch(() => {});
+      renderMail();
+    } }), " La IA puede buscar en mi correo"));
+    box.append(h("p", { class: "muted" }, st.profiles.length ? "Perfil de Thunderbird detectado: " + st.profiles[0] : "No se encontró Thunderbird. Añade la carpeta de tu correo en «Correo: rutas extra» más abajo."));
+    if (st.enabled) {
+      const fmt = (t) => t ? new Date(t * 1000).toLocaleDateString() : "—";
+      box.append(h("p", {}, st.running ? `⏳ Indexando… ${st.files_done}/${st.files_total} buzones · ${st.messages} mensajes` :
+        `${st.messages} mensajes indexados de ${st.files} buzones/archivos (${fmt(st.oldest)} → ${fmt(st.newest)})` + (st.error ? " · ⚠ " + st.error : "") + (st.fts ? "" : " · sin búsqueda de texto rápida (FTS5 no disponible)")));
+      box.append(h("div", { class: "row" },
+        h("button", { class: "ghost small", disabled: st.running, onclick: async () => { await api("/api/mail/index", { method: "POST", body: {} }); setTimeout(renderMail, 500); } }, "Actualizar índice"),
+        h("button", { class: "ghost small", disabled: st.running, onclick: async () => { if (confirm("¿Reconstruir el índice desde cero? Puede tardar.")) { await api("/api/mail/index", { method: "POST", body: { rebuild: true } }); setTimeout(renderMail, 500); } } }, "Reconstruir"),
+        h("button", { class: "ghost small", onclick: () => renderMail() }, "Refrescar")));
+      if (st.running) setTimeout(renderMail, 3000);
+    }
+  } catch (e) { box.append(h("p", { class: "muted" }, e.message)); }
+}
 async function renderMcp(refresh = false) {
   const box = $("#mcp-box"); box.innerHTML = "";
   box.append(h("p", { class: "muted" }, "Conecta herramientas externas (archivos, bases de datos, Jira, navegador…) con el estándar MCP. Añade una línea por servidor en «Servidores MCP» más abajo, p. ej. ",
@@ -1598,6 +1623,7 @@ async function loadSettings() {
   renderDevtools();
   renderUsage();
   renderMcp();
+  renderMail();
 
   const f = $("#settings-form"); f.innerHTML = "";
   for (let [key, label, type, hint] of FIELDS) {

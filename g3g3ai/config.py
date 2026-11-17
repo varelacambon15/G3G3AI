@@ -52,6 +52,9 @@ DEFAULTS: dict = {
     "model_prices": [],         # «modelo = entrada, salida» ($ por millón de tokens); sobrescribe los precios orientativos
     "monthly_budget_usd": 0,    # aviso cuando el gasto estimado del mes se acerca a esta cifra (0 = sin aviso)
     "mcp_servers": [],          # «nombre = [VAR=valor] comando args»: servidores MCP (herramientas externas)
+    "mail_enabled": False,      # la IA puede buscar en tu correo (solo lectura, con permiso)
+    "mail_auto": True,          # usar automáticamente el perfil de Thunderbird si se encuentra
+    "mail_paths": [],           # carpetas o archivos extra: buzones mbox o carpetas con .eml
     "command_allow": [],        # comandos que el agente puede ejecutar sin preguntar (exactos o con comodines *)
     "agent_temperature": 0.3,   # temperatura de los modelos LOCALES cuando usan herramientas (llamar herramientas pide precisión)
     "local_thinking": False,    # dejar que los modelos locales «piensen» antes de responder (más lento; mejor en problemas difíciles)
