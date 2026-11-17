@@ -159,6 +159,9 @@ ALL_SPECS = {
                             "ignore_case": {"type": "boolean"},
                             "context": {"type": "integer", "description": "Líneas de contexto alrededor (0-5)"},
                             "max_results": {"type": "integer", "description": "Por defecto 100"}}, ["pattern"])),
+    "system_info": ("Datos del equipo del usuario: sistema, procesador, memoria, gráfica, disco libre, y qué modelo local de IA "
+                    "encaja mejor en él. Úsalo en vez de pedir al usuario que ejecute comandos para ver su hardware.",
+                    _schema({})),
     "todo_write": ("Crea o actualiza el plan de la tarea: lista de pasos con su estado. Úsalo en tareas de 3 o más pasos "
                    "y actualízalo al terminar cada uno (un solo paso «in_progress» a la vez). Sustituye la lista entera.",
                    _schema({"todos": {"type": "array", "items": _schema({
@@ -363,7 +366,7 @@ class ToolContext:
         out = []
         plan = self.perm_mode == "plan"  # modo Plan: sólo lectura
         if self.agent:
-            out += ["list_dir", "read_file", "search_files", "grep_files", "todo_write"]
+            out += ["list_dir", "read_file", "search_files", "grep_files", "todo_write", "system_info"]
             if not plan and self.mode("write_file") != "off" and self.files.write_roots:
                 out += ["write_file", "edit_file", "create_document"]
             if not plan and self.mode("run_command") != "off" and (not self.auto_all or self.sandboxed):
@@ -625,6 +628,8 @@ class ToolContext:
                 return await self.subagent(task, write=name == "delegate_edit") if task else "Error: falta «task»."
             if name == "apply_patch":
                 return await asyncio.to_thread(self._apply_patch, str(args.get("id", "")))
+            if name == "system_info":
+                return await asyncio.to_thread(self._system_info)
             if name == "ask_local_model":
                 if not self.local_chat:
                     return "Error: el modelo local no está disponible."
@@ -797,6 +802,33 @@ class ToolContext:
         if done == len(clean):
             return f"Plan actualizado: los {len(clean)} pasos están hechos. Resume el resultado al usuario."
         return f"Plan actualizado: {done}/{len(clean)} pasos hechos. Siguiente: «{cur['content']}»." if cur else f"Plan actualizado ({done}/{len(clean)})."
+
+    def _system_info(self) -> str:
+        import shutil
+        from . import hardware as H
+        hw = H.detect()
+        rec = H.recommend(hw)
+        sm, gb = rec["summary"], 1024 ** 3
+        try:
+            du = shutil.disk_usage(Path.home())
+            disk = f"{du.free / gb:.0f} GB libres de {du.total / gb:.0f} GB"
+        except OSError:
+            disk = "desconocido"
+        where = {"gpu": "en la gráfica", "cpu": "en el procesador", "mixto": "repartido entre gráfica y procesador"}.get(rec["main"]["where"], rec["main"]["where"])
+        lines = [f"Sistema: {platform.system()} {platform.release()} ({hw.get('arch')})",
+                 f"Procesador: {sm['cpu']} · {sm['cores']} núcleos / {sm['threads']} hilos",
+                 f"Memoria: {sm['ram_gb']} GB de RAM",
+                 f"Gráfica: {sm['gpu']}" + (f" ({sm['vram_gb']} GB de VRAM)" if sm["vram_gb"] else " (sin memoria dedicada)"),
+                 f"Disco (carpeta personal): {disk}",
+                 "",
+                 f"Modelo local recomendado: {rec['main']['tier']} en {rec['quant']}, {where}. Motor: {rec['engine']}.",
+                 "Búsquedas útiles en la pestaña Modelos: " + ", ".join(rec["main"]["searches"]),
+                 f"Ajustes sugeridos: contexto {rec['settings']['llama_ctx']}, hilos {rec['settings']['llama_threads']}, "
+                 f"capas en gráfica {rec['settings']['llama_gpu_layers']}."]
+        if rec.get("fast"):
+            lines.append(f"Modelo rápido adicional: {rec['fast']['tier']}.")
+        lines += ["Notas: " + n for n in rec["notes"]]
+        return "\n".join(lines)
 
     def _apply_patch(self, pid: str) -> str:
         from . import subagent as SA

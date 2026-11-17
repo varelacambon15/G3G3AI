@@ -102,6 +102,14 @@ async def with_keepalive(agen, every: float = 15.0):
         await it.aclose() if hasattr(it, "aclose") else None
 
 
+NO_AGENT_NOTE = (
+    "## Herramientas del equipo desactivadas\n"
+    "El modo Agente está desactivado en este chat: no puedes leer archivos, ejecutar comandos ni ver el hardware del "
+    "usuario. Si lo que pide lo necesita (hardware, archivos, correo, comandos, carpetas), díselo en una frase y dile que "
+    "active «🛠 Agente» en el menú ⚙ junto al cuadro de texto; no le pidas que te pegue la salida de comandos que el agente "
+    "podría obtener solo.")
+
+
 def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastAPI:
     cfg = cfg or Config()
     db = DB((data_dir or DATA_DIR) / "g3g3ai.db")
@@ -681,7 +689,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                         yield sse({"type": "route", **route})
                     ctx = make_ctx(cpid, cmodel)
                     mem_text = memory.prompt() if memory_for(cpid) else ""
-                    system = "\n\n".join(x for x in (base_system, mem_text, ctx.system_hint() if ctx else "") if x)
+                    no_agent = "" if (ctx and ctx.agent) else NO_AGENT_NOTE
+                    system = "\n\n".join(x for x in (base_system, mem_text, ctx.system_hint() if ctx else "", no_agent) if x)
                     try:
                         history = []
                         async for ev in builder.build(conv, cpid, cmodel, system, opts["max_tokens"] or 2048):

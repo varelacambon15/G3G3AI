@@ -318,7 +318,7 @@ $("#auto-toggle").checked = store.get("auto", false);
 $("#auto-toggle").addEventListener("change", (e) => { store.set("auto", e.target.checked); updateAutoTitle(); updateFavButton(); });
 $("#web-toggle").checked = store.get("web", false);
 $("#web-toggle").addEventListener("change", (e) => store.set("web", e.target.checked));
-$("#tools-toggle").checked = store.get("tools", false);
+$("#tools-toggle").checked = store.get("tools", true);   // el agente viene activado: sin él el modelo no puede ver nada del equipo
 $("#tools-toggle").addEventListener("change", (e) => store.set("tools", e.target.checked));
 
 // --- Menús «+» y herramientas --------------------------------------------------------------

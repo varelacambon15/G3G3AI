@@ -400,7 +400,7 @@ def test_config_migration_v2_to_v3(tmp_path):
     p = tmp_path / "config.json"
     p.write_text(json.dumps({"config_version": 2, "token": "t", "agent_workdir": "/x/trabajo", "ai_write": "ask"}))
     c = Config(p)
-    assert c["write_roots"] == ["/x/trabajo"] and c["config_version"] == 6
+    assert c["write_roots"] == ["/x/trabajo"] and c["config_version"] == 7
     assert c.provider("ollama")["base_url"] == "http://127.0.0.1:11434/v1"  # v4 añade Ollama
     assert "~/.ssh" in c["blocked_paths"] and ".env" in c["blocked_paths"]
     p.write_text(json.dumps({"config_version": 1, "token": "t", "allow_ai_file_write": True}))
@@ -1483,8 +1483,8 @@ def test_github_tool_and_profiles_in_agent(env, monkeypatch):
         assert sandbox.assess("git push origin rama")[0] == "warn"
         # un modelo pequeño ve menos herramientas y un prompt más corto
         ctx.profile = "small"
-        assert set(ctx.names()) <= {"list_dir", "read_file", "grep_files", "edit_file", "write_file", "run_command",
-                                    "todo_write", "web_search", "fetch_url", "memory_save", "generate_image", "github"}
+        assert set(ctx.names()) <= {"system_info", "list_dir", "read_file", "grep_files", "edit_file", "write_file",
+                                    "run_command", "web_search", "fetch_url", "memory_save"}
         assert "UNA llamada" in ctx.system_hint()
         ctx.profile = "full"
         assert "Git y GitHub" in ctx.system_hint() and "en profundidad" in ctx.system_hint()
@@ -1797,8 +1797,8 @@ def test_local_models_get_lean_requests(env):
     ctx.profile = "small"; ctx.compact_specs = True
     ctx.subagent = lambda *a, **k: None
     names = set(ctx.names())
-    assert names <= {"list_dir", "read_file", "grep_files", "edit_file", "write_file", "run_command", "web_search",
-                     "fetch_url", "memory_save"} and "edit_file" in names
+    assert names <= {"system_info", "list_dir", "read_file", "grep_files", "edit_file", "write_file", "run_command",
+                     "web_search", "fetch_url", "memory_save"} and "edit_file" in names
     assert not names & {"delegate", "delegate_edit", "apply_patch", "github", "todo_write"}
     lean = len(_json.dumps(ctx.openai_specs()))
     ctx.profile, ctx.compact_specs = "standard", False
@@ -1840,3 +1840,30 @@ def test_tool_arguments_are_repaired_or_reported():
     args, err = parse_args_ex("esto no es json")
     assert args == {} and "JSON" in err
     assert parse_args_ex("[1, 2]")[1] is not None                                         # no es un objeto
+
+
+def test_system_info_tool_and_no_agent_note(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    ctx = _ctx(cfg)
+    assert "system_info" in ctx.names()
+    out = asyncio.run(ctx.run("system_info", {}))
+    assert "Procesador:" in out and "Memoria:" in out and "Modelo local recomendado:" in out and "Disco" in out
+    # sin Agente, el modelo sabe por qué no puede y qué debe decirle al usuario (en vez de pedir que pegue comandos)
+    h = auth(cfg)
+    load_model(client, h)
+    sys_seen = sse(client.post("/api/chat", headers=h, json={"message": "dime el sistema que te llega", "use_tools": False}))
+    assert "Agente" in "".join(e["text"] for e in sys_seen if e["type"] == "content")
+
+
+def test_mail_profiles_are_protected_by_default_and_migrated(env):
+    from g3g3ai.config import default_blocked, Config
+    client, cfg, home, tmp = env
+    items = default_blocked()
+    assert any("Thunderbird" in i or "thunderbird" in i for i in items)
+    # una configuración antigua con su lista propia recibe las rutas de correo sin perder las suyas
+    old = Config(tmp / "cfg2" / "config.json")
+    old.data.update({"config_version": 6, "blocked_paths": ["~/mi-secreto"]})
+    old.save()
+    new = Config(tmp / "cfg2" / "config.json")
+    assert "~/mi-secreto" in new["blocked_paths"] and any("hunderbird" in b for b in new["blocked_paths"])

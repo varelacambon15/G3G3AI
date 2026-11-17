@@ -129,6 +129,10 @@ class H(BaseHTTPRequestHandler):
         if last["role"] == "tool" and "hallazgo-123" in str(last["content"]):
             self.chunk({"choices": [{"delta": {"content": "El ayudante encontró: hallazgo-123"}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "dime el sistema que te llega" in str(first_user):  # eco de lo que dice el prompt del sistema
+            note = "Agente" if "Herramientas del equipo desactivadas" in (msgs[0]["content"] if msgs[0]["role"] == "system" else "") else "ninguna nota"
+            self.chunk({"choices": [{"delta": {"content": "Nota: " + note}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "ver ajustes locales" in str(first_user):  # devuelve cómo le llegó la petición
             kw = req.get("chat_template_kwargs") or {}
             info = (f"AJUSTES: temp={req.get('temperature')} think={kw.get('enable_thinking')} cache={req.get('cache_prompt')} "

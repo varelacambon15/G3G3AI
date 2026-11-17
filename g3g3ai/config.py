@@ -14,7 +14,7 @@ from .agent_prompt import BASE_PROMPT, OLD_DEFAULTS
 
 APP = "g3g3ai"
 HOME = Path.home()
-CONFIG_VERSION = 6
+CONFIG_VERSION = 7
 
 
 def _default_dirs() -> tuple[Path, Path]:
@@ -192,7 +192,7 @@ def default_blocked() -> list[str]:
     """Secretos y datos personales que la IA nunca debería leer."""
     items = [
         "~/.ssh", "~/.gnupg", "~/.aws", "~/.azure", "~/.kube", "~/.docker", "~/.password-store",
-        "~/.local/share/keyrings", "~/.mozilla", "~/.thunderbird", "~/.config/chromium",
+        "~/.local/share/keyrings", "~/.mozilla", "~/.thunderbird", "~/.var/app/org.mozilla.Thunderbird", "~/.config/chromium",
         "~/.config/google-chrome", "~/.config/BraveSoftware", "~/.config/microsoft-edge",
         "~/.var/app/org.chromium.Chromium", "~/.var/app/com.google.Chrome", "~/.var/app/org.mozilla.firefox",
         "~/.var/app/com.brave.Browser", "~/.local/share/Steam/config", "~/.steam/steam/config",
@@ -204,11 +204,12 @@ def default_blocked() -> list[str]:
     if sys.platform == "win32":
         items += [
             "~/AppData/Local/Google/Chrome/User Data", "~/AppData/Local/Microsoft/Edge/User Data",
-            "~/AppData/Roaming/Mozilla", "~/AppData/Local/BraveSoftware", "~/AppData/Roaming/Microsoft/Credentials",
+            "~/AppData/Roaming/Mozilla", "~/AppData/Roaming/Thunderbird", "~/AppData/Local/Thunderbird",
+            "~/AppData/Roaming/Microsoft/Outlook", "~/AppData/Local/BraveSoftware", "~/AppData/Roaming/Microsoft/Credentials",
             "~/AppData/Local/Microsoft/Credentials", str(DATA_DIR / "g3g3ai.db"),
         ]
     if sys.platform == "darwin":
-        items += ["~/Library/Keychains", "~/Library/Application Support/Google/Chrome",
+        items += ["~/Library/Thunderbird", "~/Library/Keychains", "~/Library/Application Support/Google/Chrome",
                   "~/Library/Application Support/Firefox", "~/Library/Cookies"]
     return items
 
@@ -243,6 +244,10 @@ class Config:
         d = self.data
         if d.get("config_version", 1) >= CONFIG_VERSION:
             return False
+        if d.get("config_version", 1) < 7 and d.get("blocked_paths"):  # v7: el correo (Thunderbird/Outlook) también queda protegido
+            have = set(d["blocked_paths"])
+            d["blocked_paths"] = list(d["blocked_paths"]) + [b for b in default_blocked() if b not in have
+                                                             and ("Thunderbird" in b or "thunderbird" in b or "Outlook" in b)]
         if d.get("llama_ctx") == 8192:  # v6: el antiguo valor por defecto pasa a ser «automático»
             d["llama_ctx"] = 0
         if d.get("default_system_prompt") in OLD_DEFAULTS:  # v5: instrucciones por defecto mejoradas
