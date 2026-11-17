@@ -380,3 +380,4 @@ body.code-mode .code-panel { display: flex; }
 .term-line { font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: pre-wrap; margin-bottom: 8px; }
 .term-line .cmd { color: var(--accent, #c2603f); font-weight: 600; }
 @media (max-width: 900px) { body.code-mode .code-panel { display: none; } }
+.live-out { margin: 8px 0; max-height: 220px; overflow: auto; padding: 8px 10px; font: 12px/1.45 ui-monospace, Consolas, monospace; background: var(--code); border-radius: 8px; white-space: pre-wrap; opacity: .9; }

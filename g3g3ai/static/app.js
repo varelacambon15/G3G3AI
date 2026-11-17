@@ -452,7 +452,7 @@ function renderCodePanel(live) {
   if (live?.tools) take(live.tools);
   const term = $("#ctab-term"); term.innerHTML = "";
   if (!calls.length) term.append(h("p", { class: "muted" }, "Los comandos que ejecute la IA aparecerán aquí."));
-  for (const c of calls.slice(-30)) term.append(h("div", { class: "term-line" }, h("span", { class: "cmd" }, "$ " + c.cmd), "\n", c.out === null ? "⏳ ejecutando…" : c.out));
+  for (const c of calls.slice(-30)) term.append(h("div", { class: "term-line" }, h("span", { class: "cmd" }, "$ " + c.cmd), "\n", c.out === null ? (live?.liveOut ? live.liveOut.slice(-3000) + "\n⏳ ejecutando…" : "⏳ ejecutando…") : c.out));
   const plan = $("#ctab-plan"); plan.innerHTML = "";
   const withTodos = (S.conv?.messages || []).filter((m) => m.role === "assistant" && m.meta?.todos);
   const todos = live?.todos?.length ? live.todos : (withTodos.length ? withTodos[withTodos.length - 1].meta.todos : []);
@@ -632,6 +632,7 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   const frag = document.createDocumentFragment();
   if (extra.todos?.length) frag.append(todoCard(extra.todos));
   if (extra.compacted) frag.append(h("div", { class: "route" }, `🗜 Se resumieron ${extra.compacted} mensajes antiguos para que la conversación quepa en el contexto`));
+  if (extra.liveOut && streaming) frag.append(h("pre", { class: "live-out" }, extra.liveOut.slice(-4000)));
   if (extra.status && streaming) frag.append(h("div", { class: "route" }, extra.status));
   if (extra.route) frag.append(h("div", { class: "route" }, `🔀 ${extra.route.provider === "local" ? "💻" : "☁"} ${extra.route.model}` + (extra.route.reason ? ` — ${extra.route.reason}` : "")));
   for (const f of extra.fallbacks || []) frag.append(h("div", { class: "route warn" }, "↪ falló " + f + ", probando el otro modelo…"));
@@ -748,8 +749,24 @@ const input = $("#input");
 input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; });
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !matchMedia("(pointer: coarse)").matches) {
-    e.preventDefault(); $("#send-btn").click();
+    e.preventDefault();
+    if (S.streaming) {  // mientras trabaja se puede ir escribiendo: el mensaje se envía al terminar
+      const t = input.value.trim();
+      if (t) { S.queued = t; input.value = ""; input.style.height = "auto"; toast("En cola: se enviará cuando termine (Esc para detener)", 3500); }
+      return;
+    }
+    $("#send-btn").click();
   }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && S.streaming && !document.querySelector("dialog[open]")) { S.queued = null; S.streaming.abort(); toast("Detenido"); }
+  if (e.key === "Tab" && e.shiftKey && document.activeElement === input) {  // Mayús+Tab: cambia el modo de permisos
+    e.preventDefault();
+    const m = $("#mode-select"), order = ["normal", "edits", "plan"];
+    m.value = order[(order.indexOf(m.value) + 1) % order.length]; m.dispatchEvent(new Event("change"));
+    toast("Modo: " + { normal: "Normal", edits: "Aceptar ediciones", plan: "Plan" }[m.value]);
+  }
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); setView(S.code ? "code" : "chat"); newChat(); }
 });
 $("#send-btn").addEventListener("click", () => {
   if (S.streaming) { S.streaming.abort(); return; }
@@ -811,7 +828,8 @@ async function send(text, attachments, isContinue = false) {
         if (ev.type === "start") { if (!S.convId) { S.convId = ev.conversation_id; store.set("conv", S.convId); loadConversations(); } }
         else if (ev.type === "content") { content += ev.text; extra.status = null; }
         else if (ev.type === "reasoning") reasoning += ev.text;
-        else if (ev.type === "tool_call" || ev.type === "tool_result") tools.push(ev);
+        else if (ev.type === "tool_output") { extra.liveOut = (extra.liveOut || "") + ev.text; if (S.code) { const t = $("#ctab-term"); if (t) renderCodePanel({ tools, todos: extra.todos, liveOut: extra.liveOut }); } }
+        else if (ev.type === "tool_call" || ev.type === "tool_result") { tools.push(ev); if (ev.type === "tool_result") extra.liveOut = ""; }
         else if (ev.type === "approval") { tools.push(ev); notifyApproval(ev); }
         else if (ev.type === "approval_result") { const a = tools.find((t) => t.id === ev.id); if (a) a.state = ev.approved ? "approved" : "denied"; }
         else if (ev.type === "route") extra.route = ev;
@@ -838,6 +856,7 @@ async function send(text, attachments, isContinue = false) {
     if (errorMsg) toast("Error: " + errorMsg, 7000);
     if (S.convId) { await new Promise((r) => setTimeout(r, 150)); const wd = S.workdir; await openConversation(S.convId).catch(() => {}); S.workdir = wd; }
     else el.remove();
+    if (S.queued) { const q = S.queued; S.queued = null; setTimeout(() => send(q, []), 200); }
   }
 }
 

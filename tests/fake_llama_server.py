@@ -96,6 +96,18 @@ class H(BaseHTTPRequestHandler):
                 call = json.dumps({"name": "read_file", "arguments": {"path": path}})
                 self.chunk({"choices": [{"delta": {"content": f"Voy a leerlo.\n<tool_call>{call}</tool_call>"}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "informe_sub" in str(first_user) and last["role"] == "user" and msgs[0]["role"] == "system" \
+                and "ayudante de investigación" in msgs[0]["content"]:  # el ayudante de «delegate»
+            self.chunk({"choices": [{"delta": {"content": "INFORME: hallazgo-123 en src/x.py:7"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if "delegate" in names and last["role"] == "user" and "delega" in str(last["content"]):
+            self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "d1", "function": {
+                "name": "delegate", "arguments": json.dumps({"task": "informe_sub: busca dónde se usa X"})}}]},
+                "finish_reason": "tool_calls"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if last["role"] == "tool" and "hallazgo-123" in str(last["content"]):
+            self.chunk({"choices": [{"delta": {"content": "El ayudante encontró: hallazgo-123"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "error a mitad" in str(first_user):  # el proveedor falla después de haber enviado texto
             self.chunk({"choices": [{"delta": {"content": "empiezo bien… "}}]})
             self.chunk({"error": {"message": "upstream exploded", "code": 502}})

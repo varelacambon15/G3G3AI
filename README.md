@@ -217,6 +217,12 @@ Según el modelo elegido (o lo que fijes en Ajustes → «Exigencia del agente»
 - **Mediano** (Haiku, mini/flash, 9–29B): método completo.
 - **Grande** (Sonnet/Opus, GPT-5, DeepSeek V3/R1, 30B+): método completo, más Git/GitHub y trabajo en profundidad (leer varios archivos a la vez, revisarse a sí mismo).
 
+### ⚡ Como Claude Code
+- **Salida en vivo:** los comandos muestran lo que imprimen mientras corren; al detener la respuesta (■ o Esc) se mata el comando y sus procesos hijos.
+- **Ayudantes (`delegate`):** para investigar sin llenar el contexto, el agente lanza un ayudante de sólo lectura con contexto propio que devuelve un informe breve con rutas y datos.
+- **Escribe mientras trabaja:** pulsa Intro y el mensaje queda en cola; se envía al terminar.
+- **Atajos:** `Esc` detiene · `Mayús+Tab` cambia de modo (Normal → Aceptar ediciones → Plan) · `Ctrl/Cmd+Mayús+O` conversación nueva.
+
 ### 🛠 Cómo trabaja el agente
 
 El modo **🛠 Agente** sigue unas reglas de trabajo pensadas para que se comporte con método, tanto con modelos grandes como con locales pequeños:

@@ -1488,3 +1488,36 @@ def test_github_tool_and_profiles_in_agent(env, monkeypatch):
     finally:
         github.API = old_api
         srv.shutdown()
+
+
+def test_run_command_streams_output_and_can_be_cancelled(env):
+    import asyncio
+    import sys
+    import threading
+    client, cfg, home, tmp = env
+    ctx = _ctx(cfg)
+    py = sys.executable.replace("\\", "/")
+    seen = []
+    ctx.live = seen.append
+    r = asyncio.run(ctx.run("run_command", {"command": f'"{py}" -c "import sys;print(\'uno\',flush=True);print(\'dos\',file=sys.stderr)"'}))
+    assert "Código de salida" in r and "uno" in r and "dos" in r      # stdout y stderr, en orden
+    assert "".join(seen).count("uno") == 1                              # y llegaron por el callback en vivo
+    # cancelar mata el comando sin esperar al tiempo límite
+    import time
+    ctx2 = _ctx(cfg)
+    ctx2.live = None
+    threading.Timer(0.8, ctx2.cancel.set).start()
+    t0 = time.monotonic()
+    r = asyncio.run(ctx2.run("run_command", {"command": f'"{py}" -c "import time;print(1,flush=True);time.sleep(30)"', "timeout": 60}))
+    assert "Cancelado" in r and time.monotonic() - t0 < 10
+
+
+def test_delegate_subagent_returns_report_without_polluting_context(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "delega la búsqueda", "use_tools": True}))
+    assert any(e["type"] == "tool_call" and e["name"] == "delegate" for e in evs)
+    res = next(e for e in evs if e["type"] == "tool_result" and e["name"] == "delegate")
+    assert "hallazgo-123 en src/x.py:7" in res["result"]
+    assert "".join(e["text"] for e in evs if e["type"] == "content") == "El ayudante encontró: hallazgo-123"

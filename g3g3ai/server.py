@@ -27,6 +27,7 @@ from .hub import Hub
 from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
+from . import profiles
 from .profiles import profile_for
 from .undo import UndoJournal
 from .engine import EngineInstaller
@@ -435,6 +436,21 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             tc.profile = profile_for(chosen_pid, (llama.status()["model"] or "") if chosen_pid == LOCAL_PROVIDER else chosen_model,
                                      chosen_pid == LOCAL_PROVIDER,
                                      cfg["agent_profile"] or "auto")
+            if agent:
+                async def run_subagent(task: str, _pid=chosen_pid, _model=chosen_model, _tc=tc) -> str:
+                    sub = ToolContext(files, cfg, None, agent=True, web=use_web, memory=None, source=None, state={},
+                                      perm_mode="plan", workdir=conv.get("workdir") or None)
+                    sub.profile, sub.result_limit = _tc.profile, _tc.result_limit
+                    system = profiles.SUBAGENT_PROMPT + "\n\n" + sub.system_hint()
+                    msgs = [{"role": "system", "content": system}, {"role": "user", "content": task}]
+                    text = ""
+                    async for ev in chat_stream(provider_for(_pid), _model, msgs, opts, sub):
+                        if ev["type"] == "content":
+                            text += ev["text"]
+                        elif ev["type"] == "retract" and text.endswith(ev["text"]):
+                            text = text[: len(text) - len(ev["text"])]
+                    return text.strip()[-12000:] or "(el ayudante no devolvió nada)"
+                tc.subagent = run_subagent
             if chosen_pid == LOCAL_PROVIDER:  # ~1/4 del contexto (en tokens ≈ 4 caracteres) como máximo por resultado
                 n_ctx = int((llama.params or {}).get("ctx") or 8192)
                 tc.result_limit = max(3000, n_ctx)

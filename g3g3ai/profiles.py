@@ -46,7 +46,7 @@ def profile_for(provider: str, model: str, local: bool, override: str = "auto") 
 
 # Herramientas que se ofrecen a un modelo pequeño (menos opciones = menos errores al elegir)
 SMALL_TOOLS = {"list_dir", "read_file", "grep_files", "edit_file", "write_file", "run_command", "todo_write",
-               "web_search", "fetch_url", "memory_save", "generate_image", "github"}
+               "web_search", "fetch_url", "memory_save", "generate_image", "github", "delegate"}
 RESULT_SCALE = {"small": 0.5, "standard": 1.0, "full": 1.0}
 
 SMALL_AGENT_PROMPT = """\
@@ -63,6 +63,13 @@ SMALL_AGENT_PROMPT = """\
 FULL_EXTRA = (
     "\nTienes margen para trabajar en profundidad: lee varios archivos a la vez cuando sean independientes, "
     "cruza la información antes de concluir y revisa tu propio trabajo antes de dar la tarea por terminada."
+)
+
+SUBAGENT_PROMPT = (
+    "Eres un ayudante de investigación de G3G3AI. Tu jefe te da una tarea concreta. Sólo puedes LEER (archivos, "
+    "búsqueda, web, GitHub): no modifiques nada. Investiga con las herramientas, no supongas, y termina con un "
+    "informe breve y verificable: hechos concretos con ruta:línea o enlace, qué encontraste y qué no pudiste "
+    "confirmar. Sin relleno ni propuestas de cambios que no te pidieron."
 )
 
 GIT_PROMPT = """\

@@ -12,6 +12,10 @@ from __future__ import annotations
 import asyncio
 import difflib
 import json
+import os
+import signal
+import threading
+import time
 import platform
 import subprocess
 import sys
@@ -224,6 +228,12 @@ ALL_SPECS = {
                         "state": {"type": "string", "enum": ["open", "closed", "all"]},
                         "query": {"type": "string", "description": "Texto a buscar (search_code)"},
                         "draft": {"type": "boolean"}}, ["action"])),
+    "delegate": ("Lanza un ayudante de investigación con contexto propio y sólo lectura (archivos, búsqueda, web, GitHub). "
+                 "Úsalo para preguntas que exigirían leer mucho («¿dónde se gestiona X y cómo funciona?», «revisa estos "
+                 "módulos y resume») sin llenar tu contexto: el ayudante devuelve un informe breve con rutas y datos "
+                 "concretos. Dale una tarea completa y autosuficiente: no ve esta conversación. No lo uses para editar.",
+                 _schema({"task": {"type": "string", "description": "Qué investigar y qué debe incluir el informe"}},
+                         ["task"])),
     "ask_local_model": ("Delega una subtarea sencilla (resumir, traducir, extraer datos, reformatear) "
                         "en el modelo local gratuito. Devuelve su respuesta.",
                         _schema({"prompt": {"type": "string"}}, ["prompt"])),
@@ -256,6 +266,9 @@ class ToolContext:
         self.profile = "standard"  # small | standard | full (ver profiles.py)
         self.result_limit: int | None = None  # caracteres máximos por resultado (se fija en modelos locales)
         self.todos_dirty = False
+        self.subagent: Callable[[str], Awaitable[str]] | None = None  # lo fija el servidor
+        self.live = None            # callback para emitir la salida de un comando mientras corre
+        self.cancel = threading.Event()
         self.counts: dict = {}       # llamadas idénticas repetidas en este turno
         self.abort_loop = False
         self._undo = UndoJournal(source) if source else None
@@ -285,6 +298,8 @@ class ToolContext:
                 out += ["steam_games", "game_diagnostics"]
             if self.local_chat:
                 out.append("ask_local_model")
+            if self.subagent and not plan:
+                out.append("delegate")
         if self.agent and github.token(self.cfg):
             out.append("github")
         if self.web:
@@ -509,6 +524,11 @@ class ToolContext:
             if name == "github":
                 default = await asyncio.to_thread(github.repo_from_remote, self.workdir())
                 return await github.call(self.cfg, args, default)
+            if name == "delegate":
+                if not self.subagent:
+                    return "Error: los ayudantes no están disponibles."
+                task = str(args.get("task", "")).strip()
+                return await self.subagent(task) if task else "Error: falta «task»."
             if name == "ask_local_model":
                 if not self.local_chat:
                     return "Error: el modelo local no está disponible."
@@ -741,27 +761,63 @@ class ToolContext:
     def _run_command(self, a: dict) -> str:
         cwd = self.files.resolve(a["cwd"]) if a.get("cwd") else self.workdir()
         timeout = min(int(a.get("timeout") or 120), 1800)
-        kw = dict(cwd=cwd, capture_output=True, text=True, errors="replace", timeout=timeout,
-                  creationflags=NO_WINDOW, stdin=subprocess.DEVNULL)
-        if self.sandboxed and not a.get("unsandboxed"):
+        kw = dict(cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
+                  creationflags=NO_WINDOW, stdin=subprocess.DEVNULL, bufsize=1)
+        if sys.platform != "win32":
+            kw["start_new_session"] = True  # para poder matar el comando y sus hijos
+        sandboxed = self.sandboxed and not a.get("unsandboxed")
+        if sandboxed:
             home = Path.home()
             caches = [home / ".cache", home / ".npm"]  # escribibles pero temporales
             hidden = self.files.blocked_dirs_and_files()
             argv = sandbox.wrap(a["command"], cwd, self.files.write_roots + [self.workdir()],
                                 hidden + [c for c in caches if c.is_dir()])
-            run = lambda: subprocess.run(argv, **kw)  # noqa: E731
+            proc = subprocess.Popen(argv, **kw)
         else:
-            run = lambda: subprocess.run(a["command"], shell=True, **kw)  # noqa: E731
-        try:
-            r = run()
-        except subprocess.TimeoutExpired as e:
-            out = e.stdout if isinstance(e.stdout, str) else ""
-            return f"Tiempo agotado ({timeout}s).\n{(out or '')[-OUTPUT_LIMIT:]}"
-        out = (r.stdout or "") + (("\n[stderr]\n" + r.stderr) if r.stderr else "")
+            proc = subprocess.Popen(a["command"], shell=True, **kw)
+        chunks: list[str] = []
+
+        def reader():
+            assert proc.stdout
+            for line in proc.stdout:
+                chunks.append(line)
+                if self.live:
+                    self.live(line)
+        t = threading.Thread(target=reader, daemon=True)
+        t.start()
+        deadline = time.monotonic() + timeout
+        reason = None
+        while proc.poll() is None:
+            if self.cancel.is_set():
+                reason = "Cancelado por el usuario."
+            elif time.monotonic() > deadline:
+                reason = f"Tiempo agotado ({timeout}s)."
+            if reason:
+                _kill_tree(proc)
+                break
+            time.sleep(0.05)
+        t.join(timeout=2)
+        out = "".join(chunks)
         if len(out) > OUTPUT_LIMIT:
             out = "[... salida recortada ...]\n" + out[-OUTPUT_LIMIT:]
-        tag = " (aislado)" if self.sandboxed and not a.get("unsandboxed") else ""
-        return f"Código de salida{tag}: {r.returncode}\n{out}"
+        if reason:
+            return f"{reason}\n{out}"
+        tag = " (aislado)" if sandboxed else ""
+        return f"Código de salida{tag}: {proc.returncode}\n{out}"
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, creationflags=NO_WINDOW)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        proc.kill()
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def parse_args(raw) -> dict:
@@ -817,6 +873,39 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
                 yield {"type": "approval_result", "id": aid, "approved": answer in ("yes", "always")}
                 if answer not in ("yes", "always"):
                     result = "El usuario ha denegado esta acción. Pregunta o propón otra alternativa."
+    if result is None and name == "run_command":
+        # La salida del comando se emite mientras se ejecuta; si la conversación se cancela, se mata el comando.
+        import queue
+        q: queue.Queue = queue.Queue()
+        ctx.live, ctx.cancel = q.put, threading.Event()
+        task = asyncio.ensure_future(ctx.run(name, args))
+        try:
+            while True:
+                finished = task.done()
+                text = ""
+                while True:
+                    try:
+                        text += q.get_nowait()
+                    except queue.Empty:
+                        break
+                if text:
+                    yield {"type": "tool_output", "name": name, "text": text}
+                if finished:
+                    break
+                await asyncio.sleep(0.15)
+            result = task.result()
+        finally:
+            if not task.done():
+                ctx.cancel.set()
+                try:
+                    await asyncio.wait_for(task, 5)
+                except Exception:  # noqa: BLE001
+                    pass
+            ctx.live = None
+        if prev and prev["res"] == result:
+            prev["n"] += 1
+        else:
+            ctx.counts[key] = {"n": 1, "res": result}
     if result is None:
         result = await ctx.run(name, args)
         if prev and prev["res"] == result:
