@@ -1483,7 +1483,7 @@ def test_github_tool_and_profiles_in_agent(env, monkeypatch):
         assert sandbox.assess("git push origin rama")[0] == "warn"
         # un modelo pequeño ve menos herramientas y un prompt más corto
         ctx.profile = "small"
-        assert set(ctx.names()) <= {"system_info", "list_dir", "read_file", "grep_files", "edit_file", "write_file",
+        assert set(ctx.names()) <= {"compare_dirs", "system_info", "list_dir", "read_file", "grep_files", "edit_file", "write_file",
                                     "run_command", "web_search", "fetch_url", "memory_save"}
         assert "UNA llamada" in ctx.system_hint()
         ctx.profile = "full"
@@ -1797,7 +1797,7 @@ def test_local_models_get_lean_requests(env):
     ctx.profile = "small"; ctx.compact_specs = True
     ctx.subagent = lambda *a, **k: None
     names = set(ctx.names())
-    assert names <= {"system_info", "list_dir", "read_file", "grep_files", "edit_file", "write_file", "run_command",
+    assert names <= {"compare_dirs", "system_info", "list_dir", "read_file", "grep_files", "edit_file", "write_file", "run_command",
                      "web_search", "fetch_url", "memory_save"} and "edit_file" in names
     assert not names & {"delegate", "delegate_edit", "apply_patch", "github", "todo_write"}
     lean = len(_json.dumps(ctx.openai_specs()))
