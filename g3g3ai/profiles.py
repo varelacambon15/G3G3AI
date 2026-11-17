@@ -46,7 +46,7 @@ def profile_for(provider: str, model: str, local: bool, override: str = "auto") 
 
 # Herramientas que se ofrecen a un modelo pequeño (menos opciones = menos errores al elegir)
 SMALL_TOOLS = {"list_dir", "read_file", "grep_files", "edit_file", "write_file", "run_command", "todo_write",
-               "web_search", "fetch_url", "memory_save", "generate_image", "github", "delegate"}
+               "web_search", "fetch_url", "memory_save", "generate_image", "github", "delegate", "delegate_edit", "apply_patch"}
 RESULT_SCALE = {"small": 0.5, "standard": 1.0, "full": 1.0}
 
 SMALL_AGENT_PROMPT = """\
@@ -70,6 +70,13 @@ SUBAGENT_PROMPT = (
     "búsqueda, web, GitHub): no modifiques nada. Investiga con las herramientas, no supongas, y termina con un "
     "informe breve y verificable: hechos concretos con ruta:línea o enlace, qué encontraste y qué no pudiste "
     "confirmar. Sin relleno ni propuestas de cambios que no te pidieron."
+)
+
+SUBAGENT_WRITE_PROMPT = (
+    "Eres un ayudante de G3G3AI que trabaja en una COPIA aislada del proyecto: puedes leer, editar y (si hay) ejecutar "
+    "comandos con libertad, sin pedir permiso, porque nada de lo que hagas toca los archivos reales. Haz sólo la tarea "
+    "que te dan, compruébala (tests o ejecución) y termina con un informe breve: qué cambiaste, qué comprobaste y "
+    "qué no pudiste comprobar. Tu trabajo se devolverá como un diff para que lo revisen y lo apliquen."
 )
 
 GIT_PROMPT = """\

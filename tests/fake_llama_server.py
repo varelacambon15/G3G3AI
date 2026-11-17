@@ -96,6 +96,26 @@ class H(BaseHTTPRequestHandler):
                 call = json.dumps({"name": "read_file", "arguments": {"path": path}})
                 self.chunk({"choices": [{"delta": {"content": f"Voy a leerlo.\n<tool_call>{call}</tool_call>"}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        sysmsg0 = msgs[0]["content"] if msgs[0]["role"] == "system" else ""
+        if "COPIA aislada" in sysmsg0:  # ayudante que escribe: crea un archivo en su copia y termina
+            import re as _re
+            name = _re.search(r"edita_sub:(\w+)", str(first_user)).group(1)
+            if last["role"] == "tool":
+                self.chunk({"choices": [{"delta": {"content": f"Informe: creé {name}.txt"}, "finish_reason": "stop"}]})
+            else:
+                root = _re.search(r"Sólo puedes modificar archivos en: ([^.\n]+?)\.(?:\s|$)", sysmsg0).group(1)
+                self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "w1", "function": {
+                    "name": "write_file", "arguments": json.dumps({"path": f"{root}/{name}.txt", "content": f"hecho por {name}\n"})}}]},
+                    "finish_reason": "tool_calls"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if "delegate_edit" in names and last["role"] == "user" and "reparte" in str(last["content"]):
+            self.chunk({"choices": [{"delta": {"tool_calls": [
+                {"index": i, "id": f"e{i}", "function": {"name": "delegate_edit", "arguments": json.dumps({"task": f"edita_sub:{n}"})}}
+                for i, n in enumerate(["uno", "dos"])]}, "finish_reason": "tool_calls"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if last["role"] == "tool" and "Propuesta" in str(last["content"]):
+            self.chunk({"choices": [{"delta": {"content": "Propuestas listas para revisar"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "informe_sub" in str(first_user) and last["role"] == "user" and msgs[0]["role"] == "system" \
                 and "ayudante de investigación" in msgs[0]["content"]:  # el ayudante de «delegate»
             self.chunk({"choices": [{"delta": {"content": "INFORME: hallazgo-123 en src/x.py:7"}, "finish_reason": "stop"}]})

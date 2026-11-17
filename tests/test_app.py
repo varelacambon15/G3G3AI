@@ -1664,3 +1664,44 @@ def test_encrypted_backup_roundtrip(env):
     assert ok.status_code == 200 and ok.json()["settings"] is True
     assert cfg["github_token"] == "ghp_token" and cfg.provider("deepseek")["api_key"] == "sk-secreta-123"
     assert [m["content"] for m in client.get("/api/memory", headers=h).json()] == ["Prefiere respuestas cortas"]
+
+
+def test_subagent_patch_roundtrip_and_conflicts(env):
+    from g3g3ai import subagent as SA
+    client, cfg, home, tmp = env
+    proj = home / "proy"; proj.mkdir()
+    (proj / "a.py").write_text("x = 1\n"); (proj / "b.py").write_text("y = 2\n")
+    (proj / "node_modules").mkdir(); (proj / "node_modules" / "big.js").write_text("ignorado")
+    copy, manifest = SA.make_copy(proj)
+    try:
+        assert sorted(manifest) == ["a.py", "b.py"]                      # node_modules no se copia
+        (copy / "a.py").write_text("x = 100\n"); (copy / "nuevo.py").write_text("z = 3\n"); (copy / "b.py").unlink()
+        patch = SA.collect_patch(proj, copy, manifest)
+    finally:
+        import shutil; shutil.rmtree(copy, True)
+    assert set(patch["changes"]) == {"a.py", "nuevo.py", "b.py"} and "-x = 1" in patch["diff"] and "+x = 100" in patch["diff"]
+    assert (proj / "a.py").read_text() == "x = 1\n"                     # el original no se tocó
+    # aplicar: el archivo real b.py cambió mientras tanto → conflicto, no se pisa
+    (proj / "b.py").write_text("y = 999\n")
+    ctx = _ctx(cfg)
+    ctx.state["patches"] = {"p1": {"root": str(proj), "changes": patch["changes"], "diff": patch["diff"]}}
+    err, strong, soft = ctx.precheck("apply_patch", {"id": "p1"})
+    assert not err and strong and "3 archivo" in strong[0] and "+x = 100" in ctx.preview("apply_patch", {"id": "p1"})
+    assert ctx.precheck("apply_patch", {"id": "nope"})[0].startswith("Error")
+    out = ctx._apply_patch("p1")
+    assert (proj / "a.py").read_text() == "x = 100\n" and (proj / "nuevo.py").read_text() == "z = 3\n"
+    assert (proj / "b.py").read_text() == "y = 999\n" and "conflicto" in out and "b.py" in out
+
+
+def test_parallel_write_helpers_work_in_isolated_copies(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    proj = home / "paralelo"; proj.mkdir(); (proj / "base.txt").write_text("base")
+    cid = client.post("/api/conversations", headers=h, json={"workdir": str(proj)}).json()["id"]
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "reparte el trabajo", "use_tools": True,
+                                                         "conversation_id": cid}))
+    results = [e for e in evs if e["type"] == "tool_result" and e["name"] == "delegate_edit"]
+    assert len(results) == 2 and all("Propuesta" in r["result"] and ".txt" in r["result"] for r in results)
+    assert "Propuestas listas" in "".join(e["text"] for e in evs if e["type"] == "content")
+    assert not (proj / "uno.txt").exists() and not (proj / "dos.txt").exists()   # nada tocó los archivos reales

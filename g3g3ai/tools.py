@@ -43,6 +43,7 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 FILE_TOOLS = {"list_dir", "read_file", "search_files", "grep_files"}
 WRITE_TOOLS = {"write_file", "edit_file", "create_document"}
+PARALLEL_TOOLS = {"delegate", "delegate_edit", "list_dir", "read_file", "search_files", "grep_files", "web_search", "fetch_url"}
 COMMAND_TOOLS = {"run_command", "build_exe"}
 WEB_TOOLS = {"web_search", "fetch_url"}
 MEMORY_TOOLS = {"memory_save", "memory_delete"}
@@ -234,6 +235,15 @@ ALL_SPECS = {
                  "concretos. Dale una tarea completa y autosuficiente: no ve esta conversación. No lo uses para editar.",
                  _schema({"task": {"type": "string", "description": "Qué investigar y qué debe incluir el informe"}},
                          ["task"])),
+    "delegate_edit": ("Lanza un ayudante que PUEDE editar y ejecutar comandos, pero en una COPIA aislada del proyecto: no toca "
+                      "tus archivos. Devuelve una propuesta (diff) con un id. Úsalo para tareas independientes que se pueden "
+                      "repartir (p. ej. «añade tests a X», «migra el módulo Y»); puedes lanzar varios a la vez en el mismo paso. "
+                      "Revisa la propuesta y, si es buena, aplícala con apply_patch. Dale una tarea completa y autosuficiente.",
+                      _schema({"task": {"type": "string", "description": "Qué debe hacer el ayudante y cómo comprobarlo"}},
+                              ["task"])),
+    "apply_patch": ("Aplica al proyecto real la propuesta (id) de un ayudante delegate_edit. Pide permiso al usuario mostrándole "
+                    "el diff. No pisa archivos que hayan cambiado desde que se hizo la copia.",
+                    _schema({"id": {"type": "string", "description": "Id de la propuesta"}}, ["id"])),
     "ask_local_model": ("Delega una subtarea sencilla (resumir, traducir, extraer datos, reformatear) "
                         "en el modelo local gratuito. Devuelve su respuesta.",
                         _schema({"prompt": {"type": "string"}}, ["prompt"])),
@@ -267,7 +277,8 @@ class ToolContext:
         self.result_limit: int | None = None  # caracteres máximos por resultado (se fija en modelos locales)
         self.todos_dirty = False
         self.dirty = False  # se han modificado archivos y aún no se ha ejecutado nada para comprobarlo
-        self.subagent: Callable[[str], Awaitable[str]] | None = None  # lo fija el servidor
+        self.subagent: Callable[..., Awaitable[str]] | None = None  # lo fija el servidor: (tarea, write=False)
+        self.auto_all = False        # ayudante en copia aislada: edita y ejecuta sin pedir permiso (nunca pide nada)
         self.live = None            # callback para emitir la salida de un comando mientras corre
         self.cancel = threading.Event()
         self.counts: dict = {}       # llamadas idénticas repetidas en este turno
@@ -276,6 +287,8 @@ class ToolContext:
 
     # Permisos ------------------------------------------------------------------
     def mode(self, name: str) -> str:
+        if self.auto_all and (name in WRITE_TOOLS or name in COMMAND_TOOLS):
+            return "auto"
         if name in WRITE_TOOLS:
             m = self.cfg["ai_write"] or "off"
             return "auto" if (self.perm_mode == "edits" and m != "off") else m
@@ -331,7 +344,7 @@ class ToolContext:
             out += ["list_dir", "read_file", "search_files", "grep_files", "todo_write"]
             if not plan and self.mode("write_file") != "off" and self.files.write_roots:
                 out += ["write_file", "edit_file", "create_document"]
-            if not plan and self.mode("run_command") != "off":
+            if not plan and self.mode("run_command") != "off" and (not self.auto_all or self.sandboxed):
                 out.append("run_command")
                 from .devtools import devenv_python
                 if devenv_python(self.cfg):
@@ -341,7 +354,7 @@ class ToolContext:
             if self.local_chat:
                 out.append("ask_local_model")
             if self.subagent and not plan:
-                out.append("delegate")
+                out += ["delegate", "delegate_edit", "apply_patch"]
         if self.agent and github.token(self.cfg):
             out.append("github")
         if self.web:
@@ -472,6 +485,12 @@ class ToolContext:
                         return "Error: " + err, [], []
                 if self.files.is_game_path(p) and not any(is_under(p, r) for r in self.files.write_roots):
                     return None, ["modifica archivos de un juego (se guarda una copia de seguridad del original)"], []
+            if name == "apply_patch":
+                patch = (self.state.get("patches") or {}).get(str(args.get("id", "")))
+                if not patch:
+                    return f"Error: no existe la propuesta «{args.get('id')}» (¿ya se aplicó o es de otra conversación?).", [], []
+                files = ", ".join(sorted(patch["changes"])[:6]) + (" …" if len(patch["changes"]) > 6 else "")
+                return None, [f"aplica los cambios del ayudante en {len(patch['changes'])} archivo(s): {files}"], []
             if name == "github":
                 act = args.get("action")
                 if act in github.WRITE_ACTIONS:
@@ -544,6 +563,9 @@ class ToolContext:
     def preview(self, name: str, args: dict) -> str | None:
         """Diff del cambio que se va a pedir aprobar (edit_file / write_file sobre un archivo existente)."""
         try:
+            if name == "apply_patch":
+                patch = (self.state.get("patches") or {}).get(str(args.get("id", "")))
+                return (patch or {}).get("diff") or None
             if name not in ("edit_file", "write_file"):
                 return None
             p = self.files.resolve(args.get("path"), "ai_write")
@@ -566,11 +588,13 @@ class ToolContext:
             if name == "github":
                 default = await asyncio.to_thread(github.repo_from_remote, self.workdir())
                 return await github.call(self.cfg, args, default)
-            if name == "delegate":
+            if name in ("delegate", "delegate_edit"):
                 if not self.subagent:
                     return "Error: los ayudantes no están disponibles."
                 task = str(args.get("task", "")).strip()
-                return await self.subagent(task) if task else "Error: falta «task»."
+                return await self.subagent(task, write=name == "delegate_edit") if task else "Error: falta «task»."
+            if name == "apply_patch":
+                return await asyncio.to_thread(self._apply_patch, str(args.get("id", "")))
             if name == "ask_local_model":
                 if not self.local_chat:
                     return "Error: el modelo local no está disponible."
@@ -744,6 +768,34 @@ class ToolContext:
             return f"Plan actualizado: los {len(clean)} pasos están hechos. Resume el resultado al usuario."
         return f"Plan actualizado: {done}/{len(clean)} pasos hechos. Siguiente: «{cur['content']}»." if cur else f"Plan actualizado ({done}/{len(clean)})."
 
+    def _apply_patch(self, pid: str) -> str:
+        from . import subagent as SA
+        patch = (self.state.get("patches") or {}).get(pid)
+        if not patch:
+            return f"Error: no existe la propuesta «{pid}»."
+        src = Path(patch["root"])
+        bad = set(SA.conflicts(src, patch))
+        done, skipped = [], []
+        for rel, c in sorted(patch["changes"].items()):
+            if rel in bad:
+                skipped.append(rel)
+                continue
+            p = self.files.resolve(str(src / rel), "ai_write")
+            self._before_write(p)
+            if c["new"] is None:
+                p.unlink(missing_ok=True)
+            else:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                write_text_exact(p, c["new"], "\n", False)
+            done.append(rel)
+        if not skipped:
+            self.state["patches"].pop(pid, None)
+        out = f"Aplicados {len(done)} archivo(s): {', '.join(done) or '—'}."
+        if skipped:
+            out += (f" NO se tocaron {len(skipped)} por conflicto (cambiaron desde que se hizo la copia): "
+                    f"{', '.join(skipped)}. Revísalos y aplica a mano lo necesario.")
+        return out
+
     def _before_write(self, p: Path) -> None:
         """Antes de modificar un archivo: copia para los juegos y para poder deshacer los cambios de la conversación."""
         self._backup_if_game(p)
@@ -872,6 +924,21 @@ def parse_args(raw) -> dict:
         return {}
 
 
+async def run_batch(ctx: ToolContext, calls: list[tuple[str, object]], sinks: list[list[str]]) -> AsyncIterator[dict]:
+    """Ejecuta las llamadas de un mismo paso. Las de sólo lectura y los ayudantes corren a la vez; el resto, en orden."""
+    if len(calls) > 1 and all(n in PARALLEL_TOOLS for n, _ in calls):
+        async def collect(n, a, sink):
+            return [ev async for ev in tool_events(ctx, n, a, sink)]
+        batches = await asyncio.gather(*(collect(n, a, s) for (n, a), s in zip(calls, sinks)))
+        for evs in batches:
+            for ev in evs:
+                yield ev
+        return
+    for (n, a), sink in zip(calls, sinks):
+        async for ev in tool_events(ctx, n, a, sink):
+            yield ev
+
+
 async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) -> AsyncIterator[dict]:
     """Ejecuta una herramienta emitiendo eventos para la interfaz; deja el resultado en `sink`."""
     args = parse_args(raw_args)
@@ -898,6 +965,9 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
             if name == "run_command" and not strong and ctx.command_allowed(args.get("command")):
                 must_ask = False  # regla «permitir siempre» del usuario
             if must_ask and not strong and name in ctx.session_allow:
+                must_ask = False
+            if must_ask and ctx.auto_all:
+                result = "Denegado: este ayudante trabaja sin poder pedir permisos; usa otra forma o explica qué falta."
                 must_ask = False
             if must_ask:
                 aid = uuid.uuid4().hex[:10]

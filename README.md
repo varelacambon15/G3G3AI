@@ -215,6 +215,7 @@ Según el modelo elegido (o lo que fijes en Ajustes → «Exigencia del agente»
 ### ⚡ Como Claude Code
 - **Salida en vivo:** los comandos muestran lo que imprimen mientras corren; al detener la respuesta (■ o Esc) se mata el comando y sus procesos hijos.
 - **Ayudantes (`delegate`):** para investigar sin llenar el contexto, el agente lanza un ayudante de sólo lectura con contexto propio que devuelve un informe breve con rutas y datos.
+- **Ayudantes que editan, en paralelo:** `delegate_edit` lanza ayudantes que trabajan en una **copia aislada** del proyecto (pueden editar y ejecutar comandos sin tocar tus archivos) y devuelven una propuesta con su diff; varios a la vez para repartir tareas independientes. `apply_patch` la aplica al proyecto real pidiéndote permiso con el diff, y no pisa archivos que hayan cambiado mientras tanto. Los comandos del ayudante necesitan el aislamiento de Linux; sin él sólo edita.
 - **Escribe mientras trabaja:** pulsa Intro y el mensaje queda en cola; se envía al terminar.
 - **Atajos:** `Esc` detiene · `Mayús+Tab` cambia de modo (Normal → Aceptar ediciones → Plan) · `Ctrl/Cmd+Mayús+O` conversación nueva.
 - **Copia de seguridad cifrada:** Ajustes → «💾 Copia de seguridad» exporta ajustes (con claves API), memoria y, si quieres, conversaciones a un archivo `.g3bak` cifrado con tu contraseña, para importarlo en otro equipo.

@@ -28,7 +28,7 @@ from .hub import Hub
 from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
-from . import backup, costs, profiles
+from . import backup, costs, profiles, subagent
 from .profiles import profile_for
 from .undo import UndoJournal
 from .engine import EngineInstaller
@@ -507,19 +507,46 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                                      chosen_pid == LOCAL_PROVIDER,
                                      cfg["agent_profile"] or "auto")
             if agent:
-                async def run_subagent(task: str, _pid=chosen_pid, _model=chosen_model, _tc=tc) -> str:
-                    sub = ToolContext(files, cfg, None, agent=True, web=use_web, memory=None, source=None, state={},
-                                      perm_mode="plan", workdir=conv.get("workdir") or None)
-                    sub.profile, sub.result_limit = _tc.profile, _tc.result_limit
-                    system = profiles.SUBAGENT_PROMPT + "\n\n" + sub.system_hint()
-                    msgs = [{"role": "system", "content": system}, {"role": "user", "content": task}]
-                    text = ""
-                    async for ev in chat_stream(provider_for(_pid), _model, msgs, opts, sub):
-                        if ev["type"] == "content":
-                            text += ev["text"]
-                        elif ev["type"] == "retract" and text.endswith(ev["text"]):
-                            text = text[: len(text) - len(ev["text"])]
-                    return text.strip()[-12000:] or "(el ayudante no devolvió nada)"
+                async def run_subagent(task: str, write: bool = False, _pid=chosen_pid, _model=chosen_model, _tc=tc) -> str:
+                    copy = None
+                    try:
+                        if write:
+                            src = _tc.workdir()
+                            try:
+                                copy, manifest = await asyncio.to_thread(subagent.make_copy, src)
+                            except subagent.SubagentError as e:
+                                return f"Error: {e}"
+                            sub = ToolContext(subagent.ScopedFiles(cfg, copy), cfg, None, agent=True, web=False, memory=None,
+                                              source=None, state={}, perm_mode="normal", workdir=str(copy))
+                            sub.auto_all = True
+                            system = profiles.SUBAGENT_WRITE_PROMPT + "\n\n" + sub.system_hint()
+                        else:
+                            sub = ToolContext(files, cfg, None, agent=True, web=use_web, memory=None, source=None, state={},
+                                              perm_mode="plan", workdir=conv.get("workdir") or None)
+                            system = profiles.SUBAGENT_PROMPT + "\n\n" + sub.system_hint()
+                        sub.profile, sub.result_limit = _tc.profile, _tc.result_limit
+                        msgs = [{"role": "system", "content": system}, {"role": "user", "content": task}]
+                        text = ""
+                        async for ev in chat_stream(provider_for(_pid), _model, msgs, opts, sub):
+                            if ev["type"] == "content":
+                                text += ev["text"]
+                            elif ev["type"] == "retract" and text.endswith(ev["text"]):
+                                text = text[: len(text) - len(ev["text"])]
+                        report = text.strip()[-8000:] or "(el ayudante no devolvió nada)"
+                        if not write:
+                            return report
+                        patch = await asyncio.to_thread(subagent.collect_patch, src, copy, manifest)
+                        if not patch["changes"]:
+                            return f"El ayudante no cambió ningún archivo.\n\n{report}"
+                        pid_ = subagent.new_patch_id()
+                        _tc.state.setdefault("patches", {})[pid_] = {"root": str(src), "changes": patch["changes"],
+                                                                      "diff": patch["diff"]}
+                        extra = f"\n(No se compararon por no ser texto: {', '.join(patch['skipped'])})" if patch["skipped"] else ""
+                        return (f"Informe del ayudante:\n{report}\n\nPropuesta {pid_} — {len(patch['changes'])} archivo(s):\n"
+                                f"{patch['diff'][:12000]}{extra}\n\nPara aplicarla usa apply_patch con id=\"{pid_}\".")
+                    finally:
+                        if copy is not None:
+                            await asyncio.to_thread(shutil.rmtree, copy, True)
                 tc.subagent = run_subagent
             if chosen_pid == LOCAL_PROVIDER:  # ~1/4 del contexto (en tokens ≈ 4 caracteres) como máximo por resultado
                 n_ctx = int((llama.params or {}).get("ctx") or 8192)

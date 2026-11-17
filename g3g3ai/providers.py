@@ -372,11 +372,11 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
             if details:  # OpenRouter: devolver el razonamiento para que el modelo siga su hilo
                 assistant["reasoning_details"] = details
             msgs.append(assistant)
+            sinks: list[list[str]] = [[] for _ in ordered]
+            async for ev in T.run_batch(ctx, [(k["name"], k["args"]) for k in ordered], sinks):
+                yield ev
             for i, k in enumerate(ordered):
-                sink: list[str] = []
-                async for ev in T.tool_events(ctx, k["name"], k["args"], sink):
-                    yield ev
-                msgs.append({"role": "tool", "tool_call_id": k["id"] or f"call_{i}", "content": sink[0]})
+                msgs.append({"role": "tool", "tool_call_id": k["id"] or f"call_{i}", "content": sinks[i][0]})
             if ctx.abort_loop:
                 yield {"type": "content", "text": "\n\n[Detenido: repetí la misma acción varias veces sin avanzar. "
                                                   "Dime cómo quieres que siga.]"}
@@ -481,11 +481,11 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
                     assistant_content.append({"type": "tool_use", "id": b["id"], "name": b["name"], "input": b["input"]})
             msgs.append({"role": "assistant", "content": assistant_content})
             results = []
-            for b in uses:
-                sink: list[str] = []
-                async for ev in T.tool_events(ctx, b["name"], b["input"], sink):
-                    yield ev
-                results.append({"type": "tool_result", "tool_use_id": b["id"], "content": sink[0]})
+            sinks = [[] for _ in uses]
+            async for ev in T.run_batch(ctx, [(b["name"], b["input"]) for b in uses], sinks):
+                yield ev
+            for b, sk in zip(uses, sinks):
+                results.append({"type": "tool_result", "tool_use_id": b["id"], "content": sk[0]})
             msgs.append({"role": "user", "content": results})
             if ctx.abort_loop:
                 yield {"type": "content", "text": "\n\n[Detenido: repetí la misma acción varias veces sin avanzar. "
