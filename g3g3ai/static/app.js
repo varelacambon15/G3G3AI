@@ -1374,6 +1374,8 @@ const FIELDS = [
   ["web_provider", "Búsqueda web: proveedor", "webprov", "DuckDuckGo no necesita clave pero a veces bloquea. Brave y Tavily tienen plan gratuito y son más fiables."],
   ["web_api_key", "Búsqueda web: clave API", "password", "Sólo para Brave o Tavily."],
   ["hf_token", "Token de Hugging Face (opcional)", "password", "Sólo para modelos restringidos."],
+  ["github_token", "Token de GitHub (opcional)", "password", "Permite a la IA leer issues, PR y CI, y —pidiendo permiso— crear issues y pull requests. Crea uno en github.com/settings/tokens con acceso a los repos que quieras."],
+  ["agent_profile", "Exigencia del agente según el modelo", "profile", "Automático ajusta herramientas y reglas a la potencia del modelo (pequeño, mediano, grande). Fuérzalo si un modelo local rinde mejor o peor de lo esperado."],
   ["localhost_without_token", "El propio Konkr entra sin contraseña", "checkbox"],
   ["port", "Puerto", "number", "Requiere reiniciar el servicio."],
 ];
@@ -1422,6 +1424,7 @@ async function loadSettings() {
     }
     else if (type === "imgmode") inp = selectEl(key, v, [["auto", "Automático"], ["images", "/images/generations (OpenAI, Gemini…)"], ["chat", "Chat con imágenes (OpenRouter)"]]);
     else if (type === "imgsize") inp = selectEl(key, v, [["1024x1024", "Cuadrada 1024×1024"], ["1024x1536", "Vertical 1024×1536"], ["1536x1024", "Horizontal 1536×1024"], ["512x512", "Pequeña 512×512"]]);
+    else if (type === "profile") inp = selectEl(key, v || "auto", [["auto", "Automático (según el modelo)"], ["small", "Modelo pequeño: pocas herramientas, un paso a la vez"], ["standard", "Mediano: método completo"], ["full", "Grande: método completo + trabajo en profundidad"]]);
     else if (type === "webprov") inp = selectEl(key, v, [["duckduckgo", "DuckDuckGo (sin clave)"], ["brave", "Brave Search (clave)"], ["tavily", "Tavily (clave)"]]);
     else if (type === "router") inp = selectEl(key, v, [["smart", "Inteligente (según la tarea)"], ["local_first", "Local primero"], ["api_first", "API primero"]]);
     else if (type === "model") {
@@ -1613,7 +1616,7 @@ $("#save-settings").addEventListener("click", async () => {
   for (const [key, , type] of FIELDS) {
     const el = f.elements[key];
     if (type === "checkbox") out[key] = el.checked;
-    else if (["perm", "router", "model", "sandbox", "webprov", "imgprov", "imgmode", "imgsize"].includes(type)) out[key] = el.value;
+    else if (["perm", "router", "model", "sandbox", "profile", "webprov", "imgprov", "imgmode", "imgsize"].includes(type)) out[key] = el.value;
     else if (type === "number") out[key] = el.value === "" ? 0 : Number(el.value);
     else if (type === "lines") out[key] = el.value.split("\n").map((s) => s.trim()).filter(Boolean);
     else out[key] = el.value;

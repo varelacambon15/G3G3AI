@@ -1409,3 +1409,82 @@ def test_undo_journal_diff_and_undo_one(tmp_path, monkeypatch):
     res = j.undo_one(str(b))
     assert res["deleted"] == [str(b)] and not b.exists() and j.changes() == []
     assert j.undo_one(str(a))["failed"]
+
+
+def test_model_profiles():
+    from g3g3ai.profiles import profile_for
+    assert profile_for("openrouter", "anthropic/claude-sonnet-4.5", False) == "full"
+    assert profile_for("openrouter", "anthropic/claude-haiku-4.5", False) == "standard"
+    assert profile_for("local", "Qwen2.5-7B-Instruct-Q4_K_M.gguf", True) == "small"
+    assert profile_for("local", "Qwen2.5-14B-Instruct-Q4_K_M.gguf", True) == "standard"
+    assert profile_for("ollama", "llama3.3:70b", True) == "full"
+    assert profile_for("local", "modelo-raro.gguf", True) == "small"
+    assert profile_for("local", "modelo-raro.gguf", True, override="full") == "full"
+
+
+def test_github_tool_and_profiles_in_agent(env, monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    import asyncio
+    import http.server
+    import json as _json
+    import threading
+    from g3g3ai import github
+    from g3g3ai.tools import ToolContext, tool_events
+    client, cfg, home, tmp = env
+
+    class H(http.server.BaseHTTPRequestHandler):
+        posted = []
+
+        def log_message(self, *a): pass
+
+        def _send(self, obj, code=200):
+            body = _json.dumps(obj).encode()
+            self.send_response(code); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+        def do_GET(self):
+            assert self.headers["Authorization"] == "Bearer tok123"
+            if self.path.startswith("/repos/o/r/issues"):
+                return self._send([{"number": 3, "state": "open", "title": "Falla el login", "user": {"login": "ana"}}])
+            self._send({"message": "Not Found"}, 404)
+
+        def do_POST(self):
+            body = _json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            H.posted.append((self.path, body))
+            self._send({"number": 9, "html_url": "https://github.com/o/r/pull/9"}, 201)
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    old_api = github.API
+    github.API = f"http://127.0.0.1:{srv.server_port}"
+    try:
+        ctx = _ctx(cfg)
+        assert "github" not in ctx.names()                      # sin token no se ofrece
+        cfg.update({"github_token": "tok123"}) if hasattr(cfg, "update") else cfg.set("github_token", "tok123")
+        assert "github" in ctx.names()
+        r = asyncio.run(ctx.run("github", {"action": "issues", "repo": "o/r"}))
+        assert "#3 [open] Falla el login — ana" in r
+        r = asyncio.run(ctx.run("github", {"action": "issue", "repo": "o/r"}))
+        assert "falta «number»" in r
+        r = asyncio.run(ctx.run("github", {"action": "repo", "repo": "o/zzz"}))
+        assert "no encontrado" in r
+        # las acciones que escriben piden permiso SIEMPRE (no se pueden marcar «siempre»)
+        err, strong, soft = ctx.precheck("github", {"action": "create_pr", "repo": "o/r", "title": "x", "head": "rama"})
+        assert strong and "pull request" in strong[0]
+        assert ctx.precheck("github", {"action": "issues", "repo": "o/r"}) == (None, [], [])
+        r = asyncio.run(ctx.run("github", {"action": "create_pr", "repo": "o/r", "title": "T", "head": "rama", "base": "main"}))
+        assert "pull/9" in r and H.posted[-1][1]["head"] == "rama"
+        # git push siempre avisa
+        from g3g3ai import sandbox
+        assert sandbox.assess("git push origin rama")[0] == "warn"
+        # un modelo pequeño ve menos herramientas y un prompt más corto
+        ctx.profile = "small"
+        assert set(ctx.names()) <= {"list_dir", "read_file", "grep_files", "edit_file", "write_file", "run_command",
+                                    "todo_write", "web_search", "fetch_url", "memory_save", "generate_image", "github"}
+        assert "UNA llamada" in ctx.system_hint()
+        ctx.profile = "full"
+        assert "Git y GitHub" in ctx.system_hint() and "en profundidad" in ctx.system_hint()
+    finally:
+        github.API = old_api
+        srv.shutdown()

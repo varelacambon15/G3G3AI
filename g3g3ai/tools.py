@@ -21,6 +21,7 @@ from typing import AsyncIterator, Awaitable, Callable
 
 import httpx
 
+from . import github, profiles
 from . import sandbox, web
 from .documents import DocumentError
 from .files import FileAccessError, Files, is_under
@@ -42,6 +43,7 @@ COMMAND_TOOLS = {"run_command", "build_exe"}
 WEB_TOOLS = {"web_search", "fetch_url"}
 MEMORY_TOOLS = {"memory_save", "memory_delete"}
 GAME_TOOLS = {"steam_games", "game_diagnostics"}
+GITHUB_TOOLS = {"github"}
 
 
 # --- Edición de texto que respeta saltos de línea y BOM --------------------------------------
@@ -205,6 +207,23 @@ ALL_SPECS = {
                        _schema({"prompt": {"type": "string", "description": "Descripción detallada de la imagen"},
                                 "size": {"type": "string", "description": "Opcional, p.ej. 1024x1024 o 1024x1536"}},
                                ["prompt"])),
+    "github": ("Consulta y gestiona GitHub (issues, pull requests, CI y archivos de un repositorio). Acciones de lectura: "
+               "repo, issues, issue, prs, pr, checks, file, search_code. Acciones que escriben (piden permiso al usuario): "
+               "create_issue, comment, create_pr, close_issue. Para abrir un PR, sube antes la rama con git push. "
+               "Si no indicas repo se usa el remoto «origin» de la carpeta de trabajo.",
+               _schema({"action": {"type": "string", "enum": ["repo", "issues", "issue", "prs", "pr", "checks", "file",
+                                                              "search_code", "create_issue", "comment", "create_pr",
+                                                              "close_issue"]},
+                        "repo": {"type": "string", "description": "propietario/nombre (opcional)"},
+                        "number": {"type": "integer", "description": "Número de issue o PR"},
+                        "title": {"type": "string"}, "body": {"type": "string"},
+                        "head": {"type": "string", "description": "Rama con los cambios (create_pr)"},
+                        "base": {"type": "string", "description": "Rama destino (por defecto la principal)"},
+                        "ref": {"type": "string", "description": "Rama o commit (checks, file)"},
+                        "path": {"type": "string", "description": "Ruta dentro del repo (file)"},
+                        "state": {"type": "string", "enum": ["open", "closed", "all"]},
+                        "query": {"type": "string", "description": "Texto a buscar (search_code)"},
+                        "draft": {"type": "boolean"}}, ["action"])),
     "ask_local_model": ("Delega una subtarea sencilla (resumir, traducir, extraer datos, reformatear) "
                         "en el modelo local gratuito. Devuelve su respuesta.",
                         _schema({"prompt": {"type": "string"}}, ["prompt"])),
@@ -234,6 +253,7 @@ class ToolContext:
         self.state.setdefault("todos", [])
         self.perm_mode = perm_mode if perm_mode in ("normal", "plan", "edits") else "normal"
         self.workdir_override = workdir
+        self.profile = "standard"  # small | standard | full (ver profiles.py)
         self.result_limit: int | None = None  # caracteres máximos por resultado (se fija en modelos locales)
         self.todos_dirty = False
         self.counts: dict = {}       # llamadas idénticas repetidas en este turno
@@ -265,12 +285,16 @@ class ToolContext:
                 out += ["steam_games", "game_diagnostics"]
             if self.local_chat:
                 out.append("ask_local_model")
+        if self.agent and github.token(self.cfg):
+            out.append("github")
         if self.web:
             out += ["web_search", "fetch_url"]
         if self.memory is not None:
             out += ["memory_save", "memory_delete"]
         if self.image_gen is not None and not plan:
             out.append("generate_image")
+        if self.profile == "small":  # modelos pequeños: pocas herramientas, para que acierten al elegir
+            out = [n for n in out if n in profiles.SMALL_TOOLS]
         return out
 
     def openai_specs(self) -> list[dict]:
@@ -317,8 +341,11 @@ class ToolContext:
             hint = steam_hint()
             if hint:
                 env.append(hint)
-            parts.append(AGENT_PROMPT)
+            parts.append(profiles.SMALL_AGENT_PROMPT if self.profile == "small" else
+                         AGENT_PROMPT + (profiles.FULL_EXTRA if self.profile == "full" else ""))
             parts.append("## Entorno\n" + " ".join(env))
+            if "run_command" in names and self.profile != "small":
+                parts.append(profiles.GIT_PROMPT)
             if self.perm_mode == "plan":
                 parts.append(PLAN_MODE)
             elif self.perm_mode == "edits":
@@ -388,6 +415,12 @@ class ToolContext:
                         return "Error: " + err, [], []
                 if self.files.is_game_path(p) and not any(is_under(p, r) for r in self.files.write_roots):
                     return None, ["modifica archivos de un juego (se guarda una copia de seguridad del original)"], []
+            if name == "github":
+                act = args.get("action")
+                if act in github.WRITE_ACTIONS:
+                    repo = args.get("repo") or github.repo_from_remote(self.workdir()) or "(repositorio sin indicar)"
+                    return None, [github.describe_write(args, repo)], []
+                return None, [], []
             if name == "build_exe":
                 script = self.files.resolve(args.get("script"), "ai_write")
                 if script.suffix.lower() != ".py" or not script.is_file():
@@ -473,6 +506,9 @@ class ToolContext:
     # Ejecución -----------------------------------------------------------------
     async def run(self, name: str, args: dict) -> str:
         try:
+            if name == "github":
+                default = await asyncio.to_thread(github.repo_from_remote, self.workdir())
+                return await github.call(self.cfg, args, default)
             if name == "ask_local_model":
                 if not self.local_chat:
                     return "Error: el modelo local no está disponible."

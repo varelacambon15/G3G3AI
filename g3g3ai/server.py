@@ -27,6 +27,7 @@ from .hub import Hub
 from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
+from .profiles import profile_for
 from .undo import UndoJournal
 from .engine import EngineInstaller
 from . import documents as D
@@ -421,7 +422,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         async def image_gen(prompt: str, size=None):
             return await images.generate(cfg, provider_for, prompt, size)
 
-        def make_ctx(chosen_pid: str):
+        def make_ctx(chosen_pid: str, chosen_model: str = ""):
             mem = memory if (memory_for(chosen_pid) and cfg["memory_auto"]) else None
             img = image_gen if cfg["image_provider"] else None
             if not (agent or use_web or mem or img):
@@ -431,6 +432,9 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                              session_allow=session_allow.setdefault(cid, set()), memory=mem, source=cid,
                              image_gen=img, state=state_for(cid, conv), perm_mode=perm_mode,
                              workdir=conv.get("workdir") or None)
+            tc.profile = profile_for(chosen_pid, (llama.status()["model"] or "") if chosen_pid == LOCAL_PROVIDER else chosen_model,
+                                     chosen_pid == LOCAL_PROVIDER,
+                                     cfg["agent_profile"] or "auto")
             if chosen_pid == LOCAL_PROVIDER:  # ~1/4 del contexto (en tokens ≈ 4 caracteres) como máximo por resultado
                 n_ctx = int((llama.params or {}).get("ctx") or 8192)
                 tc.result_limit = max(3000, n_ctx)
@@ -464,7 +468,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                     route = {"provider": cpid, "model": shown, "reason": why}
                     if why:
                         yield sse({"type": "route", **route})
-                    ctx = make_ctx(cpid)
+                    ctx = make_ctx(cpid, cmodel)
                     mem_text = memory.prompt() if memory_for(cpid) else ""
                     system = "\n\n".join(x for x in (base_system, mem_text, ctx.system_hint() if ctx else "") if x)
                     try:

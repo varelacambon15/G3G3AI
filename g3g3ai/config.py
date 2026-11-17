@@ -48,6 +48,8 @@ DEFAULTS: dict = {
     # llama.cpp
     "llama_server_path": "",  # vacío = autodetectar
     "llama_port": 8801,
+    "github_token": "",         # token de GitHub para la herramienta `github` (o variable GITHUB_TOKEN)
+    "agent_profile": "auto",    # auto | small | standard | full: cuánto se le exige al modelo
     "llama_ctx": 0,   # 0 = automático según la memoria libre y el tamaño del modelo
     "llama_threads": 0,  # 0 = automático
     "llama_gpu_layers": 0,  # >0 sólo si compilaste con Vulkan
@@ -177,7 +179,7 @@ DEFAULTS: dict = {
     "config_version": CONFIG_VERSION,
 }
 
-SECRET_KEYS = {"token", "hf_token", "web_api_key", "sync_key"}
+SECRET_KEYS = {"token", "hf_token", "web_api_key", "sync_key", "github_token"}
 
 
 def default_blocked() -> list[str]:

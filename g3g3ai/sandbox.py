@@ -36,6 +36,8 @@ WARN = [
     (r"\b(rm|del|rd|rmdir|Remove-Item)\b.*(-[a-zA-Z]*[rR]|/s\b|-Recurse)", "borra carpetas de forma recursiva"),
     (r"\b(chmod|chown)\s+-R\b", "cambia permisos de forma recursiva"),
     (r"\bgit\s+push\b.*(--force|-f\b)", "fuerza un push de git"),
+    (r"\bgit\s+push\b", "publica commits en un repositorio remoto (git push)"),
+    (r"\bgh\s+(pr|issue|release|repo|workflow)\s+(create|merge|close|delete|comment|edit|run)\b", "cambia cosas en GitHub"),
     (r"\bgit\s+(reset\s+--hard|clean\s+-[a-zA-Z]*f)", "descarta cambios de git"),
     (r"\b(reg\s+(add|delete)|Set-ItemProperty\s+.*HK)", "modifica el registro de Windows"),
     (r"\bcrontab\b|\bschtasks\b", "programa tareas"),

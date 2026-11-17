@@ -204,6 +204,19 @@ La pestaña **Code** es el chat con el agente activado y un panel de proyecto:
 - **Terminal:** comandos que ejecutó la IA y su salida. **Plan:** la lista de tareas en curso.
 - **Comandos con `/`:** `/plan`, `/clear`, `/undo`, `/init` (crea `G3G3AI.md`), `/review`, `/test`, `/help`.
 
+### 🐙 GitHub
+Con un **token de GitHub** (Ajustes → «Token de GitHub», o la variable `GITHUB_TOKEN`) el agente puede:
+- **Leer** sin preguntar: issues, pull requests (con sus archivos), estado del CI, archivos del repositorio y búsqueda de código.
+- **Escribir** siempre con tu permiso (no se puede marcar «siempre»): crear issues, comentar, cerrar y abrir pull requests.
+- **Git** con `run_command`: crea ramas, commits y `git push` (el push siempre pide confirmación; los push forzados avisan como peligrosos). Usa el remoto `origin` de la carpeta del proyecto.
+Flujo típico: «arregla el issue #12» → lee el issue, crea una rama, edita, ejecuta los tests, hace commit, te pide permiso para el push, abre el PR y comprueba el CI.
+
+### 🎚 Se adapta al modelo
+Según el modelo elegido (o lo que fijes en Ajustes → «Exigencia del agente»):
+- **Pequeño** (≤8B o desconocido en local): pocas herramientas, reglas cortas, una llamada a la vez y salidas de herramientas más pequeñas, para que acierte más.
+- **Mediano** (Haiku, mini/flash, 9–29B): método completo.
+- **Grande** (Sonnet/Opus, GPT-5, DeepSeek V3/R1, 30B+): método completo, más Git/GitHub y trabajo en profundidad (leer varios archivos a la vez, revisarse a sí mismo).
+
 ### 🛠 Cómo trabaja el agente
 
 El modo **🛠 Agente** sigue unas reglas de trabajo pensadas para que se comporte con método, tanto con modelos grandes como con locales pequeños:
