@@ -61,25 +61,60 @@ class UndoJournal:
                         "note": e.get("skipped")})
         return out
 
+    def diff(self, path: str) -> str:
+        """Diff unificado entre el estado original guardado y el actual de un archivo."""
+        import difflib
+        e = self._load().get(path)
+        if e is None:
+            return ""
+
+        def text(p: Path) -> list[str]:
+            try:
+                return p.read_text("utf-8", errors="replace").splitlines(keepends=True)
+            except OSError:
+                return []
+        before = text(self.dir / e["backup"]) if e.get("backup") else []
+        after = text(Path(path))
+        name = Path(path).name
+        out = "".join(difflib.unified_diff(before, after, "/dev/null" if not e["existed"] else f"a/{name}",
+                                           f"b/{name}", n=3))
+        return out[:60_000] or "(sin diferencias)"
+
+    def _restore(self, path: str, e: dict, res: dict) -> None:
+        p = Path(path)
+        try:
+            if not e["existed"]:
+                if p.is_file():
+                    p.unlink()
+                res["deleted"].append(path)
+            elif e["backup"] and (self.dir / e["backup"]).is_file():
+                p.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(self.dir / e["backup"], p)
+                res["restored"].append(path)
+            else:
+                res["failed"].append(f"{path} ({e.get('skipped') or 'sin copia'})")
+        except OSError as ex:
+            res["failed"].append(f"{path} ({ex})")
+
+    def undo_one(self, path: str) -> dict:
+        """Deshace un solo archivo y lo quita del registro (la copia se conserva hasta limpiar la conversación)."""
+        data = self._load()
+        res = {"restored": [], "deleted": [], "failed": []}
+        if path not in data:
+            res["failed"].append(f"{path} (no consta en esta conversación)")
+            return res
+        self._restore(path, data[path], res)
+        if not res["failed"]:
+            del data[path]
+            self._save(data)
+        return res
+
     def undo_all(self) -> dict:
         """Devuelve cada archivo a su estado original. Retorna {restored, deleted, failed}."""
         data = self._load()
         res = {"restored": [], "deleted": [], "failed": []}
         for path, e in reversed(list(data.items())):
-            p = Path(path)
-            try:
-                if not e["existed"]:
-                    if p.is_file():
-                        p.unlink()
-                    res["deleted"].append(path)
-                elif e["backup"] and (self.dir / e["backup"]).is_file():
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(self.dir / e["backup"], p)
-                    res["restored"].append(path)
-                else:
-                    res["failed"].append(f"{path} ({e.get('skipped') or 'sin copia'})")
-            except OSError as ex:
-                res["failed"].append(f"{path} ({ex})")
+            self._restore(path, e, res)
         if not res["failed"]:
             self.clear()
         else:  # conserva sólo lo que no se pudo deshacer

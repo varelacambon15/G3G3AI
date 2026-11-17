@@ -197,6 +197,13 @@ En el modo 🛠 Agente, la IA tiene dos herramientas:
 - **⚙ Gestionar modelos…** (al final del selector) abre una ventana con buscador para marcar favoritos y ocultar modelos, uno a uno o todos los de un proveedor (respetando los favoritos). Útil con OpenRouter, que lista cientos.
 - El modelo seleccionado se sigue viendo aunque esté oculto. Favoritos y ocultos se sincronizan entre tus equipos.
 
+### 💻 Code
+La pestaña **Code** es el chat con el agente activado y un panel de proyecto:
+- **Proyecto:** fija la carpeta de trabajo (se recuerda por conversación).
+- **Cambios:** archivos creados/editados con su diff; deshaz uno a uno o todos.
+- **Terminal:** comandos que ejecutó la IA y su salida. **Plan:** la lista de tareas en curso.
+- **Comandos con `/`:** `/plan`, `/clear`, `/undo`, `/init` (crea `G3G3AI.md`), `/review`, `/test`, `/help`.
+
 ### 🛠 Cómo trabaja el agente
 
 El modo **🛠 Agente** sigue unas reglas de trabajo pensadas para que se comporte con método, tanto con modelos grandes como con locales pequeños:

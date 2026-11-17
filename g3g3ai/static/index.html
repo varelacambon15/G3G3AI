@@ -33,6 +33,7 @@
     <button id="new-chat" class="new-chat"><span class="plus">＋</span> Nueva conversación</button>
     <nav class="tabs side-nav">
       <button data-view="chat" class="active"><span class="ico">💬</span> Chats</button>
+      <button data-view="code"><span class="ico">💻</span> Code</button>
       <button data-view="models"><span class="ico">🧩</span> Modelos</button>
       <button data-view="files"><span class="ico">📁</span> Archivos</button>
     </nav>
@@ -111,6 +112,21 @@
             <div class="composer-hint">La IA puede equivocarse. Revisa la información importante.</div>
           </div>
         </div>
+        <!-- Panel de Code: proyecto, cambios, terminal y plan -->
+        <aside id="code-panel" class="code-panel">
+          <div class="code-proj">
+            <label>📂 Proyecto <input id="code-dir" type="text" placeholder="Carpeta del proyecto (p. ej. C:\\Proyectos\\app)"></label>
+            <button id="code-dir-set" class="ghost small">Usar</button>
+          </div>
+          <div class="code-tabs">
+            <button data-ctab="changes" class="active">Cambios <span id="ct-changes" class="badge">0</span></button>
+            <button data-ctab="term">Terminal</button>
+            <button data-ctab="plan">Plan</button>
+          </div>
+          <div id="ctab-changes" class="code-body"></div>
+          <div id="ctab-term" class="code-body hidden"></div>
+          <div id="ctab-plan" class="code-body hidden"></div>
+        </aside>
         <!-- Panel de vista previa (HTML / SVG) -->
         <aside id="artifact" class="artifact hidden">
           <div class="artifact-head">

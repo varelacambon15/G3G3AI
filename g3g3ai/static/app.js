@@ -153,13 +153,18 @@ const isMobile = () => matchMedia("(max-width: 860px)").matches;
 function closeSide() { document.body.classList.remove("side-open"); }
 function setView(v) {
   S.view = v;
+  const real = v === "code" ? "chat" : v;
+  const wasCode = !!S.code;
+  S.code = v === "code";
+  document.body.classList.toggle("code-mode", S.code);
   $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
-  $$(".view").forEach((s) => s.classList.toggle("active", s.id === "view-" + v));
-  $("#top-title").textContent = v === "chat" ? (S.conv?.title || "") : { models: "Modelos", files: "Archivos", settings: "Ajustes" }[v];
+  $$(".view").forEach((s) => s.classList.toggle("active", s.id === "view-" + real));
+  $("#top-title").textContent = real === "chat" ? (S.conv?.title || (S.code ? "Code" : "")) : { models: "Modelos", files: "Archivos", settings: "Ajustes" }[real];
   closeSide();
-  if (v === "models") refreshModels();
-  if (v === "files") loadFiles(S.filesPath);
-  if (v === "settings") loadSettings();
+  if (S.code && !wasCode) enterCode();
+  if (real === "models") refreshModels();
+  if (real === "files") loadFiles(S.filesPath);
+  if (real === "settings") loadSettings();
   store.set("view", v);
 }
 $$("[data-view]").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
@@ -354,13 +359,15 @@ function renderActiveTools() {
 // --- Deshacer los cambios que la IA hizo en archivos ------------------------------------------
 async function refreshChanges() {
   const b = $("#undo-btn");
-  if (!S.convId) { b.classList.add("hidden"); return; }
+  if (!S.convId) { b.classList.add("hidden"); S.changes = []; if (S.code) renderCodeChanges(); return; }
   try {
     const { files } = await api(`/api/conversations/${S.convId}/changes`);
     S.changes = files;
     b.classList.toggle("hidden", !files.length);
     b.textContent = `↩ Deshacer cambios (${files.length})`;
-  } catch { b.classList.add("hidden"); }
+  } catch { b.classList.add("hidden"); S.changes = []; }
+  codeState.diffs = {};
+  if (S.code) renderCodeChanges();
 }
 $("#undo-btn").addEventListener("click", async () => {
   const list = (S.changes || []).map((c) => (c.created ? "🆕 se borrará: " : "↩ se restaurará: ") + c.path).join("\n");
@@ -372,6 +379,103 @@ $("#undo-btn").addEventListener("click", async () => {
   } catch (e) { toast(e.message); }
   refreshChanges();
 });
+
+// --- Code: proyecto, cambios, terminal y plan -------------------------------------------------
+const codeState = { tab: "changes", open: new Set(), diffs: {} };
+function enterCode() {
+  const t = $("#tools-toggle"); if (!t.checked) { t.checked = true; renderActiveTools(); }
+  if (S.workdir === undefined && !S.conv?.workdir) { const d = store.get("code_dir", ""); if (d) S.workdir = d; }
+  renderCodePanel();
+}
+$$("[data-ctab]").forEach((b) => b.addEventListener("click", () => {
+  codeState.tab = b.dataset.ctab;
+  $$("[data-ctab]").forEach((x) => x.classList.toggle("active", x === b));
+  ["changes", "term", "plan"].forEach((n) => $("#ctab-" + n).classList.toggle("hidden", n !== codeState.tab));
+}));
+$("#code-dir-set").addEventListener("click", async () => {
+  const dir = $("#code-dir").value.trim();
+  S.workdir = dir; store.set("code_dir", dir);
+  if (S.convId) await api(`/api/conversations/${S.convId}`, { method: "PATCH", body: { workdir: dir || null } }).catch((e) => toast(e.message));
+  toast(dir ? "Proyecto: " + dir : "Sin carpeta de proyecto");
+});
+function diffPre(text) {
+  const pre = h("pre", {});
+  for (const line of text.split("\n")) {
+    pre.append(h("span", { class: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : "" }, line + "\n"));
+  }
+  return pre;
+}
+function renderCodeChanges() {
+  const box = $("#ctab-changes"); box.innerHTML = "";
+  const files = S.convId && S.code ? (S.changes || []) : [];
+  $("#ct-changes").textContent = files.length;
+  if (!files.length) { box.append(h("p", { class: "muted" }, "Aún no hay cambios. Los archivos que la IA cree o edite aparecerán aquí con su diff y podrás deshacerlos uno a uno.")); return; }
+  box.append(h("div", { class: "row" }, h("button", { class: "ghost small", onclick: () => $("#undo-btn").click() }, "↩ Deshacer todo")));
+  for (const f of files) {
+    const open = codeState.open.has(f.path);
+    const card = h("div", { class: "cfile" }, h("div", { class: "cfile-head", onclick: async () => {
+      if (open) codeState.open.delete(f.path); else {
+        codeState.open.add(f.path);
+        try { codeState.diffs[f.path] = (await api(`/api/conversations/${S.convId}/changes/diff?` + qs({ path: f.path }))).diff; } catch (e) { toast(e.message); }
+      }
+      renderCodeChanges();
+    } }, h("span", {}, f.created ? "🆕" : "✎"), h("span", { class: "path", title: f.path }, f.path),
+      h("button", { class: "ghost small", title: "Deshacer este archivo", onclick: async (e) => {
+        e.stopPropagation();
+        if (!confirm(`${f.created ? "Se borrará" : "Se restaurará"}: ${f.path}`)) return;
+        try { await api(`/api/conversations/${S.convId}/undo_file`, { method: "POST", body: { path: f.path } }); } catch (er) { toast(er.message); }
+        refreshChanges();
+      } }, "↩")));
+    if (open && codeState.diffs[f.path] !== undefined) card.append(diffPre(codeState.diffs[f.path]));
+    box.append(card);
+  }
+}
+function renderCodePanel(live) {
+  if (!S.code) return;
+  const dirIn = $("#code-dir");
+  if (document.activeElement !== dirIn) dirIn.value = S.workdir ?? S.conv?.workdir ?? "";
+  renderCodeChanges();
+  const calls = [];
+  const take = (tools) => {
+    const found = [];
+    for (const t of tools || []) {
+      if (t.type === "tool_call" && t.name === "run_command") {
+        let a = {}; try { a = typeof t.args === "string" ? JSON.parse(t.args) : t.args; } catch { /* */ }
+        found.push({ cmd: (a && a.command) || "", out: null });
+      } else if (t.type === "tool_result" && t.name === "run_command") {
+        const last = found.find((x) => x.out === null); if (last) last.out = t.result;
+      }
+    }
+    calls.push(...found);
+  };
+  for (const m of S.conv?.messages || []) if (m.role === "assistant") take(m.meta?.tools);
+  if (live?.tools) take(live.tools);
+  const term = $("#ctab-term"); term.innerHTML = "";
+  if (!calls.length) term.append(h("p", { class: "muted" }, "Los comandos que ejecute la IA aparecerán aquí."));
+  for (const c of calls.slice(-30)) term.append(h("div", { class: "term-line" }, h("span", { class: "cmd" }, "$ " + c.cmd), "\n", c.out === null ? "⏳ ejecutando…" : c.out));
+  const plan = $("#ctab-plan"); plan.innerHTML = "";
+  const withTodos = (S.conv?.messages || []).filter((m) => m.role === "assistant" && m.meta?.todos);
+  const todos = live?.todos?.length ? live.todos : (withTodos.length ? withTodos[withTodos.length - 1].meta.todos : []);
+  plan.append(todos.length ? todoCard(todos) : h("p", { class: "muted" }, "Cuando la tarea sea larga, la IA mostrará aquí su plan y lo irá marcando."));
+}
+
+// Comandos con «/» en el cuadro de texto
+const SLASH = {
+  "/plan": () => { const m = $("#mode-select"); m.value = m.value === "plan" ? "normal" : "plan"; m.dispatchEvent(new Event("change")); toast("Modo: " + m.value); },
+  "/clear": () => { setView(S.code ? "code" : "chat"); newChat(); },
+  "/undo": () => $("#undo-btn").click(),
+  "/init": () => "Explora este proyecto (estructura, tecnologías, cómo se ejecutan los tests y la build) y crea un archivo G3G3AI.md en la raíz con instrucciones breves y útiles para trabajar en él. No inventes nada que no hayas comprobado.",
+  "/review": () => "Revisa los cambios que acabas de hacer en esta conversación: relee los archivos modificados, busca errores, casos límite y cosas que falten, y ejecuta los tests si existen. Corrige lo que encuentres.",
+  "/test": () => "Ejecuta los tests del proyecto y, si fallan, diagnostica la causa y corrígela.",
+  "/help": () => { toast("/plan · /clear · /undo · /init · /review · /test", 6000); },
+};
+function runSlash(text) {
+  const cmd = text.split(/\s+/)[0].toLowerCase();
+  if (!SLASH[cmd]) return null;
+  const extra = text.slice(cmd.length).trim();
+  const r = SLASH[cmd]();
+  return typeof r === "string" ? (extra ? r + "\n\n" + extra : r) : "";
+}
 
 // --- Conversaciones -------------------------------------------------------------------
 function dateGroup(ts) {
@@ -425,10 +529,12 @@ async function openConversation(id) {
   }
   S.workdir = undefined;
   renderMessages(); loadConversations(); refreshChanges();
-  if (S.view === "chat") $("#top-title").textContent = S.conv.title;
+  if (S.code) { S.workdir = S.conv.workdir || undefined; renderCodePanel(); }
+  if (S.view === "chat" || S.view === "code") $("#top-title").textContent = S.conv.title;
   closeSide();
 }
 function newChat() {
+  if (S.code) queueMicrotask(() => { S.workdir = store.get("code_dir", "") || undefined; renderCodePanel(); });
   S.convId = null; S.conv = null; S.system = undefined; store.set("conv", null);
   renderMessages(); loadConversations(); closeSide(); $("#top-title").textContent = "";
   if (!isMobile()) $("#input").focus();
@@ -650,8 +756,13 @@ $("#send-btn").addEventListener("click", () => {
   const text = input.value.trim();
   if (!text && !S.attachments.length) return;
   const att = S.attachments.map((a) => a.path);
+  let outgoing = text;
+  if (text.startsWith("/")) {
+    const r = runSlash(text);
+    if (r !== null) { input.value = ""; input.style.height = "auto"; if (!r) return; outgoing = r; }
+  }
   input.value = ""; input.style.height = "auto"; S.attachments = []; renderAttachments();
-  send(text, att);
+  send(outgoing, att);
 });
 
 async function send(text, attachments, isContinue = false) {
@@ -712,6 +823,9 @@ async function send(text, attachments, isContinue = false) {
         else if (ev.type === "compacted") extra.compacted = ev.messages;
         else if (ev.type === "route_fallback") extra.fallbacks.push(ev.message);
         else if (ev.type === "error") errorMsg = ev.message;
+        if (S.code && (ev.type === "tool_call" || ev.type === "tool_result" || ev.type === "todos")) {
+          renderCodePanel({ tools, todos: extra.todos }); if (ev.type === "tool_result") refreshChanges();
+        }
         // En respuestas muy largas repintar todo el markdown en cada frame congela la página: máx. ~7 veces/s
         if (!raf) raf = setTimeout(() => requestAnimationFrame(paint), content.length > 4000 ? 140 : 0);
       }

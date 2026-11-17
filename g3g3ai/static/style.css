@@ -359,3 +359,24 @@ pre.diff .dl.hunk { color: var(--accent); } pre.diff .dl.meta { color: var(--mut
 .tool-state { float: right; }
 .msg details.tool.failed { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); }
 .msg details.tool.failed .tool-state { color: var(--danger); }
+
+/* --- Code ---------------------------------------------------------------- */
+.code-panel { display: none; width: 360px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--panel); flex-direction: column; min-height: 0; }
+body.code-mode .code-panel { display: flex; }
+.code-proj { display: flex; gap: 6px; align-items: end; padding: 10px; border-bottom: 1px solid var(--border); }
+.code-proj label { flex: 1; font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.code-proj input { width: 100%; }
+.code-tabs { display: flex; border-bottom: 1px solid var(--border); }
+.code-tabs button { flex: 1; background: none; border: 0; padding: 9px 4px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; }
+.code-tabs button.active { color: var(--text); border-bottom-color: var(--accent, #c2603f); font-weight: 600; }
+.badge { background: var(--hover); border-radius: 9px; padding: 0 6px; font-size: 11px; }
+.code-body { flex: 1; overflow: auto; padding: 8px 10px; font-size: 13px; }
+.code-body.hidden { display: none; }
+.cfile { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+.cfile-head { display: flex; gap: 6px; align-items: center; padding: 6px 8px; cursor: pointer; }
+.cfile-head .path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.cfile pre { margin: 0; max-height: 280px; overflow: auto; font-size: 12px; padding: 6px 8px; background: var(--code); white-space: pre; }
+.cfile pre .add { color: #2e8b57; } .cfile pre .del { color: #c0392b; }
+.term-line { font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: pre-wrap; margin-bottom: 8px; }
+.term-line .cmd { color: var(--accent, #c2603f); font-weight: 600; }
+@media (max-width: 900px) { body.code-mode .code-panel { display: none; } }

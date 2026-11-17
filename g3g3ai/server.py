@@ -288,6 +288,16 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         """Archivos que la IA ha modificado o creado en esta conversación (se pueden deshacer)."""
         return {"files": UndoJournal(cid).changes()}
 
+    @app.get("/api/conversations/{cid}/changes/diff")
+    async def conversation_change_diff(cid: str, path: str):
+        return {"diff": await asyncio.to_thread(UndoJournal(cid).diff, path)}
+
+    @app.post("/api/conversations/{cid}/undo_file")
+    async def conversation_undo_file(cid: str, body: dict):
+        res = await asyncio.to_thread(UndoJournal(cid).undo_one, body.get("path", ""))
+        session_state.get(cid, {}).get("read", {}).pop(body.get("path", ""), None)
+        return res
+
     @app.post("/api/conversations/{cid}/undo")
     async def conversation_undo(cid: str):
         res = await asyncio.to_thread(UndoJournal(cid).undo_all)

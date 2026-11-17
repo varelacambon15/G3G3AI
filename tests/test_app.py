@@ -1390,3 +1390,22 @@ def test_auto_ctx_scales_with_memory_and_results_are_capped():
     # sin memoria libre: mínimo razonable
     assert auto_ctx(5 * GB, 0, ram_free_bytes=GB) == 4096
     assert auto_ctx(5 * GB, 99, 6 * GB, extra_args="--cache-type-k q8_0") >= auto_ctx(5 * GB, 99, 6 * GB)
+
+
+def test_undo_journal_diff_and_undo_one(tmp_path, monkeypatch):
+    from g3g3ai import undo
+    monkeypatch.setattr(undo, "DATA_DIR", tmp_path / "data")
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_text("uno\ndos\n", "utf-8")
+    j = undo.UndoJournal("c1")
+    j.record(a); j.record(b)          # a existía, b se va a crear
+    a.write_text("uno\nTRES\n", "utf-8"); b.write_text("nuevo\n", "utf-8")
+    d = j.diff(str(a))
+    assert "-dos" in d and "+TRES" in d
+    assert "+nuevo" in j.diff(str(b))
+    res = j.undo_one(str(a))
+    assert res["restored"] == [str(a)] and a.read_text("utf-8") == "uno\ndos\n"
+    assert [c["path"] for c in j.changes()] == [str(b)]
+    res = j.undo_one(str(b))
+    assert res["deleted"] == [str(b)] and not b.exists() and j.changes() == []
+    assert j.undo_one(str(a))["failed"]
