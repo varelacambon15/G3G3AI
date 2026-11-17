@@ -380,6 +380,32 @@ $("#undo-btn").addEventListener("click", async () => {
   refreshChanges();
 });
 
+// --- Medidor de contexto y /compact ----------------------------------------------------------
+async function refreshContext() {
+  const m = $("#ctx-meter");
+  if (!S.convId || !S.conv?.messages?.length) { m.classList.add("hidden"); return; }
+  try {
+    const { provider } = currentModel();
+    const c = await api(`/api/conversations/${S.convId}/context?` + qs({ provider }));
+    const pct = Math.min(100, Math.round(100 * c.used / Math.max(1, c.budget)));
+    const k = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : n;
+    m.textContent = `${pct}% · ${k(c.used)}/${k(c.budget)}`;
+    m.title = `Contexto usado (estimado): ${c.used} de ${c.budget} tokens` + (c.summarized ? ". Ya se resumió una parte antigua." : ". Al llenarse, lo antiguo se resume solo; /compact lo resume ahora.");
+    m.classList.toggle("warn", pct >= 70 && pct < 90); m.classList.toggle("full", pct >= 90);
+    m.classList.remove("hidden");
+  } catch { m.classList.add("hidden"); }
+}
+async function compactNow() {
+  if (!S.convId) { toast("No hay conversación que resumir"); return; }
+  toast("Resumiendo…", 4000);
+  try {
+    const { provider, model } = currentModel();
+    const r = await api(`/api/conversations/${S.convId}/compact`, { method: "POST", body: { provider, model } });
+    toast(`Resumida: ${r.before} → ${r.used} tokens`, 5000);
+    await openConversation(S.convId);
+  } catch (e) { toast(e.message, 6000); }
+}
+
 // --- Code: proyecto, cambios, terminal y plan -------------------------------------------------
 const codeState = { tab: "changes", open: new Set(), diffs: {} };
 function enterCode() {
@@ -464,10 +490,11 @@ const SLASH = {
   "/plan": () => { const m = $("#mode-select"); m.value = m.value === "plan" ? "normal" : "plan"; m.dispatchEvent(new Event("change")); toast("Modo: " + m.value); },
   "/clear": () => { setView(S.code ? "code" : "chat"); newChat(); },
   "/undo": () => $("#undo-btn").click(),
+  "/compact": () => { compactNow(); },
   "/init": () => "Explora este proyecto (estructura, tecnologías, cómo se ejecutan los tests y la build) y crea un archivo G3G3AI.md en la raíz con instrucciones breves y útiles para trabajar en él. No inventes nada que no hayas comprobado.",
   "/review": () => "Revisa los cambios que acabas de hacer en esta conversación: relee los archivos modificados, busca errores, casos límite y cosas que falten, y ejecuta los tests si existen. Corrige lo que encuentres.",
   "/test": () => "Ejecuta los tests del proyecto y, si fallan, diagnostica la causa y corrígela.",
-  "/help": () => { toast("/plan · /clear · /undo · /init · /review · /test", 6000); },
+  "/help": () => { toast("/plan · /clear · /undo · /compact · /init · /review · /test", 6000); },
 };
 function runSlash(text) {
   const cmd = text.split(/\s+/)[0].toLowerCase();
@@ -528,7 +555,7 @@ async function openConversation(id) {
     if ([...$("#model-select").options].some((o) => o.value === v)) { $("#model-select").value = v; updateFavButton(); }
   }
   S.workdir = undefined;
-  renderMessages(); loadConversations(); refreshChanges();
+  renderMessages(); loadConversations(); refreshChanges(); refreshContext();
   if (S.code) { S.workdir = S.conv.workdir || undefined; renderCodePanel(); }
   if (S.view === "chat" || S.view === "code") $("#top-title").textContent = S.conv.title;
   closeSide();
@@ -857,6 +884,7 @@ async function send(text, attachments, isContinue = false) {
     if (errorMsg) toast("Error: " + errorMsg, 7000);
     if (S.convId) { await new Promise((r) => setTimeout(r, 150)); const wd = S.workdir; await openConversation(S.convId).catch(() => {}); S.workdir = wd; }
     else el.remove();
+    refreshContext();
     if (S.queued) { const q = S.queued; S.queued = null; setTimeout(() => send(q, []), 200); }
   }
 }

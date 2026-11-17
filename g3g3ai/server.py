@@ -285,6 +285,29 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         session_allow.pop(cid, None)
         return {"ok": True}
 
+    @app.get("/api/conversations/{cid}/context")
+    async def conversation_context(cid: str, provider: str = LOCAL_PROVIDER):
+        conv = db.get_conversation(cid)
+        if not conv:
+            raise HTTPException(404, "Conversación no encontrada")
+        return builder.usage(conv, provider, int(cfg["max_tokens"] or 2048))
+
+    @app.post("/api/conversations/{cid}/compact")
+    async def conversation_compact(cid: str, body: dict):
+        """/compact: resume la conversación ahora (conserva sólo el último intercambio) y deja el resumen guardado."""
+        conv = db.get_conversation(cid)
+        if not conv:
+            raise HTTPException(404, "Conversación no encontrada")
+        pid, model = body.get("provider") or LOCAL_PROVIDER, body.get("model") or "local"
+        before = builder.usage(conv, pid, int(cfg["max_tokens"] or 2048))["used"]
+        try:
+            async for _ in builder.build(conv, pid, model, "", int(cfg["max_tokens"] or 2048), force=True):
+                pass
+        except (ProviderError, httpx.HTTPError, RuntimeError) as e:
+            raise HTTPException(502, f"No se pudo resumir: {e}")
+        conv = db.get_conversation(cid)
+        return {"before": before, **builder.usage(conv, pid, int(cfg["max_tokens"] or 2048))}
+
     @app.get("/api/conversations/{cid}/changes")
     async def conversation_changes(cid: str):
         """Archivos que la IA ha modificado o creado en esta conversación (se pueden deshacer)."""

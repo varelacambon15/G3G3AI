@@ -1547,3 +1547,21 @@ def test_command_rules_and_verification_nudge(env):
     assert msg and "pytest" in msg
     ctx.dirty = False
     assert verify_message(ctx) is None
+
+
+def test_context_meter_and_compact(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    cid = None
+    for i in range(4):
+        evs = sse(client.post("/api/chat", headers=h, json={"message": f"mensaje número {i} " + "relleno " * 200,
+                                                              "conversation_id": cid}))
+        cid = next(e["conversation_id"] for e in evs if e["type"] == "start")
+    c = client.get(f"/api/conversations/{cid}/context?provider=local", headers=h).json()
+    assert c["used"] > 1000 and c["budget"] > c["used"] and not c["summarized"]
+    r = client.post(f"/api/conversations/{cid}/compact", headers=h, json={"provider": "local", "model": "local"})
+    assert r.status_code == 200, r.text
+    r = r.json()
+    assert r["summarized"] and r["used"] < r["before"]
+    assert client.get("/api/conversations/nope/context", headers=h).status_code == 404

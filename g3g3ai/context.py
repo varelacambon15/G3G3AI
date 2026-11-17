@@ -14,6 +14,7 @@ from typing import AsyncIterator
 from . import documents as D
 
 CHARS_PER_TOKEN = 3.5
+SYSTEM_OVERHEAD = 1800  # instrucciones del sistema + herramientas (estimación)
 IMAGE_TOKENS = 1000
 MAX_LIVE_IMAGES = 6       # imágenes enviadas como imagen (las más recientes); el resto, como descripción
 KEEP_RECENT = 6           # mensajes recientes que nunca se resumen
@@ -149,7 +150,8 @@ class HistoryBuilder:
         return text, shown
 
     # Historial -------------------------------------------------------------------------
-    async def build(self, conv: dict, pid: str, model: str, system: str, max_tokens: int) -> AsyncIterator[dict]:
+    async def build(self, conv: dict, pid: str, model: str, system: str, max_tokens: int,
+                    force: bool = False) -> AsyncIterator[dict]:
         """Genera eventos para la interfaz y termina con {"type": "_history", "messages": [...]}."""
         vision = self.supports_vision(pid)
         msgs = conv["messages"]
@@ -226,9 +228,10 @@ class HistoryBuilder:
         summary_msg = ([{"role": "user", "content": f"[Resumen de la conversación anterior]\n{conv['summary']}"},
                         {"role": "assistant", "content": "Entendido, continúo a partir de ese resumen."}]
                        if conv.get("summary") else [])
-        if estimate_tokens(sys_msg + summary_msg + history) > budget and len(history) > KEEP_RECENT:
+        keep_n = 2 if force else KEEP_RECENT  # /compact: se resume todo salvo el último intercambio
+        if (force or estimate_tokens(sys_msg + summary_msg + history) > budget) and len(history) > keep_n:
             yield {"type": "status", "text": "🗜 Resumiendo la parte antigua de la conversación…"}
-            kept = history[-KEEP_RECENT:]
+            kept = history[-keep_n:]
             while len(kept) > 2 and estimate_tokens(sys_msg + kept) > budget * 0.6:
                 kept = kept[2:]
             old = history[:len(history) - len(kept)]
@@ -252,6 +255,17 @@ class HistoryBuilder:
             history = kept
             yield {"type": "compacted", "messages": len(old)}
         yield {"type": "_history", "messages": summary_msg + history}
+
+    def usage(self, conv: dict, pid: str, max_tokens: int) -> dict:
+        """Estimación rápida del contexto usado (sin describir imágenes): resumen + mensajes aún sin resumir."""
+        upto = conv.get("summary_upto") or 0
+        msgs = [{"role": m["role"], "content": m["content"] or ""} for m in conv["messages"]
+                if m["id"] > upto and m["role"] in ("user", "assistant")]
+        if conv.get("summary"):
+            msgs.append({"role": "user", "content": conv["summary"]})
+        used = estimate_tokens(msgs) + SYSTEM_OVERHEAD
+        budget = self.budget(pid, max_tokens) + max_tokens if pid == "local" else self.budget(pid, max_tokens)
+        return {"used": int(used), "budget": int(budget), "summarized": bool(conv.get("summary"))}
 
     def budget(self, pid: str, max_tokens: int) -> int:
         if pid == "local":
