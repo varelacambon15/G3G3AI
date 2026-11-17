@@ -329,8 +329,17 @@ $$("#plus-menu > button, #tools-menu > button").forEach((b) => b.addEventListene
   $$(".popover").forEach((p) => p.classList.add("hidden")); $$(".round-btn").forEach((x) => x.classList.remove("open"));
 }));
 document.addEventListener("click", () => { $$(".popover").forEach((p) => p.classList.add("hidden")); $$(".round-btn").forEach((b) => b.classList.remove("open")); });
+const MODE_HINT = { normal: "Pregunta según Ajustes", plan: "Sólo lee y propone un plan; no cambia nada", edits: "Edita archivos sin preguntar; los comandos sí preguntan" };
+$("#mode-select").value = store.get("mode", "normal");
+$("#mode-select").addEventListener("change", (e) => { store.set("mode", e.target.value); renderActiveTools(); });
 function renderActiveTools() {
   const box = $("#active-tools"); box.innerHTML = "";
+  const mode = $("#mode-select").value;
+  $("#mode-hint").textContent = MODE_HINT[mode];
+  if (mode !== "normal" && $("#tools-toggle").checked) {
+    box.append(h("span", { title: "Pulsa para volver al modo normal", onclick: () => { $("#mode-select").value = "normal"; $("#mode-select").dispatchEvent(new Event("change")); } },
+      (mode === "plan" ? "📝 Plan" : "✏ Ediciones") + " ✕"));
+  }
   const items = [["auto-toggle", "🔀 Auto"], ["web-toggle", "🌐 Web"], ["tools-toggle", "🛠 Agente"]];
   let any = false;
   for (const [id, label] of items) {
@@ -338,9 +347,31 @@ function renderActiveTools() {
     any = true;
     box.append(h("span", { title: "Pulsa para desactivar", onclick: () => { $("#" + id).checked = false; $("#" + id).dispatchEvent(new Event("change")); } }, label + " ✕"));
   }
-  $("#tools-btn").classList.toggle("on", any);
+  $("#tools-btn").classList.toggle("on", any || (mode !== "normal" && $("#tools-toggle").checked));
 }
 ["auto-toggle", "web-toggle", "tools-toggle"].forEach((id) => $("#" + id).addEventListener("change", renderActiveTools));
+
+// --- Deshacer los cambios que la IA hizo en archivos ------------------------------------------
+async function refreshChanges() {
+  const b = $("#undo-btn");
+  if (!S.convId) { b.classList.add("hidden"); return; }
+  try {
+    const { files } = await api(`/api/conversations/${S.convId}/changes`);
+    S.changes = files;
+    b.classList.toggle("hidden", !files.length);
+    b.textContent = `↩ Deshacer cambios (${files.length})`;
+  } catch { b.classList.add("hidden"); }
+}
+$("#undo-btn").addEventListener("click", async () => {
+  const list = (S.changes || []).map((c) => (c.created ? "🆕 se borrará: " : "↩ se restaurará: ") + c.path).join("\n");
+  if (!confirm(`Los archivos que la IA tocó en esta conversación volverán a como estaban antes:\n\n${list}\n\n(No se pueden deshacer los comandos que haya ejecutado.) ¿Continuar?`)) return;
+  try {
+    const r = await api(`/api/conversations/${S.convId}/undo`, { method: "POST" });
+    toast(`Deshecho: ${r.restored.length} restaurados, ${r.deleted.length} borrados` + (r.failed.length ? `, ${r.failed.length} con problemas` : ""), 5000);
+    if (r.failed.length) console.warn(r.failed);
+  } catch (e) { toast(e.message); }
+  refreshChanges();
+});
 
 // --- Conversaciones -------------------------------------------------------------------
 function dateGroup(ts) {
@@ -392,7 +423,8 @@ async function openConversation(id) {
     const v = `${S.conv.provider}::${S.conv.model}`;  // las conversaciones en Auto no cambian el selector
     if ([...$("#model-select").options].some((o) => o.value === v)) { $("#model-select").value = v; updateFavButton(); }
   }
-  renderMessages(); loadConversations();
+  S.workdir = undefined;
+  renderMessages(); loadConversations(); refreshChanges();
   if (S.view === "chat") $("#top-title").textContent = S.conv.title;
   closeSide();
 }
@@ -432,11 +464,42 @@ function renderMessages() {
   for (const m of msgs) box.append(messageEl(m));
   box.scrollTop = box.scrollHeight;
 }
+function diffBlock(path, diff) {
+  const pre = h("pre", { class: "diff" }, h("div", { class: "diff-file" }, path));
+  for (const line of diff.split("\n")) {
+    const cls = line.startsWith("+++") || line.startsWith("---") ? "meta" : line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : line.startsWith("@@") ? "hunk" : "";
+    pre.append(h("div", { class: "dl " + cls }, line || " "));
+  }
+  return pre;
+}
+const TOOL_ARG_KEYS = ["path", "script", "command", "pattern", "query", "url", "game", "prompt"];
+function toolRow(name, argsJson, result) {
+  let a = {}; try { a = JSON.parse(argsJson || "{}"); } catch { /* */ }
+  const key = TOOL_ARG_KEYS.find((k) => a[k]);
+  let arg = key ? String(a[key]).replace(/\s+/g, " ") : "";
+  if (key === "path" || key === "script") { const seg = arg.split(/[\\/]/).filter(Boolean); arg = seg.length > 2 ? "…/" + seg.slice(-2).join("/") : arg; }
+  arg = arg.slice(0, 80);
+  const failed = result != null && /^(Error|Bloqueado|El usuario ha denegado|Has repetido)/.test(result);
+  const state = result == null ? "⏳" : failed ? "✕" : "✔";
+  let pretty = argsJson || ""; try { pretty = JSON.stringify(JSON.parse(argsJson), null, 2); } catch { /* */ }
+  return h("details", { class: "tool" + (failed ? " failed" : "") },
+    h("summary", {}, `🔧 ${name}`, arg ? h("span", { class: "tool-arg" }, ` ${arg}`) : null, h("span", { class: "tool-state" }, ` ${state}`)),
+    h("pre", {}, pretty), result != null ? h("pre", {}, result) : null);
+}
+function todoCard(items) {
+  const done = items.filter((t) => t.status === "completed").length;
+  const icon = { completed: "✔", in_progress: "●", pending: "○" };
+  return h("div", { class: "todo-card" },
+    h("div", { class: "todo-head" }, h("b", {}, "📋 Plan"), h("span", { class: "muted" }, `${done}/${items.length}`),
+      h("div", { class: "todo-bar" }, h("div", { style: `width:${Math.round(100 * done / items.length)}%` }))),
+    h("ul", {}, items.map((t) => h("li", { class: t.status }, h("span", { class: "ti" }, icon[t.status] || "○"), t.content))));
+}
 function approvalCard(a) {
   const args = a.args || {};
   const what = a.name === "build_exe" ? h("pre", {}, `${args.script}` + (args.packages?.length ? `\npaquetes: ${args.packages.join(", ")}` : "") + (args.windowed ? "\n(con ventana)" : ""))
     : a.name === "run_command" ? h("pre", {}, (args.cwd ? `[${args.cwd}] ` : "") + "$ " + args.command)
-    : a.name === "edit_file" ? h("pre", {}, `${args.path}\n--- antes\n${args.old_text}\n+++ después\n${args.new_text}`)
+    : (a.name === "edit_file" || a.name === "write_file") && a.diff ? diffBlock(args.path, a.diff)
+    : a.name === "edit_file" ? h("pre", {}, `${args.path}\n` + (args.edits || [{ old_text: args.old_text, new_text: args.new_text }]).map((e) => `--- antes\n${e.old_text}\n+++ después\n${e.new_text}`).join("\n\n"))
     : a.name === "write_file" || a.name === "create_document" ? h("pre", {}, `${args.path}\n\n${String(args.content || "").slice(0, 3000)}`)
     : h("pre", {}, JSON.stringify(args, null, 2));
   const title = { run_command: "ejecutar un comando", edit_file: "editar un archivo", write_file: "escribir un archivo", build_exe: "compilar un programa",
@@ -461,6 +524,7 @@ function approvalCard(a) {
 }
 function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   const frag = document.createDocumentFragment();
+  if (extra.todos?.length) frag.append(todoCard(extra.todos));
   if (extra.compacted) frag.append(h("div", { class: "route" }, `🗜 Se resumieron ${extra.compacted} mensajes antiguos para que la conversación quepa en el contexto`));
   if (extra.status && streaming) frag.append(h("div", { class: "route" }, extra.status));
   if (extra.route) frag.append(h("div", { class: "route" }, `🔀 ${extra.route.provider === "local" ? "💻" : "☁"} ${extra.route.model}` + (extra.route.reason ? ` — ${extra.route.reason}` : "")));
@@ -468,6 +532,7 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   const { think, body, open } = splitThink(content || "");
   const r = [reasoning, think].filter(Boolean).join("\n");
   if (r) frag.append(h("details", { open: streaming && (open || !body) ? true : false }, h("summary", {}, "💭 Razonamiento"), h("pre", {}, r)));
+  const pendingCalls = {};
   for (const t of tools || []) {
     if (t.name && t.name.startsWith("memory_")) {
       if (t.type === "tool_call") {
@@ -477,9 +542,13 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
       } else if (/^No guardado|^Error/.test(t.result || "")) frag.append(h("div", { class: "memory-note warn" }, t.result));
       continue;
     }
-    if (t.type === "tool_call") frag.append(h("details", { class: "tool" }, h("summary", {}, `🔧 ${t.name}`), h("pre", {}, t.args)));
+    if (t.name === "todo_write") continue;  // ya se ve en la tarjeta del plan
+    if (t.type === "tool_call") pendingCalls[t.name] = t;  // se muestra junto a su resultado
     else if (t.type === "approval") frag.append(approvalCard(t));
-    else if (t.type === "tool_result") frag.append(h("details", { class: "tool" }, h("summary", {}, `↳ resultado de ${t.name}`), h("pre", {}, t.result)));
+    else if (t.type === "tool_result") { frag.append(toolRow(t.name, pendingCalls[t.name]?.args, t.result)); delete pendingCalls[t.name]; }
+  }
+  if (streaming) for (const [name, c] of Object.entries(pendingCalls)) {  // en curso
+    if (!(tools || []).some((x) => x.type === "approval" && x.name === name && !x.state)) frag.append(toolRow(name, c.args, null));
   }
   const b = h("div", { class: "bubble" + (streaming ? " cursor" : "") });
   b.innerHTML = md(body);
@@ -507,7 +576,7 @@ function messageEl(m) {
       h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, "⧉"),
       h("button", { class: "act", title: "Editar", onclick: () => editFrom(m) }, "✎")));
   } else {
-    el.append(assistantInner(m.content, m.reasoning, m.meta?.tools, false, { images: m.meta?.images || [], files: m.meta?.files || [] }));
+    el.append(assistantInner(m.content, m.reasoning, m.meta?.tools, false, { images: m.meta?.images || [], files: m.meta?.files || [], todos: m.meta?.todos || [] }));
     const st = m.meta?.stats || {};
     el.append(h("div", { class: "meta" },
       h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, "⧉"),
@@ -598,7 +667,7 @@ async function send(text, attachments, isContinue = false) {
   const ctrl = new AbortController(); S.streaming = ctrl;
   setSending(true);
   let content = "", reasoning = "", tools = [], errorMsg = null, raf = 0;
-  const extra = { route: null, fallbacks: [], images: [], files: [] };
+  const extra = { route: null, fallbacks: [], images: [], files: [], todos: [] };
   const paint = () => {
     raf = 0;
     const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -607,7 +676,9 @@ async function send(text, attachments, isContinue = false) {
   };
   try {
     const body = { conversation_id: S.convId, message: text, attachments, provider, model,
-      use_tools: $("#tools-toggle").checked, use_web: $("#web-toggle").checked, continue: isContinue };
+      use_tools: $("#tools-toggle").checked, use_web: $("#web-toggle").checked, continue: isContinue,
+      mode: $("#mode-select").value };
+    if (S.workdir !== undefined) body.workdir = S.workdir;
     if (S.system !== undefined) body.system = S.system;
     const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body), signal: ctrl.signal });
@@ -633,6 +704,8 @@ async function send(text, attachments, isContinue = false) {
         else if (ev.type === "route") extra.route = ev;
         else if (ev.type === "status") extra.status = ev.text;
         else if (ev.type === "image") extra.images.push(ev.path);
+        else if (ev.type === "todos") extra.todos = ev.items;
+        else if (ev.type === "retract") { if (content.endsWith(ev.text)) content = content.slice(0, content.length - ev.text.length); }
         else if (ev.type === "file") extra.files.push(ev.path);
         else if (ev.type === "compacted") extra.compacted = ev.messages;
         else if (ev.type === "route_fallback") extra.fallbacks.push(ev.message);
@@ -646,7 +719,7 @@ async function send(text, attachments, isContinue = false) {
     S.streaming = null;
     setSending(false);
     if (errorMsg) toast("Error: " + errorMsg, 7000);
-    if (S.convId) { await new Promise((r) => setTimeout(r, 150)); await openConversation(S.convId).catch(() => {}); }
+    if (S.convId) { await new Promise((r) => setTimeout(r, 150)); const wd = S.workdir; await openConversation(S.convId).catch(() => {}); S.workdir = wd; }
     else el.remove();
   }
 }
@@ -731,11 +804,13 @@ async function uploadsDir() {
 $("#system-btn").addEventListener("click", async () => {
   if (!S.settings) S.settings = await api("/api/settings");
   const cur = S.system !== undefined ? S.system : (S.conv?.system ?? S.settings.default_system_prompt);
-  $("#system-text").value = cur || ""; $("#system-dialog").showModal();
+  $("#system-text").value = cur || ""; $("#project-dir").value = S.workdir ?? S.conv?.workdir ?? ""; $("#system-dialog").showModal();
 });
 $("#system-save").addEventListener("click", async () => {
   S.system = $("#system-text").value;
   if (S.convId) await api(`/api/conversations/${S.convId}`, { method: "PATCH", body: { system: S.system } });
+  S.workdir = $("#project-dir").value.trim();
+  if (S.convId) await api(`/api/conversations/${S.convId}`, { method: "PATCH", body: { workdir: S.workdir || null } });
   $("#system-dialog").close(); toast("Instrucciones aplicadas");
 });
 $("#system-reset").addEventListener("click", async () => {
@@ -1173,6 +1248,7 @@ const FIELDS = [
   ["file_roots", "Carpetas visibles (una por línea)", "lines", "La interfaz y la IA sólo pueden ver (leer) estas carpetas."],
   ["ai_write", "Agente: escribir/editar archivos", "perm"],
   ["ai_commands", "Agente: ejecutar comandos", "perm", "«Preguntar» muestra cada acción para que la apruebes (también desde el móvil). Con aislamiento activo, los comandos sólo pueden escribir en las carpetas modificables; sin él, siempre se pide confirmación. Los comandos peligrosos se bloquean."],
+  ["agent_max_steps", "Pasos máximos del agente por respuesta", "number", "Cada llamada a una herramienta es un paso. Si se agota, escribe «continúa»."],
   ["agent_workdir", "Carpeta de trabajo del agente", "text", "Debe estar dentro de las carpetas que la IA puede modificar."],
   ["ai_game_write", "🎮 La IA puede trabajar con los juegos de Steam", "checkbox", "Lee y, pidiendo permiso cada vez, modifica las carpetas de los juegos y sus prefijos de Proton. Antes de cambiar un archivo guarda una copia «.g3g3ai-original»."],
   ["write_roots", "Carpetas que la IA puede modificar (una por línea)", "lines", "Añade aquí tus proyectos. Fuera de estas carpetas la IA sólo puede leer."],

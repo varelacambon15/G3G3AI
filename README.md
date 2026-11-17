@@ -197,6 +197,20 @@ En el modo 🛠 Agente, la IA tiene dos herramientas:
 - **⚙ Gestionar modelos…** (al final del selector) abre una ventana con buscador para marcar favoritos y ocultar modelos, uno a uno o todos los de un proveedor (respetando los favoritos). Útil con OpenRouter, que lista cientos.
 - El modelo seleccionado se sigue viendo aunque esté oculto. Favoritos y ocultos se sincronizan entre tus equipos.
 
+### 🛠 Cómo trabaja el agente
+
+El modo **🛠 Agente** sigue unas reglas de trabajo pensadas para que se comporte con método, tanto con modelos grandes como con locales pequeños:
+
+- **Investiga antes de cambiar:** `list_dir`, `grep_files` (busca texto o expresiones regulares *dentro* de los archivos) y `read_file`.
+- **Edita con cuidado:** `edit_file` admite varios cambios a la vez (`edits`) y `replace_all`; respeta los saltos de línea y el BOM del archivo; si un fragmento no coincide, indica la línea más parecida; si un cambio falla no se aplica ninguno. **Exige haber leído el archivo antes** y detecta si cambió por fuera desde entonces.
+- **Ves el cambio exacto:** al pedir permiso aparece el **diff** (rojo/verde). Los cambios que no se pueden aplicar se rechazan antes, sin molestarte.
+- **Plan visible:** en tareas largas crea un plan (📋) con `todo_write` y lo va marcando. El plan se conserva entre mensajes.
+- **Recuerda lo que hizo:** el historial incluye un registro compacto de las herramientas usadas en las últimas respuestas (qué archivos leyó, qué editó, qué comandos ejecutó), así que en el mensaje siguiente no empieza de cero.
+- **↩ Deshacer cambios:** arriba aparece este botón cuando la IA ha modificado o creado archivos en la conversación. Los devuelve a como estaban (no cubre lo que hagan los comandos).
+- **Permisos del agente** (⚙︎ junto al cuadro de mensaje): *Normal* (pregunta según Ajustes), *Plan* (sólo lee y propone un plan numérico, sin tocar nada) y *Aceptar ediciones* (edita sin preguntar; los comandos siguen pidiendo permiso).
+- **Proyectos:** en «📝 Instrucciones y carpeta del proyecto» puedes dar a cada conversación su carpeta de trabajo. Si dentro hay un archivo `G3G3AI.md`, la IA lo lee como instrucciones del proyecto (lenguaje, cómo ejecutar las pruebas, estilo…), como hace `CLAUDE.md` con Claude Code.
+- **Robustez:** si un modelo escribe la llamada a una herramienta como texto (`<tool_call>…`), se ejecuta igualmente; si anuncia un paso y se para, se le pide que lo haga; si repite la misma acción sin avanzar, se le avisa y se corta; si la respuesta se corta por longitud, continúa sola. Los pasos máximos por respuesta se ajustan en Ajustes (por defecto 40).
+
 ### 🔎 Buscador de modelos
 
 En **Modelos → Buscar y descargar modelos**:
@@ -253,6 +267,8 @@ g3g3ai/
   steam.py      diagnóstico de juegos de Steam/Proton
   devtools.py   herramientas de programación y compilación de ejecutables
   hardware.py   detección del hardware y recomendación de modelo y ajustes
+  agent_prompt.py  instrucciones de trabajo del agente
+  undo.py       copias para deshacer los cambios de una conversación
   ollama.py     integración con Ollama (instalar, modelos, proveedor)
   providers.py  streaming OpenAI/Anthropic + bucle de herramientas
   llama.py      proceso llama-server

@@ -49,6 +49,7 @@
     <header class="topbar">
       <button id="menu-btn" class="icon-btn" title="Mostrar barra lateral" aria-label="Mostrar barra lateral">☰</button>
       <span id="top-title" class="top-title"></span>
+      <button id="undo-btn" class="ghost small hidden" title="Devuelve los archivos que la IA modificó o creó en esta conversación a como estaban">↩ Deshacer cambios</button>
       <button id="top-new" class="icon-btn" title="Nueva conversación" aria-label="Nueva conversación">✎</button>
     </header>
 
@@ -87,7 +88,15 @@
                         <span><b>🛠 Agente</b><small>Archivos y comandos (con tu permiso)</small></span>
                         <input type="checkbox" id="tools-toggle" class="switch">
                       </label>
-                      <button id="system-btn"><span class="ico">📝</span> Instrucciones de esta conversación</button>
+                      <div class="switch-row mode-row">
+                        <span><b>🔒 Permisos del agente</b><small id="mode-hint">Pregunta según Ajustes</small></span>
+                        <select id="mode-select" aria-label="Permisos del agente">
+                          <option value="normal">Normal</option>
+                          <option value="plan">Plan</option>
+                          <option value="edits">Aceptar ediciones</option>
+                        </select>
+                      </div>
+                      <button id="system-btn"><span class="ico">📝</span> Instrucciones y carpeta del proyecto</button>
                     </div>
                   </div>
                   <div id="active-tools" class="active-tools"></div>
@@ -296,7 +305,11 @@
 
 <dialog id="system-dialog">
   <div class="dialog-head"><b>Instrucciones de esta conversación</b><button class="icon-btn" data-close>✕</button></div>
-  <textarea id="system-text" rows="8"></textarea>
+  <textarea id="system-text" rows="6"></textarea>
+  <label class="project-field">Carpeta del proyecto (opcional)
+    <input id="project-dir" placeholder="Ej.: C:\\Users\\tu-usuario\\G3G3AI-trabajo\\mi-proyecto">
+  </label>
+  <p class="muted small-text">Es la carpeta donde trabajan los comandos de esta conversación; debe estar dentro de las carpetas que la IA puede modificar. Si contiene un archivo <code>G3G3AI.md</code>, la IA lo lee como instrucciones del proyecto (lenguaje, cómo ejecutar las pruebas, estilo…).</p>
   <div class="row end"><button id="system-reset" class="ghost">Usar predeterminadas</button><button id="system-save" class="primary">Aplicar</button></div>
 </dialog>
 

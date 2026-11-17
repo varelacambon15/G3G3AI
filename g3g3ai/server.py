@@ -374,6 +374,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         db.update_conversation(cid, provider=pid, model=model)
         if "system" in body:
             db.update_conversation(cid, system=body.get("system"))
+        if "workdir" in body:
+            db.update_conversation(cid, workdir=(body.get("workdir") or None))
         conv = db.get_conversation(cid)
 
         base_system = conv.get("system") if conv.get("system") is not None else cfg["default_system_prompt"]

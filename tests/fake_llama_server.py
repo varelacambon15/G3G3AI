@@ -62,6 +62,26 @@ class H(BaseHTTPRequestHandler):
                                                + "|MODOPLAN:" + ("sí" if "MODO PLAN" in sysmsg else "no")}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
         first_user = next((m["content"] for m in msgs if m["role"] == "user"), "")
+        if "flujo_completo" in str(first_user) and req.get("tools"):
+            import os
+            n_tools = 0
+            for m in reversed(msgs):
+                if m["role"] == "user":
+                    break
+                n_tools += m["role"] == "tool"
+            path = os.environ.get("FAKE_READ_PATH", "")
+            steps = [("todo_write", {"todos": [{"content": "Leer el archivo", "status": "in_progress"},
+                                                {"content": "Cambiar el valor", "status": "pending"},
+                                                {"content": "Comprobar el resultado", "status": "pending"}]}),
+                     ("read_file", {"path": path}),
+                     ("edit_file", {"path": path, "old_text": "secreto", "new_text": "cambiado"})]
+            if n_tools < len(steps):
+                name, args = steps[n_tools]
+                self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": f"f{n_tools}", "function": {
+                    "name": name, "arguments": json.dumps(args)}}]}, "finish_reason": "tool_calls"}]})
+            else:
+                self.chunk({"choices": [{"delta": {"content": "Hecho: he cambiado el valor y lo he comprobado."}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "tool_call_en_texto" in str(first_user) and req.get("tools"):
             if last["role"] == "tool":  # ya se ejecutó: responde con lo leído
                 self.chunk({"choices": [{"delta": {"content": "Leído: " + str(last["content"])[-40:]}, "finish_reason": "stop"}]})
