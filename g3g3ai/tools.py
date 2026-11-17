@@ -17,6 +17,7 @@ import signal
 import threading
 import time
 import platform
+import re
 import subprocess
 import sys
 import uuid
@@ -114,6 +115,22 @@ def make_diff(old: str, new: str, name: str = "", limit: int = 160) -> str:
     if len(lines) > limit:
         lines = lines[:limit] + [f"… ({len(lines) - limit} líneas más)"]
     return "\n".join(lines)
+
+
+def compact_spec(desc: str, schema: dict) -> tuple[str, dict]:
+    """Versión corta para modelos locales: primera frase de la descripción y parámetros sin descripciones largas.
+    Cada token de herramientas se paga en cada turno, y en un equipo sin gráfica son segundos."""
+    first = re.split(r"(?<=[.!?])\s", desc.strip(), maxsplit=1)[0]
+    props = {}
+    for k, v in (schema.get("properties") or {}).items():
+        v = {kk: vv for kk, vv in v.items() if kk in ("type", "enum", "items")}
+        if isinstance(v.get("items"), dict):
+            v["items"] = {kk: vv for kk, vv in v["items"].items() if kk in ("type", "properties", "required")}
+        props[k] = v
+    out = {"type": "object", "properties": props}
+    if schema.get("required"):
+        out["required"] = schema["required"]
+    return first[:220], out
 
 
 def _schema(props: dict, required: list[str] | None = None) -> dict:
@@ -274,6 +291,7 @@ class ToolContext:
         self.perm_mode = perm_mode if perm_mode in ("normal", "plan", "edits") else "normal"
         self.workdir_override = workdir
         self.profile = "standard"  # small | standard | full (ver profiles.py)
+        self.compact_specs = False  # herramientas con descripciones cortas (modelos locales)
         self.result_limit: int | None = None  # caracteres máximos por resultado (se fija en modelos locales)
         self.todos_dirty = False
         self.dirty = False  # se han modificado archivos y aún no se ha ejecutado nada para comprobarlo
@@ -374,7 +392,8 @@ class ToolContext:
         return out
 
     def _spec(self, n: str) -> tuple[str, dict]:
-        return ALL_SPECS[n] if n in ALL_SPECS else self.mcp.specs()[n]
+        desc, schema = ALL_SPECS[n] if n in ALL_SPECS else self.mcp.specs()[n]
+        return (compact_spec(desc, schema) if self.compact_specs else (desc, schema))
 
     def openai_specs(self) -> list[dict]:
         return [{"type": "function", "function": {"name": n, "description": self._spec(n)[0],
@@ -432,10 +451,6 @@ class ToolContext:
             proj = self.project_instructions()
             if proj:
                 parts.append(f"## Instrucciones del proyecto ({proj[1]})\n{proj[0]}")
-            todos = self.state.get("todos") or []
-            if todos:
-                mark = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}
-                parts.append("## Plan actual de la tarea\n" + "\n".join(f"- {mark.get(t['status'], '[ ]')} {t['content']}" for t in todos))
         if self.memory is not None:
             from .memory import SAVE_GUIDE
             parts.append(SAVE_GUIDE)
@@ -444,6 +459,10 @@ class ToolContext:
         if self.web:
             parts.append("Puedes buscar en internet con web_search y leer páginas con fetch_url. "
                          "Cuando uses información de la web, cita las fuentes con enlaces.")
+        todos = self.state.get("todos") or []  # lo más cambiante, al final: el resto del prompt se reutiliza de la caché
+        if self.agent and todos:
+            mark = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}
+            parts.append("## Plan actual de la tarea\n" + "\n".join(f"- {mark.get(t['status'], '[ ]')} {t['content']}" for t in todos))
         return "\n\n".join(parts)
 
     def project_instructions(self) -> tuple[str, str] | None:
@@ -925,14 +944,46 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         pass
 
 
-def parse_args(raw) -> dict:
+def repair_json(raw: str):
+    """Arregla los fallos típicos de modelos pequeños al escribir argumentos JSON. Devuelve un dict o None."""
+    t = (raw or "").strip()
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t)              # bloque de código alrededor
+    i, j = t.find("{"), t.rfind("}")
+    if i < 0 or j < i:
+        return None
+    t = t[i:j + 1]
+    candidates = [t, re.sub(r",\s*([}\]])", r"\1", t)]          # coma final
+    candidates.append(candidates[1].replace("'", '"'))           # comillas simples
+    candidates.append(re.sub(r'([{,]\s*)([A-Za-z_]\w*)\s*:', r'\1"\2":', candidates[2]))   # claves sin comillas
+    for c in candidates:
+        try:
+            v = json.loads(c)
+            if isinstance(v, dict):
+                return v
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def parse_args_ex(raw) -> tuple[dict, str | None]:
+    """(argumentos, error). Si el JSON no se puede leer ni reparar, devuelve el error para que el modelo lo corrija."""
     if isinstance(raw, dict):
-        return raw
+        return raw, None
+    if not (raw or "").strip():
+        return {}, None
     try:
-        v = json.loads(raw or "{}")
-        return v if isinstance(v, dict) else {}
-    except json.JSONDecodeError:
-        return {}
+        v = json.loads(raw)
+        return (v, None) if isinstance(v, dict) else ({}, "Los argumentos deben ser un objeto JSON {\"nombre\": valor}.")
+    except json.JSONDecodeError as e:
+        fixed = repair_json(raw)
+        if fixed is not None:
+            return fixed, None
+        return {}, (f"Los argumentos no son JSON válido ({e.msg}). Vuelve a llamar a la herramienta con un objeto JSON "
+                    "bien formado, con comillas dobles en claves y textos.")
+
+
+def parse_args(raw) -> dict:
+    return parse_args_ex(raw)[0]
 
 
 async def run_batch(ctx: ToolContext, calls: list[tuple[str, object]], sinks: list[list[str]]) -> AsyncIterator[dict]:
@@ -952,13 +1003,15 @@ async def run_batch(ctx: ToolContext, calls: list[tuple[str, object]], sinks: li
 
 async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) -> AsyncIterator[dict]:
     """Ejecuta una herramienta emitiendo eventos para la interfaz; deja el resultado en `sink`."""
-    args = parse_args(raw_args)
+    args, args_error = parse_args_ex(raw_args)
     yield {"type": "tool_call", "name": name,
            "args": raw_args if isinstance(raw_args, str) else json.dumps(raw_args, ensure_ascii=False)}
     result = None
     key = (name, json.dumps(args, sort_keys=True, ensure_ascii=False, default=str))
     prev = ctx.counts.get(key)
-    if prev and prev["n"] >= 3:  # misma llamada con el mismo resultado ya 3 veces: se corta el bucle
+    if args_error:
+        result = "Error: " + args_error
+    elif prev and prev["n"] >= 3:  # misma llamada con el mismo resultado ya 3 veces: se corta el bucle
         prev["blocked"] = prev.get("blocked", 0) + 1
         ctx.abort_loop = prev["blocked"] >= 2
         result = ("Has repetido esta misma llamada y has obtenido siempre el mismo resultado. No la repitas: "

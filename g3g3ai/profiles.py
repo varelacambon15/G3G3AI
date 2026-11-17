@@ -45,8 +45,8 @@ def profile_for(provider: str, model: str, local: bool, override: str = "auto") 
 
 
 # Herramientas que se ofrecen a un modelo pequeño (menos opciones = menos errores al elegir)
-SMALL_TOOLS = {"list_dir", "read_file", "grep_files", "edit_file", "write_file", "run_command", "todo_write",
-               "web_search", "fetch_url", "memory_save", "generate_image", "github", "delegate", "delegate_edit", "apply_patch"}
+SMALL_TOOLS = {"list_dir", "read_file", "grep_files", "edit_file", "write_file", "run_command", "web_search", "fetch_url",
+               "memory_save"}
 RESULT_SCALE = {"small": 0.5, "standard": 1.0, "full": 1.0}
 
 SMALL_AGENT_PROMPT = """\

@@ -593,6 +593,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                              image_gen=img, state=state_for(cid, conv), perm_mode=perm_mode,
                              workdir=conv.get("workdir") or None, checkpoint=turn_mid or last_user_id)
             tc.mcp = mcp_mgr if (agent and mcp_mgr.map) else None
+            tc.compact_specs = chosen_pid == LOCAL_PROVIDER
             tc.unattended = unattended
             tc.profile = profile_for(chosen_pid, (llama.status()["model"] or "") if chosen_pid == LOCAL_PROVIDER else chosen_model,
                                      chosen_pid == LOCAL_PROVIDER,
@@ -689,7 +690,14 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             else:
                                 yield sse(ev)
                         msgs = ([{"role": "system", "content": system}] if system else []) + history
-                        async for ev in with_keepalive(chat_stream(p, cmodel, msgs, opts, ctx)):
+                        run_opts = opts
+                        if cpid == LOCAL_PROVIDER:  # ajustes propios de los modelos locales
+                            run_opts = {**opts, "n_ctx": int((llama.params or {}).get("ctx") or 8192),
+                                        "thinking": bool(cfg["local_thinking"])}
+                            if ctx is not None and "temperature" not in body:
+                                run_opts["temperature"] = min(float(opts.get("temperature") or 0.7),
+                                                              float(cfg["agent_temperature"] or 0.3))
+                        async for ev in with_keepalive(chat_stream(p, cmodel, msgs, run_opts, ctx)):
                             if ev is None:  # latido: evita que proxies/túneles cierren una conexión en silencio
                                 yield ": ping\n\n"
                                 continue
@@ -957,6 +965,55 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     async def llama_load(body: dict):
         return await llama.load(body["path"], body.get("ctx"), body.get("threads"),
                                 body.get("gpu_layers"), body.get("extra_args"))
+
+    @app.post("/api/llama/selftest")
+    async def llama_selftest():
+        """Comprueba cómo trabaja el modelo local cargado con el agente: ¿llama herramientas?, ¿a qué velocidad?"""
+        if not llama.ready:
+            raise HTTPException(409, "Carga primero un modelo local")
+        ctx = ToolContext(files, cfg, None, agent=True, perm_mode="plan")
+        ctx.profile = profile_for(LOCAL_PROVIDER, llama.status()["model"] or "", True, cfg["agent_profile"] or "auto")
+        ctx.compact_specs = True
+        system = ctx.system_hint()
+        msgs = [{"role": "system", "content": system},
+                {"role": "user", "content": "Prueba de herramientas: llama a list_dir sin ruta y dime cuántos elementos hay."}]
+        opts = {"temperature": float(cfg["agent_temperature"] or 0.3), "max_tokens": 600,
+                "n_ctx": int((llama.params or {}).get("ctx") or 8192), "thinking": bool(cfg["local_thinking"])}
+        called = rescued = False
+        tps = ptps = None
+        err = None
+        t0 = time.time()
+        try:
+            async def run():
+                nonlocal called, rescued, tps, ptps
+                async for ev in chat_stream(provider_for(LOCAL_PROVIDER), "local", msgs, opts, ctx):
+                    if ev["type"] == "tool_call":
+                        called = True
+                    elif ev["type"] == "retract":
+                        rescued = True
+                    elif ev["type"] == "stats":
+                        tps = ev.get("tokens_per_second") or tps
+            await asyncio.wait_for(run(), 240)
+        except asyncio.TimeoutError:
+            err = "El modelo tardó más de 4 minutos en responder."
+        except (ProviderError, httpx.HTTPError, RuntimeError) as e:
+            err = str(e)
+        secs = round(time.time() - t0, 1)
+        if err:
+            verdict, msg = "error", err
+        elif called and not rescued:
+            verdict, msg = "ok", "Llama a las herramientas correctamente: puede trabajar como agente."
+        elif called:
+            verdict, msg = "text", ("Escribe las llamadas como texto en vez de usar el formato de herramientas; G3G3AI las rescata "
+                                    "y funciona, pero con menos fiabilidad. Un modelo con plantilla de herramientas va mejor.")
+        else:
+            verdict, msg = "none", ("No llamó a ninguna herramienta: sirve para charlar, pero no para el modo agente. "
+                                    "Prueba uno con soporte de herramientas (p. ej. Qwen2.5/Qwen3, Llama 3.1+, Mistral).")
+        if tps and tps < 5 and verdict != "error":
+            msg += f" Va lento ({tps:.1f} tok/s): prueba un modelo más pequeño, la cuantización Q4_K_M o activa la gráfica."
+        return {"verdict": verdict, "message": msg, "seconds": secs, "tokens_per_second": tps,
+                "profile": ctx.profile, "context": opts["n_ctx"], "tools_sent": len(ctx.names()),
+                "system_tokens_est": int(len(system) / 3.5)}
 
     @app.post("/api/llama/unload")
     async def llama_unload():

@@ -53,6 +53,8 @@ DEFAULTS: dict = {
     "monthly_budget_usd": 0,    # aviso cuando el gasto estimado del mes se acerca a esta cifra (0 = sin aviso)
     "mcp_servers": [],          # «nombre = [VAR=valor] comando args»: servidores MCP (herramientas externas)
     "command_allow": [],        # comandos que el agente puede ejecutar sin preguntar (exactos o con comodines *)
+    "agent_temperature": 0.3,   # temperatura de los modelos LOCALES cuando usan herramientas (llamar herramientas pide precisión)
+    "local_thinking": False,    # dejar que los modelos locales «piensen» antes de responder (más lento; mejor en problemas difíciles)
     "agent_profile": "auto",    # auto | small | standard | full: cuánto se le exige al modelo
     "llama_ctx": 0,   # 0 = automático según la memoria libre y el tamaño del modelo
     "llama_threads": 0,  # 0 = automático

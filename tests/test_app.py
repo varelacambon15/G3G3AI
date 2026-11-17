@@ -41,7 +41,7 @@ def env(tmp_path, monkeypatch):
     cfg = Config(tmp_path / "cfg" / "config.json")
     cfg.data.update({"file_roots": [str(home)], "write_roots": [str(home)], "models_dir": str(tmp_path / "models"),
                      "llama_server_path": str(fake), "llama_port": free_port(), "autoload_last_model": False,
-                     "localhost_without_token": False})
+                     "localhost_without_token": False, "agent_profile": "standard"})
     cfg.save()
     app = create_app(cfg)
     with TestClient(app) as client:
@@ -1786,3 +1786,57 @@ def test_scheduled_task_runs_unattended_and_denies_permissions(env):
     assert res and "Denegado" in res[0]["result"] and "segundo plano" in res[0]["result"]    # nadie puede aprobar
     assert client.patch(f"/api/tasks/{tid}", headers=h, json={"enabled": False}).json()["enabled"] is False
     assert client.delete(f"/api/tasks/{tid}", headers=h).status_code == 200
+
+
+def test_local_models_get_lean_requests(env):
+    """Modelos locales: pocas herramientas con descripciones cortas, temperatura baja, sin «pensar» y con caché de prompt."""
+    import json as _json
+    from g3g3ai.tools import ToolContext, compact_spec, ALL_SPECS
+    client, cfg, home, tmp = env
+    ctx = _ctx(cfg)
+    ctx.profile = "small"; ctx.compact_specs = True
+    ctx.subagent = lambda *a, **k: None
+    names = set(ctx.names())
+    assert names <= {"list_dir", "read_file", "grep_files", "edit_file", "write_file", "run_command", "web_search",
+                     "fetch_url", "memory_save"} and "edit_file" in names
+    assert not names & {"delegate", "delegate_edit", "apply_patch", "github", "todo_write"}
+    lean = len(_json.dumps(ctx.openai_specs()))
+    ctx.profile, ctx.compact_specs = "standard", False
+    assert lean < len(_json.dumps(ctx.openai_specs())) / 2                      # menos de la mitad de tokens de herramientas
+    desc, schema = compact_spec(*ALL_SPECS["edit_file"])
+    assert len(desc) <= 220 and all("description" not in v for v in schema["properties"].values())
+    assert schema["required"] == ["path"]                                      # lo imprescindible se conserva
+    # la petición real a llama-server: temperatura baja, sin pensar, con caché y max_tokens acotado al contexto
+    h = auth(cfg)
+    load_model(client, h)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "ver ajustes locales", "use_tools": True}))
+    seen = [e for e in evs if e["type"] == "content"]
+    assert seen and "AJUSTES:" in seen[0]["text"]
+    info = seen[0]["text"]
+    assert "temp=0.3" in info and "think=False" in info and "cache=True" in info and "np1" in info
+
+
+def test_selftest_reports_tool_support(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    assert client.post("/api/llama/selftest", headers=h).status_code == 409          # sin modelo cargado
+    load_model(client, h)
+    r = client.post("/api/llama/selftest", headers=h)
+    assert r.status_code == 200, r.text
+    j = r.json()
+    # el modelo falso no llama a herramientas con ese texto: el veredicto debe decirlo con claridad
+    assert j["verdict"] in ("ok", "text", "none") and j["message"] and j["tools_sent"] >= 3 and j["context"] > 0
+
+
+def test_tool_arguments_are_repaired_or_reported():
+    from g3g3ai.tools import parse_args_ex
+    ok = {"path": "a.txt", "n": 2}
+    assert parse_args_ex('{"path": "a.txt", "n": 2}') == (ok, None)
+    assert parse_args_ex('{"path": "a.txt", "n": 2,}') == (ok, None)                     # coma final
+    assert parse_args_ex("{'path': 'a.txt', 'n': 2}") == (ok, None)                      # comillas simples
+    assert parse_args_ex('```json\n{"path": "a.txt", "n": 2}\n```') == (ok, None)         # bloque de código
+    assert parse_args_ex("{path: \"a.txt\", n: 2}") == (ok, None)                        # claves sin comillas
+    assert parse_args_ex("") == ({}, None) and parse_args_ex({"a": 1}) == ({"a": 1}, None)
+    args, err = parse_args_ex("esto no es json")
+    assert args == {} and "JSON" in err
+    assert parse_args_ex("[1, 2]")[1] is not None                                         # no es un objeto

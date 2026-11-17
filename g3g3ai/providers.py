@@ -257,6 +257,8 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
     msgs = list(messages)
     local = p["base_url"].startswith(("http://127.0.0.1", "http://localhost"))
     max_tokens = max(int(opts.get("max_tokens") or 0), OPENAI_MIN_TOKENS)
+    if local and opts.get("n_ctx"):  # nunca pedir más salida de la que cabe: lo demás es contexto para la conversación
+        max_tokens = max(512, min(int(opts.get("max_tokens") or 2048), int(opts["n_ctx"]) // 2))
     continuations = nudges = verifies = 0
     used_tools = False
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), trust_env=not local) as c:
@@ -266,6 +268,10 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                     "temperature": opts.get("temperature"), "max_tokens": max_tokens,
                     "stream_options": {"include_usage": True}}
             body = {k: v for k, v in body.items() if v is not None}
+            if local:
+                body["cache_prompt"] = True  # reutiliza el prefijo ya procesado: el turno siguiente no relee todo el prompt
+                if not opts.get("thinking"):
+                    body["chat_template_kwargs"] = {"enable_thinking": False}  # Qwen3 y similares: sin «pensar» (más rápido)
             if ctx:
                 body["tools"] = ctx.openai_specs()
             content, calls, finish, details = "", {}, None, []

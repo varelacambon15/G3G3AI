@@ -119,6 +119,7 @@ class LlamaManager:
                 "--host", "127.0.0.1", "--port", str(self.cfg["llama_port"]),
                 "-c", str(ctx), "-t", str(threads),
                 "-ngl", str(gpu_layers),
+                "-np", "1",  # una sola ranura: todo el contexto es para la conversación (con varias se reparte)
                 "--jinja",  # plantillas de chat del modelo + llamadas a herramientas
             ] + shlex.split(extra or "", posix=sys.platform != "win32")
             mmproj = self.find_mmproj(model_path) if "mmproj" not in Path(model_path).name.lower() else None

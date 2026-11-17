@@ -1076,6 +1076,16 @@ function renderLlamaStatus() {
   box.append(h("div", { class: "row" },
     h("span", { class: "grow" }, h("b", {}, { ready: "Listo", loading: "Cargando…", error: "Error", stopped: "Ningún modelo cargado" }[l.state]),
       l.model ? ` — ${l.model}` : "", l.params?.ctx ? h("span", { class: "sub muted" }, ` (ctx ${l.params.ctx}, ${l.params.threads} hilos)`) : null),
+    l.state === "ready" ? h("button", { class: "ghost", title: "Comprueba si el modelo sabe usar herramientas y a qué velocidad va", onclick: async (ev) => {
+      const b = ev.target; b.disabled = true; b.textContent = "Probando…";
+      try {
+        const r = await api("/api/llama/selftest", { method: "POST" });
+        const icon = { ok: "✅", text: "⚠", none: "❌", error: "❌" }[r.verdict];
+        alert(`${icon} ${r.message}\n\nTiempo: ${r.seconds} s` + (r.tokens_per_second ? ` · ${r.tokens_per_second.toFixed(1)} tok/s` : "")
+          + `\nPerfil: ${r.profile} · ${r.tools_sent} herramientas · contexto ${r.context}`);
+      } catch (e) { alert("❌ " + e.message); }
+      b.disabled = false; b.textContent = "🧪 Probar con el agente";
+    } }, "🧪 Probar con el agente") : null,
     l.state === "ready" || l.state === "loading" ? h("button", { class: "danger", onclick: async () => { await api("/api/llama/unload", { method: "POST" }); refreshStatus(); refreshModels(); loadProviders(); } }, "Descargar de memoria") : null));
   if (l.error) box.append(h("pre", { class: "logs error" }, l.error));
   if (!l.binary) box.append(engineBox());
@@ -1504,6 +1514,8 @@ const FIELDS = [
   ["web_api_key", "Búsqueda web: clave API", "password", "Sólo para Brave o Tavily."],
   ["hf_token", "Token de Hugging Face (opcional)", "password", "Sólo para modelos restringidos."],
   ["github_token", "Token de GitHub (opcional)", "password", "Permite a la IA leer issues, PR y CI, y —pidiendo permiso— crear issues y pull requests. Crea uno en github.com/settings/tokens con acceso a los repos que quieras."],
+  ["agent_temperature", "Modelos locales: temperatura con herramientas", "number", "Más baja = llamadas a herramientas más fiables. 0.2–0.4 suele ir bien."],
+  ["local_thinking", "Modelos locales: dejarles «pensar»", "checkbox", "Qwen3 y similares razonan antes de responder: mejor en problemas difíciles pero mucho más lento. Desactivado = respuestas directas."],
   ["agent_profile", "Exigencia del agente según el modelo", "profile", "Automático ajusta herramientas y reglas a la potencia del modelo (pequeño, mediano, grande). Fuérzalo si un modelo local rinde mejor o peor de lo esperado."],
   ["localhost_without_token", "Este mismo equipo entra sin contraseña", "checkbox"],
   ["port", "Puerto", "number", "Requiere reiniciar el servicio."],

@@ -221,6 +221,13 @@ basedatos = DB_URL=postgres://… npx -y @modelcontextprotocol/server-postgres
 ```
 Sus herramientas aparecen al agente como `mcp__servidor__herramienta`. **Cada llamada te pide permiso** (puedes marcar «Permitir siempre aquí»), no se usan en modo Plan y un servidor roto no afecta a los demás. «Probar servidores» muestra su estado y sus herramientas. Los servidores se ejecutan con tus permisos de usuario: instala sólo los que conozcas.
 
+### 🏠 Modelos locales
+Los modelos locales reciben un trato propio para que funcionen mejor con el agente:
+- **Menos carga por turno:** un modelo pequeño ve solo 8 herramientas con descripciones cortas (~750 tokens en vez de ~2.200) y un prompt más corto; el plan y lo cambiante va al final para reutilizar la caché del prompt.
+- **Más fiables:** temperatura baja con herramientas (Ajustes → «temperatura con herramientas», 0.3), JSON de las llamadas reparado si el modelo lo escribe mal (comas finales, comillas simples…) y error claro si no se puede.
+- **Más rápidos:** `llama-server` con una sola ranura (todo el contexto es para tu conversación), caché de prompt y sin «pensar» por defecto en Qwen3 y similares (actívalo en Ajustes si prefieres razonamiento a costa de velocidad). La salida pedida nunca supera la mitad del contexto.
+- **🧪 Probar con el agente** (Modelos → modelo cargado): comprueba si el modelo llama bien a las herramientas y a qué velocidad va, y te dice qué hacer si no.
+
 ### 🎚 Se adapta al modelo
 Según el modelo elegido (o lo que fijes en Ajustes → «Exigencia del agente»):
 - **Pequeño** (≤8B o desconocido en local): pocas herramientas, reglas cortas, una llamada a la vez y salidas de herramientas más pequeñas, para que acierte más.

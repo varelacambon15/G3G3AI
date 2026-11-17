@@ -3,6 +3,7 @@
 Si se envían herramientas y el último mensaje del usuario contiene 'lista', pide list_dir."""
 import argparse
 import json
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ap = argparse.ArgumentParser()
@@ -127,6 +128,12 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(b"data: [DONE]\n\n"); return
         if last["role"] == "tool" and "hallazgo-123" in str(last["content"]):
             self.chunk({"choices": [{"delta": {"content": "El ayudante encontró: hallazgo-123"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if "ver ajustes locales" in str(first_user):  # devuelve cómo le llegó la petición
+            kw = req.get("chat_template_kwargs") or {}
+            info = (f"AJUSTES: temp={req.get('temperature')} think={kw.get('enable_thinking')} cache={req.get('cache_prompt')} "
+                    f"max={req.get('max_tokens')} tools={len(req.get('tools') or [])} np{sys.argv[sys.argv.index('-np') + 1] if '-np' in sys.argv else '?'}")
+            self.chunk({"choices": [{"delta": {"content": info}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
         if "error a mitad" in str(first_user):  # el proveedor falla después de haber enviado texto
             self.chunk({"choices": [{"delta": {"content": "empiezo bien… "}}]})
