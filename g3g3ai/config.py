@@ -14,7 +14,7 @@ from .agent_prompt import BASE_PROMPT, OLD_DEFAULTS
 
 APP = "g3g3ai"
 HOME = Path.home()
-CONFIG_VERSION = 5
+CONFIG_VERSION = 6
 
 
 def _default_dirs() -> tuple[Path, Path]:
@@ -48,7 +48,7 @@ DEFAULTS: dict = {
     # llama.cpp
     "llama_server_path": "",  # vacío = autodetectar
     "llama_port": 8801,
-    "llama_ctx": 8192,
+    "llama_ctx": 0,   # 0 = automático según la memoria libre y el tamaño del modelo
     "llama_threads": 0,  # 0 = automático
     "llama_gpu_layers": 0,  # >0 sólo si compilaste con Vulkan
     "llama_extra_args": "",
@@ -235,6 +235,8 @@ class Config:
         d = self.data
         if d.get("config_version", 1) >= CONFIG_VERSION:
             return False
+        if d.get("llama_ctx") == 8192:  # v6: el antiguo valor por defecto pasa a ser «automático»
+            d["llama_ctx"] = 0
         if d.get("default_system_prompt") in OLD_DEFAULTS:  # v5: instrucciones por defecto mejoradas
             d["default_system_prompt"] = BASE_PROMPT
         if d.get("config_version", 1) < 4:  # v4: proveedor Ollama

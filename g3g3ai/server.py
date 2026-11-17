@@ -417,10 +417,14 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             if not (agent or use_web or mem or img):
                 return None
             delegate = local_complete if (agent and chosen_pid != LOCAL_PROVIDER and llama.ready) else None
-            return ToolContext(files, cfg, delegate, agent=agent, web=use_web,
-                               session_allow=session_allow.setdefault(cid, set()), memory=mem, source=cid,
-                               image_gen=img, state=state_for(cid, conv), perm_mode=perm_mode,
-                               workdir=conv.get("workdir") or None)
+            tc = ToolContext(files, cfg, delegate, agent=agent, web=use_web,
+                             session_allow=session_allow.setdefault(cid, set()), memory=mem, source=cid,
+                             image_gen=img, state=state_for(cid, conv), perm_mode=perm_mode,
+                             workdir=conv.get("workdir") or None)
+            if chosen_pid == LOCAL_PROVIDER:  # ~1/4 del contexto (en tokens ≈ 4 caracteres) como máximo por resultado
+                n_ctx = int((llama.params or {}).get("ctx") or 8192)
+                tc.result_limit = max(3000, n_ctx)
+            return tc
 
         async def gen():
             content, reasoning, trace, stats, route = "", "", [], {}, None

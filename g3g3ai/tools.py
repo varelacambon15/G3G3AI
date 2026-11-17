@@ -234,6 +234,7 @@ class ToolContext:
         self.state.setdefault("todos", [])
         self.perm_mode = perm_mode if perm_mode in ("normal", "plan", "edits") else "normal"
         self.workdir_override = workdir
+        self.result_limit: int | None = None  # caracteres máximos por resultado (se fija en modelos locales)
         self.todos_dirty = False
         self.counts: dict = {}       # llamadas idénticas repetidas en este turno
         self.abort_loop = False
@@ -786,6 +787,10 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
             prev["n"] += 1
         else:
             ctx.counts[key] = {"n": 1, "res": result}
+    if ctx.result_limit and len(result) > ctx.result_limit:  # el contexto local es pequeño: no lo llenes de una sola salida
+        keep = ctx.result_limit
+        result = (result[: keep * 2 // 3] + f"\n[… recortado: {len(result) - keep} caracteres; pide una parte concreta "
+                  "(rango de líneas, grep) …]\n" + result[-(keep // 3):])
     yield {"type": "tool_result", "name": name, "result": result[:TOOL_RESULT_PREVIEW]}
     if ctx.todos_dirty:
         ctx.todos_dirty = False

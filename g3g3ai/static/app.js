@@ -1243,7 +1243,7 @@ const FIELDS = [
   ["max_tokens", "Máx. tokens por respuesta", "number"],
   ["models_dir", "Carpeta de modelos", "text"],
   ["llama_server_path", "Ruta de llama-server", "text", "Vacío = autodetectar (~/.local/share/g3g3ai/llama.cpp)"],
-  ["llama_ctx", "Contexto por defecto", "number", "Más contexto = más RAM. 8192 es razonable con 8 GB."],
+  ["llama_ctx", "Contexto por defecto", "number", "0 = automático: se calcula con la memoria libre y el tamaño del modelo. Más contexto = más RAM."],
   ["llama_threads", "Hilos (0 = auto)", "number"],
   ["llama_gpu_layers", "Capas en GPU", "number", "Sólo si compilaste llama.cpp con Vulkan (Adreno)."],
   ["llama_extra_args", "Argumentos extra de llama-server", "text", "p.ej. --flash-attn on --cache-type-k q8_0"],

@@ -193,6 +193,46 @@ def _soc() -> str:
     return ""
 
 
+def _ram_available() -> int:
+    """RAM libre ahora mismo (bytes); 0 si no se puede saber."""
+    if sys.platform == "win32":
+        class MS(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        st = MS()
+        st.dwLength = ctypes.sizeof(MS)
+        try:
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st))  # type: ignore[attr-defined]
+            return int(st.ullAvailPhys)
+        except (AttributeError, OSError):
+            return 0
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return int(_ram() * 0.6)
+
+
+def auto_ctx(model_bytes: int, gpu_layers: int, vram_bytes: int = 0, ram_free_bytes: int | None = None,
+             extra_args: str = "") -> int:
+    """Contexto (tokens) que cabe sin quedarse sin memoria: lo que sobra tras el modelo, entre lo que cuesta
+    cada token de caché (≈0,03 MB por GB de modelo en f16; la mitad con caché q8)."""
+    gb = 1024 ** 3
+    model = model_bytes / gb
+    if gpu_layers and vram_bytes:
+        free = vram_bytes / gb - model - 0.8
+    else:
+        free = (_ram_available() if ram_free_bytes is None else ram_free_bytes) / gb - model - 1.5
+    per_token_mb = max(0.03 * model, 0.02) * (0.5 if "q8_0" in extra_args else 1.0)
+    tokens = int(max(free, 0) * 1024 / per_token_mb)
+    return max(4096, min(32768, tokens // 1024 * 1024))
+
+
 def detect() -> dict:
     arch = platform.machine().lower()
     cpu = _cpu_windows() if sys.platform == "win32" else _cpu_linux()

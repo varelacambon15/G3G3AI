@@ -102,10 +102,18 @@ class LlamaManager:
                 self.state, self.error = "error", f"No existe el modelo: {model_path}"
                 return self.status()
 
-            ctx = int(ctx or self.cfg["llama_ctx"])
             threads = int(threads or self.cfg["llama_threads"] or default_threads())
             gpu_layers = int(gpu_layers if gpu_layers is not None else self.cfg["llama_gpu_layers"])
             extra = extra_args if extra_args is not None else self.cfg["llama_extra_args"]
+            ctx = int(ctx or self.cfg["llama_ctx"] or 0)
+            if not ctx:  # automático
+                from . import hardware
+                try:
+                    gpus = await asyncio.to_thread(lambda: [g for g in hardware.detect().get("gpus", []) if g.get("dedicated")])
+                except Exception:
+                    gpus = []
+                vram = max((g.get("vram") or 0 for g in gpus), default=0)
+                ctx = hardware.auto_ctx(Path(model_path).stat().st_size, gpu_layers, vram, extra_args=extra or "")
             cmd = [
                 binary, "-m", model_path,
                 "--host", "127.0.0.1", "--port", str(self.cfg["llama_port"]),

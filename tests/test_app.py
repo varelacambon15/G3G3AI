@@ -400,7 +400,7 @@ def test_config_migration_v2_to_v3(tmp_path):
     p = tmp_path / "config.json"
     p.write_text(json.dumps({"config_version": 2, "token": "t", "agent_workdir": "/x/trabajo", "ai_write": "ask"}))
     c = Config(p)
-    assert c["write_roots"] == ["/x/trabajo"] and c["config_version"] == 5
+    assert c["write_roots"] == ["/x/trabajo"] and c["config_version"] == 6
     assert c.provider("ollama")["base_url"] == "http://127.0.0.1:11434/v1"  # v4 añade Ollama
     assert "~/.ssh" in c["blocked_paths"] and ".env" in c["blocked_paths"]
     p.write_text(json.dumps({"config_version": 1, "token": "t", "allow_ai_file_write": True}))
@@ -1379,3 +1379,14 @@ def test_keepalive_emits_pings_during_silence():
         return [ev async for ev in with_keepalive(slow(), every=0.1)]
     out = asyncio.run(run())
     assert [e["text"] for e in out if e] == ["a", "b"] and out.count(None) >= 2
+
+
+def test_auto_ctx_scales_with_memory_and_results_are_capped():
+    from g3g3ai.hardware import auto_ctx, GB
+    # portátil con 14 GB libres y un 8B (≈5 GB): llega al máximo
+    assert auto_ctx(5 * GB, 0, ram_free_bytes=14 * GB) == 32768
+    # RX 580 con 4 GB y modelo de 2,5 GB en la gráfica: contexto moderado
+    assert 4096 <= auto_ctx(int(2.5 * GB), 99, vram_bytes=4 * GB) <= 12288
+    # sin memoria libre: mínimo razonable
+    assert auto_ctx(5 * GB, 0, ram_free_bytes=GB) == 4096
+    assert auto_ctx(5 * GB, 99, 6 * GB, extra_args="--cache-type-k q8_0") >= auto_ctx(5 * GB, 99, 6 * GB)

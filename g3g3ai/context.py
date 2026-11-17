@@ -255,6 +255,6 @@ class HistoryBuilder:
 
     def budget(self, pid: str, max_tokens: int) -> int:
         if pid == "local":
-            ctx = int((self.llama.params or {}).get("ctx") or self.cfg["llama_ctx"])
+            ctx = int((self.llama.params or {}).get("ctx") or self.cfg["llama_ctx"] or 8192)
             return max(1024, int(ctx * 0.8) - max_tokens)
         return int(self.cfg["context_budget"] or 60000)
