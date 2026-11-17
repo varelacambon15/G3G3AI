@@ -382,4 +382,6 @@ body.code-mode .code-panel { display: flex; }
 @media (max-width: 900px) { body.code-mode .code-panel { display: none; } }
 .ctx-meter { font-size: 11px; color: var(--muted); padding: 2px 8px; border-radius: 10px; background: var(--hover); white-space: nowrap; }
 .ctx-meter.warn { color: #b8650a; } .ctx-meter.full { color: #c0392b; font-weight: 600; }
+.usage-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
+.usage-table th, .usage-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
 .live-out { margin: 8px 0; max-height: 220px; overflow: auto; padding: 8px 10px; font: 12px/1.45 ui-monospace, Consolas, monospace; background: var(--code); border-radius: 8px; white-space: pre-wrap; opacity: .9; }

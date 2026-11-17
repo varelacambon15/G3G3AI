@@ -269,6 +269,7 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
             if ctx:
                 body["tools"] = ctx.openai_specs()
             content, calls, finish, details = "", {}, None, []
+            usage_seen = None
             for attempt in range(3):
                 try:
                     async with c.stream("POST", url, json=body, headers=headers) as r:
@@ -285,6 +286,12 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                                 u = j["usage"]
                                 yield {"type": "stats", "tokens": u.get("completion_tokens"),
                                        "prompt_tokens": u.get("prompt_tokens")}
+                            u = j.get("usage") or {}
+                            tin, tout = u.get("prompt_tokens"), u.get("completion_tokens")
+                            if tin is None and j.get("timings"):
+                                tin, tout = j["timings"].get("prompt_n"), j["timings"].get("predicted_n")
+                            if tin is not None or tout is not None:
+                                usage_seen = (tin or 0, tout or 0)
                             if not j.get("choices"):
                                 continue
                             finish = j["choices"][0].get("finish_reason") or finish
@@ -315,6 +322,8 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                                                           "incompleta. Pulsa «Continuar».]"}
                         return
                     raise
+            if usage_seen:
+                yield {"type": "usage", "input": usage_seen[0], "output": usage_seen[1]}
             if ctx and not calls and content:
                 found, cleaned = extract_text_tool_calls(content, set(ctx.names()))
                 if found:  # el modelo escribió la llamada como texto: se retira del chat y se ejecuta de verdad
@@ -398,10 +407,16 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
                 body["tools"] = ctx.anthropic_specs()
             blocks: dict[int, dict] = {}
             stop_reason = None
+            a_in = 0
             async with c.stream("POST", url, json=body, headers=headers) as r:
                 await _raise_for(r)
                 async for j in _sse(r):
                     t = j.get("type")
+                    if t == "message_start":
+                        u0 = (j.get("message") or {}).get("usage") or {}
+                        a_in = (u0.get("input_tokens") or 0) + (u0.get("cache_read_input_tokens") or 0) \
+                            + (u0.get("cache_creation_input_tokens") or 0)
+                        continue
                     if t == "content_block_start":
                         b = dict(j["content_block"])
                         if b.get("type") == "tool_use":
@@ -419,7 +434,8 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
                     elif t == "message_delta":
                         stop_reason = j.get("delta", {}).get("stop_reason")
                         if j.get("usage"):
-                            yield {"type": "stats", "tokens": j["usage"].get("output_tokens")}
+                            yield {"type": "stats", "tokens": j["usage"].get("output_tokens"), "prompt_tokens": a_in or None}
+                            yield {"type": "usage", "input": a_in, "output": j["usage"].get("output_tokens") or 0}
                     elif t == "error":
                         raise ProviderError(j.get("error", {}).get("message", "error"))
             uses = [b for _, b in sorted(blocks.items()) if b.get("type") == "tool_use"]

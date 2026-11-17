@@ -921,6 +921,9 @@ def test_cut_off_reasons_are_visible_and_recoverable(env):
     evs = sse(client.post("/api/chat", headers=h, json={"message": "tope tokens"}))
     assert "".join(e["text"] for e in evs if e["type"] == "content") == "respuesta con tope"
     assert any(e["type"] == "status" and "3000" in e["text"] for e in evs)
+    cid = next(e["conversation_id"] for e in evs if e["type"] == "start")
+    last = client.get(f"/api/conversations/{cid}", headers=h).json()["messages"][-1]
+    assert last["meta"]["usage"] == {"in": 120, "out": 7, "cost": 0.0}     # uso registrado por respuesta
 
 
 def test_cap_from_error_and_hints():
@@ -1610,3 +1613,25 @@ def test_checkpoint_endpoints_rewind_files_and_messages(env):
     msgs = client.get(f"/api/conversations/{cid}", headers=h).json()["messages"]
     assert [m["id"] for m in msgs] == [m1, m2]                       # «segundo» desapareció
     assert client.post(f"/api/conversations/{cid}/restore", headers=h, json={}).status_code == 400
+
+
+def test_usage_costs_and_budget(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    from g3g3ai import costs
+    assert costs.price_for(cfg, "local", "x") == (0.0, 0.0)
+    assert costs.price_for(cfg, "openrouter", "anthropic/claude-sonnet-9") == (3.0, 15.0)
+    assert costs.price_for(cfg, "x", "modelo-raro") is None               # sin precio: se cuentan tokens, no coste
+    cfg.set("model_prices", ["modelo-raro = 1, 2"])
+    assert costs.cost_of(cfg, "x", "modelo-raro", 1_000_000, 500_000) == 2.0
+    assert costs.parse_prices(["mal formado"]) == {}
+    cid = client.post("/api/conversations", headers=h, json={}).json()["id"]
+    db = client.app.state.db
+    db.add_message(cid, "assistant", "a", meta={"provider": "x", "model": "modelo-raro", "usage": {"in": 1000, "out": 500, "cost": 0.002}})
+    db.add_message(cid, "assistant", "b", meta={"provider": "y", "model": "sin-precio", "usage": {"in": 10, "out": 5, "cost": None}})
+    db.add_message(cid, "assistant", "c", meta={"provider": "local", "model": "q"})          # sin usage: se ignora
+    cfg.set("monthly_budget_usd", 0.004)
+    u = client.get("/api/usage", headers=h).json()
+    assert u["total"]["input"] == 1010 and abs(u["total"]["cost"] - 0.002) < 1e-9
+    assert u["models"]["y · sin-precio"]["unpriced"] is True
+    assert u["budget_pct"] == 50

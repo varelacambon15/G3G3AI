@@ -117,6 +117,7 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(b"data: [DONE]\n\n"); return
         if "tope tokens" in str(first_user):
             self.chunk({"choices": [{"delta": {"content": "respuesta con tope"}, "finish_reason": "stop"}]})
+            self.chunk({"choices": [], "usage": {"prompt_tokens": 120, "completion_tokens": 7}})
             self.wfile.write(b"data: [DONE]\n\n"); return
         if "texto largo" in str(first_user):  # simula un corte por longitud y su continuación
             if "límite de longitud" in str(last["content"]):

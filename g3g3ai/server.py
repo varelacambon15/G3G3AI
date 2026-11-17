@@ -10,6 +10,7 @@ import platform
 import re
 import socket
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -27,7 +28,7 @@ from .hub import Hub
 from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
-from . import profiles
+from . import costs, profiles
 from .profiles import profile_for
 from .undo import UndoJournal
 from .engine import EngineInstaller
@@ -285,6 +286,12 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         session_allow.pop(cid, None)
         return {"ok": True}
 
+    @app.get("/api/usage")
+    async def usage(days: int = 0):
+        """Tokens y coste estimado: este mes por defecto, o los últimos `days` días."""
+        since = time.time() - days * 86400 if days else None
+        return await asyncio.to_thread(costs.summary, db, cfg, since)
+
     @app.get("/api/conversations/{cid}/context")
     async def conversation_context(cid: str, provider: str = LOCAL_PROVIDER):
         conv = db.get_conversation(cid)
@@ -505,6 +512,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             out_files: list[str] = []
             todos: list = []
             finish = None
+            used_in = used_out = 0
             yield sse({"type": "start", "conversation_id": cid})
             if direct_image is not None:  # «/imagen …»: sin pasar por el modelo de texto
                 yield sse({"type": "status", "text": "🎨 Generando imagen…"})
@@ -542,6 +550,10 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             if ev is None:  # latido: evita que proxies/túneles cierren una conexión en silencio
                                 yield ": ping\n\n"
                                 continue
+                            if ev["type"] == "usage":
+                                used_in += ev["input"] or 0
+                                used_out += ev["output"] or 0
+                                continue
                             if ev["type"] == "finish":
                                 finish = ev["reason"]
                             elif ev["type"] == "retract":  # el modelo había escrito una llamada como texto
@@ -576,8 +588,17 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             "route": route.get("reason") if route else None,
                             "stats": stats, "tools": trace or None, "images": made or None,
                             "files": out_files or None, "todos": todos or None, "mode": perm_mode,
-                            "finish": finish}
+                            "finish": finish,
+                            "usage": ({"in": used_in, "out": used_out,
+                                       "cost": costs.cost_of(cfg, route["provider"] if route else pid,
+                                                             route["model"] if route else model, used_in, used_out)}
+                                      if (used_in or used_out) else None)}
                     stats["message_id"] = db.add_message(cid, "assistant", content, reasoning or None, meta)
+            if cfg["monthly_budget_usd"]:
+                s = await asyncio.to_thread(costs.summary, db, cfg)
+                if s["budget_pct"] is not None and s["budget_pct"] >= 80:
+                    yield sse({"type": "budget", "pct": s["budget_pct"], "cost": round(s["total"]["cost"], 2),
+                               "limit": s["budget"]})
             yield sse({"type": "done", **stats})
 
         return StreamingResponse(gen(), media_type="text/event-stream",

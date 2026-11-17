@@ -120,6 +120,11 @@ class DB:
         self._q("UPDATE conversations SET updated=? WHERE id=?", (now, cid))
         return cur.lastrowid
 
+    def assistant_usage(self, since: float) -> list[dict]:
+        rows = self._q("SELECT meta, created FROM messages WHERE role='assistant' AND created>=? AND meta LIKE '%\"usage\"%'",
+                       (since,)).fetchall()
+        return [{"meta": json.loads(r["meta"]), "created": r["created"]} for r in rows]
+
     def delete_messages_from(self, cid: str, message_id: int) -> None:
         """Borra un mensaje y todos los posteriores (para editar/regenerar)."""
         self._q("DELETE FROM messages WHERE conv_id=? AND id>=?", (cid, message_id))

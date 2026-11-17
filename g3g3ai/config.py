@@ -49,6 +49,8 @@ DEFAULTS: dict = {
     "llama_server_path": "",  # vacío = autodetectar
     "llama_port": 8801,
     "github_token": "",         # token de GitHub para la herramienta `github` (o variable GITHUB_TOKEN)
+    "model_prices": [],         # «modelo = entrada, salida» ($ por millón de tokens); sobrescribe los precios orientativos
+    "monthly_budget_usd": 0,    # aviso cuando el gasto estimado del mes se acerca a esta cifra (0 = sin aviso)
     "command_allow": [],        # comandos que el agente puede ejecutar sin preguntar (exactos o con comodines *)
     "agent_profile": "auto",    # auto | small | standard | full: cuánto se le exige al modelo
     "llama_ctx": 0,   # 0 = automático según la memoria libre y el tamaño del modelo

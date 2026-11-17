@@ -721,7 +721,8 @@ function messageEl(m) {
         onclick: () => { if (!S.streaming) send("Continúa exactamente donde lo dejaste.", []); } }, "▶ Continuar") : null,
       h("span", { title: m.meta?.route || "" }, (m.meta?.provider === "local" ? "💻 " : m.meta?.provider === "imagen" ? "🎨 " : "☁ ") + (m.meta?.model || "")),
       m.meta?.route ? h("span", {}, "🔀 " + m.meta.route) : null,
-      st.tokens_per_second ? h("span", {}, `${st.tokens_per_second.toFixed(1)} tok/s`) : null));
+      st.tokens_per_second ? h("span", {}, `${st.tokens_per_second.toFixed(1)} tok/s`) : null,
+      m.meta?.usage ? h("span", { title: "Tokens de entrada/salida de toda la respuesta (incluidas las herramientas)" }, `↑${m.meta.usage.in} ↓${m.meta.usage.out}` + (m.meta.usage.cost ? ` · ~$${m.meta.usage.cost.toFixed(m.meta.usage.cost < 0.01 ? 4 : 3)}` : "")) : null));
   }
   return el;
 }
@@ -885,6 +886,7 @@ async function send(text, attachments, isContinue = false) {
         else if (ev.type === "file") extra.files.push(ev.path);
         else if (ev.type === "compacted") extra.compacted = ev.messages;
         else if (ev.type === "route_fallback") extra.fallbacks.push(ev.message);
+        else if (ev.type === "budget") toast(ev.pct >= 100 ? `⚠ Has superado tu límite mensual (${ev.cost} de ${ev.limit} $)` : `Gasto del mes: ${ev.pct}% de tu límite (${ev.cost} de ${ev.limit} $)`, 7000);
         else if (ev.type === "error") errorMsg = ev.message;
         if (S.code && (ev.type === "tool_call" || ev.type === "tool_result" || ev.type === "todos")) {
           renderCodePanel({ tools, todos: extra.todos }); if (ev.type === "tool_result") refreshChanges();
@@ -1433,6 +1435,8 @@ const FIELDS = [
   ["agent_max_steps", "Pasos máximos del agente por respuesta", "number", "Cada llamada a una herramienta es un paso. Si se agota, escribe «continúa»."],
   ["agent_workdir", "Carpeta de trabajo del agente", "text", "Debe estar dentro de las carpetas que la IA puede modificar."],
   ["ai_game_write", "🎮 La IA puede trabajar con los juegos de Steam", "checkbox", "Lee y, pidiendo permiso cada vez, modifica las carpetas de los juegos y sus prefijos de Proton. Antes de cambiar un archivo guarda una copia «.g3g3ai-original»."],
+  ["monthly_budget_usd", "Límite de gasto mensual estimado ($)", "number", "Te avisa al llegar al 80% y al 100%. 0 = sin aviso."],
+  ["model_prices", "Precios por modelo ($ por millón de tokens, uno por línea)", "lines", "Formato: «modelo = entrada, salida», p.ej. «deepseek-chat = 0.27, 1.10». Sobrescribe los precios orientativos."],
   ["command_allow", "Comandos permitidos sin preguntar (uno por línea)", "lines", "Se ejecutan sin pedir confirmación (salvo los peligrosos). Puedes usar * como comodín, p.ej. «npm test*» o «git status». Un comando encadenado (con ; & | >) sólo se admite si coincide exactamente."],
   ["write_roots", "Carpetas que la IA puede modificar (una por línea)", "lines", "Añade aquí tus proyectos. Fuera de estas carpetas la IA sólo puede leer."],
   ["blocked_paths", "Rutas protegidas (una por línea)", "lines", "Nadie puede verlas desde G3G3AI, ni la IA ni la interfaz. Sin barra = patrón de nombre (p.ej. .env, *.pem)."],
@@ -1445,6 +1449,22 @@ const FIELDS = [
   ["localhost_without_token", "Este mismo equipo entra sin contraseña", "checkbox"],
   ["port", "Puerto", "number", "Requiere reiniciar el servicio."],
 ];
+async function renderUsage() {
+  const box = $("#usage-box"); box.innerHTML = "";
+  try {
+    const u = await api("/api/usage");
+    const money = (v) => "$" + v.toFixed(v < 1 ? 3 : 2);
+    const k = (n) => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : n;
+    box.append(h("p", {}, `Este mes: `, h("b", {}, money(u.total.cost)), ` estimados · ${k(u.total.input)} tokens de entrada · ${k(u.total.output)} de salida`
+      + (u.budget ? ` · límite ${money(u.budget)} (${u.budget_pct}%)` : "")));
+    const rows = Object.entries(u.models).sort((a, b) => b[1].cost - a[1].cost);
+    if (!rows.length) box.append(h("p", { class: "muted" }, "Todavía no hay uso registrado este mes."));
+    else box.append(h("table", { class: "usage-table" }, h("tr", {}, ["Modelo", "Respuestas", "Entrada", "Salida", "Coste"].map((t) => h("th", {}, t))),
+      rows.map(([name, m]) => h("tr", {}, h("td", {}, name), h("td", {}, m.calls), h("td", {}, k(m.input)), h("td", {}, k(m.output)),
+        h("td", {}, m.unpriced ? "sin precio" : money(m.cost))))));
+    box.append(h("p", { class: "muted" }, "Los precios son orientativos; ajústalos en «Precios por modelo». Los modelos locales cuestan 0."));
+  } catch (e) { box.append(h("p", { class: "muted" }, "No se pudo cargar el uso: " + e.message)); }
+}
 async function loadSettings() {
   S.settings = await api("/api/settings");
   await refreshStatus();
@@ -1467,6 +1487,7 @@ async function loadSettings() {
   loadMemory();
   renderSync();
   renderDevtools();
+  renderUsage();
 
   const f = $("#settings-form"); f.innerHTML = "";
   for (let [key, label, type, hint] of FIELDS) {
