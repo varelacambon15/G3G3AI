@@ -28,7 +28,7 @@ from .hub import Hub
 from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
-from . import costs, profiles
+from . import backup, costs, profiles
 from .profiles import profile_for
 from .undo import UndoJournal
 from .engine import EngineInstaller
@@ -285,6 +285,26 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         session_state.pop(cid, None)
         session_allow.pop(cid, None)
         return {"ok": True}
+
+    @app.post("/api/backup/export")
+    async def backup_export(body: dict):
+        try:
+            data = await asyncio.to_thread(backup.export_bytes, sync, cfg, str(body.get("password") or ""),
+                                           bool(body.get("conversations")))
+        except backup.BackupError as e:
+            raise HTTPException(400, str(e))
+        name = time.strftime("g3g3ai-%Y%m%d.g3bak")
+        return Response(data, media_type="application/octet-stream",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @app.post("/api/backup/import")
+    async def backup_import(body: dict):
+        import base64 as b64
+        try:
+            raw = b64.b64decode(str(body.get("data") or ""), validate=False)
+            return await asyncio.to_thread(backup.import_bytes, sync, raw, str(body.get("password") or ""))
+        except backup.BackupError as e:
+            raise HTTPException(400, str(e))
 
     @app.get("/api/usage")
     async def usage(days: int = 0):

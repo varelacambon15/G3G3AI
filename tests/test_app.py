@@ -1635,3 +1635,32 @@ def test_usage_costs_and_budget(env):
     assert u["total"]["input"] == 1010 and abs(u["total"]["cost"] - 0.002) < 1e-9
     assert u["models"]["y · sin-precio"]["unpriced"] is True
     assert u["budget_pct"] == 50
+
+
+def test_encrypted_backup_roundtrip(env):
+    import base64
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    s = client.get("/api/settings", headers=h).json()
+    for p in s["providers"]:
+        if p["id"] == "deepseek":
+            p["api_key"], p["enabled"] = "sk-secreta-123", True
+    s["github_token"] = "ghp_token"
+    client.put("/api/settings", headers=h, json=s)
+    client.post("/api/memory", headers=h, json={"content": "Prefiere respuestas cortas"})
+    r = client.post("/api/backup/export", headers=h, json={"password": "corta"})
+    assert r.status_code == 400                                   # contraseña demasiado corta
+    r = client.post("/api/backup/export", headers=h, json={"password": "contraseña-larga"})
+    assert r.status_code == 200 and b"sk-secreta-123" not in r.content and b"ghp_token" not in r.content   # cifrado
+    blob = r.content
+    # cambiar cosas y restaurar
+    cfg.set("github_token", "otro")
+    client.delete(f"/api/memory/{client.get('/api/memory', headers=h).json()[0]['id']}", headers=h)
+    enc = base64.b64encode(blob).decode()
+    bad = client.post("/api/backup/import", headers=h, json={"data": enc, "password": "equivocada"})
+    assert bad.status_code == 400 and "Contraseña incorrecta" in bad.json()["detail"]
+    assert client.post("/api/backup/import", headers=h, json={"data": base64.b64encode(b"nada").decode(), "password": "x"}).status_code == 400
+    ok = client.post("/api/backup/import", headers=h, json={"data": enc, "password": "contraseña-larga"})
+    assert ok.status_code == 200 and ok.json()["settings"] is True
+    assert cfg["github_token"] == "ghp_token" and cfg.provider("deepseek")["api_key"] == "sk-secreta-123"
+    assert [m["content"] for m in client.get("/api/memory", headers=h).json()] == ["Prefiere respuestas cortas"]

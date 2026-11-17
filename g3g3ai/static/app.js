@@ -1449,6 +1449,30 @@ const FIELDS = [
   ["localhost_without_token", "Este mismo equipo entra sin contraseña", "checkbox"],
   ["port", "Puerto", "number", "Requiere reiniciar el servicio."],
 ];
+$("#bk-export").addEventListener("click", async () => {
+  const password = $("#bk-pass").value;
+  try {
+    const r = await fetch("/api/backup/export", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password, conversations: $("#bk-convs").checked }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    const a = h("a", { href: URL.createObjectURL(await r.blob()), download: `g3g3ai-${new Date().toISOString().slice(0, 10)}.g3bak` });
+    document.body.append(a); a.click(); a.remove();
+    toast("Copia exportada. Guarda la contraseña: sin ella no se puede abrir.", 6000);
+  } catch (e) { toast(e.message, 6000); }
+});
+$("#bk-import").addEventListener("click", () => { if ($("#bk-pass").value) $("#bk-file").click(); else toast("Escribe primero la contraseña de la copia"); });
+$("#bk-file").addEventListener("change", async (e) => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  if (!confirm("Se importarán los ajustes (incluidas las claves API) y la memoria de la copia, y sustituirán a los actuales. ¿Continuar?")) return;
+  try {
+    const buf = new Uint8Array(await f.arrayBuffer());
+    let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+    const r = await api("/api/backup/import", { method: "POST", body: { data: btoa(bin), password: $("#bk-pass").value } });
+    toast(`Importado: ${r.memories} recuerdos, ${r.conversations} conversaciones${r.settings ? " y los ajustes" : ""}.`, 6000);
+    $("#bk-pass").value = ""; loadSettings();
+  } catch (er) { toast(er.message, 6000); }
+});
 async function renderUsage() {
   const box = $("#usage-box"); box.innerHTML = "";
   try {

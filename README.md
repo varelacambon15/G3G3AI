@@ -217,6 +217,7 @@ Según el modelo elegido (o lo que fijes en Ajustes → «Exigencia del agente»
 - **Ayudantes (`delegate`):** para investigar sin llenar el contexto, el agente lanza un ayudante de sólo lectura con contexto propio que devuelve un informe breve con rutas y datos.
 - **Escribe mientras trabaja:** pulsa Intro y el mensaje queda en cola; se envía al terminar.
 - **Atajos:** `Esc` detiene · `Mayús+Tab` cambia de modo (Normal → Aceptar ediciones → Plan) · `Ctrl/Cmd+Mayús+O` conversación nueva.
+- **Copia de seguridad cifrada:** Ajustes → «💾 Copia de seguridad» exporta ajustes (con claves API), memoria y, si quieres, conversaciones a un archivo `.g3bak` cifrado con tu contraseña, para importarlo en otro equipo.
 - **Uso y coste:** cada respuesta muestra sus tokens y un coste estimado; Ajustes → «💸 Uso y coste» resume el mes por modelo. Los precios son orientativos y editables; con un límite mensual te avisa al 80% y al 100%.
 - **Contexto a la vista:** junto al cuadro de texto ves el % de contexto usado; `/compact` resume la conversación ahora y conserva el último intercambio.
 - **Volver atrás (↶):** en cada mensaje tuyo, el botón ↶ devuelve los archivos que la IA tocó desde ahí a su estado anterior y borra esa parte de la conversación para que reformules. Lo que hagan los comandos no se deshace.

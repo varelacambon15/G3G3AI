@@ -257,6 +257,17 @@
             <div id="usage-box"></div>
           </div>
           <div class="card">
+            <h2>💾 Copia de seguridad cifrada</h2>
+            <p class="muted">Lleva tu configuración (con las claves API), la memoria y, si quieres, las conversaciones a otro equipo. El archivo va cifrado con una contraseña que eliges; sin ella no se puede leer.</p>
+            <div class="row"><label><input type="checkbox" id="bk-convs"> Incluir conversaciones</label></div>
+            <div class="row">
+              <input id="bk-pass" type="password" class="grow" placeholder="Contraseña de la copia (mín. 6 caracteres)" autocomplete="new-password">
+              <button id="bk-export" class="primary small">Exportar</button>
+              <button id="bk-import" class="ghost small">Importar…</button>
+              <input id="bk-file" type="file" accept=".g3bak" hidden>
+            </div>
+          </div>
+          <div class="card">
             <h2>🔄 Sincronización entre equipos</h2>
             <div id="sync-box"></div>
           </div>
