@@ -956,7 +956,9 @@ def test_hardware_recommendations(env):
     r = H.recommend(handheld)
     assert r["main"]["tier"] == "3–4B" and r["main"]["where"] == "cpu" and r["settings"]["llama_gpu_layers"] == 0
     r = H.recommend(laptop)
-    assert r["main"]["tier"].startswith("MoE") and r["engine"] == "cpu" and r["settings"]["llama_threads"] == 4
+    assert r["main"]["tier"] == "12–14B" and r["engine"] == "cpu" and r["settings"]["llama_threads"] == 4   # un MoE de 30B no deja margen con 24 GB
+    big = dict(laptop, ram=32 * G)
+    assert H.recommend(big)["main"]["tier"].startswith("MoE")                                          # con 32 GB sí cabe con margen
     assert any("AVX-512" in n for n in r["notes"])
     r = H.recommend(xeon)
     assert r["main"]["where"] == "gpu" and r["engine"] == "vulkan" and r["settings"]["llama_gpu_layers"] == 99
@@ -2058,3 +2060,39 @@ def test_trust_option_also_stops_asking_for_edits_in_allowed_folders(env):
     assert ctx.mode("write_file") == "auto" and ctx.mode("edit_file") == "auto"
     cfg.set("ai_write", "off")
     assert ctx.mode("write_file") == "off"                       # lo desactivado sigue desactivado
+
+
+def test_empty_answers_are_retried_and_reported(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    # tras usar una herramienta el modelo se calla: se le pide una vez que responda
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "vacio tras herramienta", "use_tools": True}))
+    assert any(e["type"] == "status" and "no respondió" in e["text"] for e in evs)
+    assert "Ahora sí: he visto la carpeta." in "".join(e["text"] for e in evs if e["type"] == "content")
+    # si sigue sin decir nada, el chat no se queda mudo: avisa con una nota visible y un botón de continuar
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "siempre vacio"}))
+    text = "".join(e["text"] for e in evs if e["type"] == "content")
+    assert "no escribió ninguna respuesta" in text and any(e["type"] == "finish" and e["reason"] == "empty" for e in evs)
+
+
+def test_mail_person_filter_and_sender_vs_to(env):
+    from g3g3ai import mail as M
+    client, cfg, home, tmp = env
+    mbox = tmp / "b2" / "Inbox"
+    _write_mbox(mbox, [
+        ("Julio Muñoz <jcmunoz@i2m.net>", "Informe de obra", "Mon, 10 Nov 2026 09:00:00 +0100", "te envío el informe", ""),
+        ("Jaume Ordinas <jordinas@i2m.net>", "Re: vuelo", "Tue, 17 Nov 2026 23:45:00 +0100", "ok lo vemos", "Cc: Julio <jcmunoz@i2m.net>\n"),
+    ])
+    cfg.set("mail_auto", False); cfg.set("mail_paths", [str(tmp / "b2")])
+    idx = M.MailIndex(cfg, tmp / "m3.sqlite")
+    idx.index_all()
+    # «el último correo que me mandó jcmunoz» = remitente
+    assert idx.search(sender="jcmunoz", limit=1)[0]["subject"] == "Informe de obra"
+    # el modelo se equivocó antes poniendo «to»: eso devuelve los que ESTÁN dirigidos a esa dirección (otro resultado)
+    assert idx.search(to="jcmunoz", limit=1)[0]["subject"] == "Re: vuelo"
+    # «person» cubre los dos sentidos y devuelve ambos, del más reciente al más antiguo
+    assert [r["subject"] for r in idx.search(person="jcmunoz")] == ["Re: vuelo", "Informe de obra"]
+    from g3g3ai.tools import ALL_SPECS
+    d, schema = ALL_SPECS["mail_search"]
+    assert "sender=X" in d and "ENVÍA" in schema["properties"]["sender"]["description"] and "person" in schema["properties"]

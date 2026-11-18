@@ -341,7 +341,8 @@ class MailIndex:
         return time.mktime((y, mo, d, hh, mm, 59 if end else 0, 0, 0, -1))
 
     def search(self, query: str = "", sender: str = "", to: str = "", subject: str = "", since: str | None = None,
-               until: str | None = None, folder: str = "", limit: int = 20, include_junk: bool = False) -> list[dict]:
+               until: str | None = None, folder: str = "", limit: int = 20, include_junk: bool = False,
+               person: str = "") -> list[dict]:
         limit = max(1, min(int(limit or 20), 50))
         where, args = [], []
         t0, t1 = self._day(since), self._day(until, end=True)
@@ -353,6 +354,10 @@ class MailIndex:
             if val and val.strip():
                 where.append(f"{col} LIKE ? ESCAPE '\\'")
                 args.append("%" + val.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
+        if person and person.strip():  # remitente O destinatario: para cuando el modelo no sabe en qué sentido va
+            like = "%" + person.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            where.append("(m.sender LIKE ? ESCAPE '\\' OR m.recipients LIKE ? ESCAPE '\\')")
+            args += [like, like]
         if not include_junk:
             where.append("m.folder NOT LIKE '%Trash%' AND m.folder NOT LIKE '%Papelera%' AND m.folder NOT LIKE '%Junk%' "
                          "AND m.folder NOT LIKE '%Spam%' AND m.folder NOT LIKE '%no deseado%'")

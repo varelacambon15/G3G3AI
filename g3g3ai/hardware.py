@@ -286,7 +286,8 @@ def recommend(hw: dict) -> dict:
     for t in TIERS:
         if t[0] == "32b":
             continue  # un 32B denso en procesador es demasiado lento
-        if t[2] <= ram_free + (1.0 if t[0] == "moe" else 0):
+        # un MoE de ~30B ocupa casi toda la memoria libre: se exige margen (contexto, sistema) o el equipo acaba usando el disco
+        if t[2] + (3.0 if t[0] == "moe" else 0) <= ram_free:
             cpu_tier = t
     gpu_tier = None
     for t in TIERS:
@@ -315,6 +316,9 @@ def recommend(hw: dict) -> dict:
     if where == "gpu" and gpu_tier and vram - gpu_tier[2] < 1.0:
         extra = "--cache-type-k q8_0 --cache-type-v q8_0"
         ctx = 4096 if vram < 5 else 8192
+    if main[0] in ("4b", "8b"):
+        notes.append("Para el modo agente (herramientas) los modelos de menos de ~7–8B se equivocan bastante; en Modelos, "
+                     "«🧪 Probar con el agente» te dice si el que cargues sirve.")
     if main[0] == "moe":
         notes.append("Los modelos MoE caben justos: cierra el navegador y otros programas pesados al usarlos.")
 

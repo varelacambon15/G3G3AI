@@ -21,6 +21,10 @@ MAX_TOOL_STEPS = 25
 ANTHROPIC_MIN_TOKENS = 16000
 OPENAI_MIN_TOKENS = 8192      # los modelos que razonan gastan parte del límite antes de responder
 MAX_CONTINUATIONS = 3         # reanudaciones automáticas si la respuesta se corta por longitud
+EMPTY_MSG = ("No has escrito ninguna respuesta. Responde ahora al usuario con lo que has encontrado con las herramientas; "
+             "si no encontraste nada, dilo claramente.")
+EMPTY_NOTE = ("[⚠ El modelo no escribió ninguna respuesta. Es típico de modelos muy pequeños: pulsa ↻ para reintentarlo o prueba "
+              "un modelo mayor.]")
 MAX_NUDGES = 2                # avisos si el modelo anuncia una acción y termina sin hacerla
 CONTINUE_MSG = "Continúa exactamente donde lo dejaste (tu respuesta se cortó por el límite de longitud)."
 NUDGE_MSG = ("Continúa: haz ahora la acción que acabas de anunciar llamando a la herramienta correspondiente. "
@@ -259,7 +263,7 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
     max_tokens = max(int(opts.get("max_tokens") or 0), OPENAI_MIN_TOKENS)
     if local and opts.get("n_ctx"):  # nunca pedir más salida de la que cabe: lo demás es contexto para la conversación
         max_tokens = max(512, min(int(opts.get("max_tokens") or 2048), int(opts["n_ctx"]) // 2))
-    continuations = nudges = verifies = 0
+    continuations = nudges = verifies = empties = 0
     used_tools = False
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), trust_env=not local) as c:
         for _ in range(steps_for(ctx)):
@@ -354,6 +358,16 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                     msgs.append({"role": "assistant", "content": content})
                     msgs.append({"role": "user", "content": NUDGE_MSG})
                     continue
+                if not content.strip() and finish in ("stop", None) and empties < 1 and (used_tools or msgs):
+                    empties += 1  # terminó sin escribir nada: se le pide una vez que responda
+                    yield {"type": "status", "text": "↪ El modelo no respondió; se le pide que conteste…"}
+                    if used_tools:
+                        msgs.append({"role": "user", "content": EMPTY_MSG})
+                    continue
+                if not content.strip() and finish in ("stop", None):
+                    yield {"type": "finish", "reason": "empty", "truncated": True}
+                    yield {"type": "content", "text": EMPTY_NOTE}
+                    return
                 vmsg = verify_message(ctx) if verifies < 1 and finish in ("stop", None) else None
                 if vmsg:
                     verifies += 1

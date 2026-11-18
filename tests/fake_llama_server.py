@@ -133,6 +133,18 @@ class H(BaseHTTPRequestHandler):
             note = "Agente" if "Herramientas del equipo desactivadas" in (msgs[0]["content"] if msgs[0]["role"] == "system" else "") else "ninguna nota"
             self.chunk({"choices": [{"delta": {"content": "Nota: " + note}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "vacio tras herramienta" in str(first_user) and req.get("tools"):  # termina sin texto tras usar una herramienta
+            if last["role"] == "user" and "No has escrito ninguna respuesta" in str(last["content"]):
+                self.chunk({"choices": [{"delta": {"content": "Ahora sí: he visto la carpeta."}, "finish_reason": "stop"}]})
+            elif last["role"] == "tool":
+                self.chunk({"choices": [{"delta": {"content": ""}, "finish_reason": "stop"}]})
+            else:
+                self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "v1", "function": {
+                    "name": "list_dir", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if "siempre vacio" in str(first_user):
+            self.chunk({"choices": [{"delta": {"content": ""}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "ver ajustes locales" in str(first_user):  # devuelve cómo le llegó la petición
             kw = req.get("chat_template_kwargs") or {}
             info = (f"AJUSTES: temp={req.get('temperature')} think={kw.get('enable_thinking')} cache={req.get('cache_prompt')} "
