@@ -55,6 +55,7 @@ DEFAULTS: dict = {
     "mail_enabled": False,      # la IA puede buscar en tu correo (solo lectura, con permiso)
     "mail_auto": True,          # usar automáticamente el perfil de Thunderbird si se encuentra
     "mail_paths": [],           # carpetas o archivos extra: buzones mbox o carpetas con .eml
+    "commands_trusted": False,  # ejecutar sin preguntar los comandos de desarrollo habituales (python/pytest en tus carpetas, git de lectura, npm test…)
     "command_allow": [],        # comandos que el agente puede ejecutar sin preguntar (exactos o con comodines *)
     "agent_temperature": 0.3,   # temperatura de los modelos LOCALES cuando usan herramientas (llamar herramientas pide precisión)
     "local_thinking": False,    # dejar que los modelos locales «piensen» antes de responder (más lento; mejor en problemas difíciles)

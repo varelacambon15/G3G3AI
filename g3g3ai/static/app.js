@@ -708,6 +708,11 @@ function approvalCard(a) {
     };
     card.append(h("div", { class: "row" },
       h("button", { class: "primary small", onclick: () => answer("yes") }, "Permitir"),
+      a.can_trust ? h("button", { class: "ghost small", title: "Activa en Ajustes «Confiar en mis carpetas»: las ediciones en tus carpetas modificables y los comandos de desarrollo habituales (python/pytest sobre scripts del proyecto, git de lectura, npm test) dejan de pedir permiso. Lo peligroso sigue preguntando.", onclick: async () => {
+        if (!confirm("¿Confiar en mis carpetas?\n\n• Editar y crear archivos dentro de tus carpetas modificables ya no pedirá permiso (se puede deshacer).\n• Se ejecutarán sin preguntar python/pytest sobre scripts de esas carpetas, git de solo lectura y npm test/build.\n• Siguen pidiendo permiso: pip install, git push, python -c, comandos encadenados y cualquier cosa fuera de tus carpetas.\n\nUn script de Python puede hacer lo mismo que tú: actívalo solo si confías en lo que escribe la IA. Puedes desactivarlo en Ajustes.")) return;
+        try { await api("/api/settings", { method: "PUT", body: { ...(await api("/api/settings")), commands_trusted: true } }); toast("Confianza activada", 4000); } catch (e) { toast(e.message); }
+        answer("yes");
+      } }, "Confiar en mis carpetas") : null,
       a.can_rule ? h("button", { class: "ghost small", title: "Guarda este comando en Ajustes → «Comandos permitidos» y no vuelve a preguntar", onclick: () => answer("rule") }, "Permitir este comando siempre") : null,
       a.can_always !== false ? h("button", { class: "ghost small", title: "No volver a preguntar por esta herramienta en esta conversación (salvo acciones peligrosas)", onclick: () => answer("always") }, "Permitir siempre aquí") : null,
       h("button", { class: "danger small", onclick: () => answer("no") }, "Denegar")));
@@ -1507,6 +1512,7 @@ const FIELDS = [
   ["model_prices", "Precios por modelo ($ por millón de tokens, uno por línea)", "lines", "Formato: «modelo = entrada, salida», p.ej. «deepseek-chat = 0.27, 1.10». Sobrescribe los precios orientativos."],
   ["mcp_servers", "Servidores MCP (uno por línea)", "lines", "Formato: nombre = [VAR=valor] comando args. Se guardan al pulsar «Guardar ajustes»; luego usa «Probar servidores»."],
   ["mail_paths", "Correo: rutas extra (una por línea)", "lines", "Carpetas con buzones mbox o archivos .eml, además del perfil de Thunderbird detectado."],
+  ["commands_trusted", "Confiar en mis carpetas (menos permisos)", "checkbox", "Sin preguntar: crear y editar archivos en tus carpetas modificables (deshacible), python/pytest sobre scripts de esas carpetas, git de solo lectura (status, diff, log…), npm test/build, dir/ls de carpetas visibles y filtros como «| more» o «2>&1». Nunca: pip install, git push, python -c, comandos encadenados (; & |) ni nada fuera de tus carpetas. Un script de Python puede hacer cualquier cosa que tú puedas, así que actívalo solo si confías en lo que escribe la IA."],
   ["command_allow", "Comandos permitidos sin preguntar (uno por línea)", "lines", "Se ejecutan sin pedir confirmación (salvo los peligrosos). Puedes usar * como comodín, p.ej. «npm test*» o «git status». Un comando encadenado (con ; & | >) sólo se admite si coincide exactamente."],
   ["write_roots", "Carpetas que la IA puede modificar (una por línea)", "lines", "Añade aquí tus proyectos. Fuera de estas carpetas la IA sólo puede leer."],
   ["blocked_paths", "Rutas protegidas (una por línea)", "lines", "Nadie puede verlas desde G3G3AI, ni la IA ni la interfaz. Sin barra = patrón de nombre (p.ej. .env, *.pem)."],

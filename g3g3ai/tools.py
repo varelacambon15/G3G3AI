@@ -338,7 +338,7 @@ class ToolContext:
             return "auto"
         if name in WRITE_TOOLS:
             m = self.cfg["ai_write"] or "off"
-            return "auto" if (self.perm_mode == "edits" and m != "off") else m
+            return "auto" if ((self.perm_mode == "edits" or self.cfg["commands_trusted"]) and m != "off") else m
         if name in COMMAND_TOOLS:
             return self.cfg["ai_commands"] or "off"
         if name in ("mail_search", "mail_read"):
@@ -362,6 +362,62 @@ class ToolContext:
                 continue
             if cmd == rule or (not (self.SHELL_META & set(cmd)) and "*" in rule and fnmatch.fnmatchcase(cmd, rule)):
                 return True
+        return False
+
+    _NO_META = r"[^;&|<>`$\n\r]*"
+    TRUSTED = [
+        # python -m pytest|unittest|… y pip de solo lectura
+        r"(?:python3?|py)(?:\.exe)?\s+(?:-[uOB]\s+)*-m\s+(?:pytest|unittest|compileall|py_compile|pip\s+(?:list|show|freeze))\b" + _NO_META,
+        # python script.py … (el script se comprueba aparte: debe estar en una carpeta modificable)
+        r"(?:python3?|py)(?:\.exe)?\s+(?:-[uOB]\s+)*(?P<script>[^\s;&|<>`$\"'\n\r]+\.py)(?:\s" + _NO_META + r")?",
+        r"pytest\b" + _NO_META,
+        r"git\s+(?:status|diff|log|branch|show|rev-parse|remote\s+-v)\b" + _NO_META,
+        r"npm\s+(?:test|run\s+(?:test|build|lint))\b" + _NO_META,
+    ]
+
+    SAFE_FILTER = r"(?:more|head|tail|sort|uniq|wc|findstr|grep|find\s+/c)(?:\s+[^;&|<>`$\n\r]*)?"
+
+    def trusted_command(self, command, cwd=None) -> bool:
+        """Con «commands_trusted»: comandos de desarrollo habituales, sin encadenados, ejecutados dentro de las carpetas
+        modificables y (si es un script) con el script también dentro de ellas. No incluye pip install, git push, -c, etc."""
+        if not self.cfg["commands_trusted"]:
+            return False
+        cmd = re.sub(r"\s+2>&1(?=\s|$)", "", str(command or "")).strip()   # «2>&1» (mezclar errores con la salida) es inofensivo
+        parts = [p.strip() for p in cmd.split("|")]
+        if not parts[0] or len(parts) > 3 or any(not p for p in parts):
+            return False
+        # tuberías sólo hacia filtros de texto inofensivos (paginar, recortar, ordenar, buscar en la salida)
+        if any(not re.fullmatch(self.SAFE_FILTER, p) for p in parts[1:]):
+            return False
+        cmd = parts[0]
+        if not cmd or self.SHELL_META & set(cmd):
+            return False
+        try:
+            wd = self.files.resolve(cwd, "ai_write") if cwd else self.workdir()
+        except FileAccessError:
+            return False
+        if not self.files.can_ai_write(wd):
+            return False
+        m = re.fullmatch(r"(?:dir|ls)(?:\s+(?:/[a-zA-Z]|-[a-zA-Z]+))*((?:\s+(?:\"[^\"]+\"|[^\s\"-/][^\s\"]*))*)", cmd)
+        if m:  # listados: sólo de carpetas que la IA ya puede ver (nunca rutas protegidas)
+            try:
+                for t in re.findall(r'"([^"]+)"|(\S+)', m.group(1)):
+                    p = t[0] or t[1]
+                    self.files.resolve(p if os.path.isabs(os.path.expanduser(p)) else str(wd / p))
+            except FileAccessError:
+                return False
+            return True
+        for pat in self.TRUSTED:
+            m = re.fullmatch(pat, cmd)
+            if not m:
+                continue
+            script = m.groupdict().get("script")
+            if script:
+                p = Path(os.path.expandvars(os.path.expanduser(script)))
+                p = (wd / p if not p.is_absolute() else p).resolve()
+                if not (p.is_file() and self.files.can_ai_write(p)):
+                    return False
+            return True
         return False
 
     def add_command_rule(self, command: str) -> None:
@@ -1144,8 +1200,9 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
         else:
             mode = ctx.mode(name)
             must_ask = mode == "ask" or bool(strong) or (mode == "auto" and bool(soft))
-            if name == "run_command" and not strong and ctx.command_allowed(args.get("command")):
-                must_ask = False  # regla «permitir siempre» del usuario
+            if name == "run_command" and not strong and (ctx.command_allowed(args.get("command"))
+                                                         or ctx.trusted_command(args.get("command"), args.get("cwd"))):
+                must_ask = False  # regla «permitir siempre» del usuario o comando de desarrollo de confianza
             if must_ask and not strong and name in ctx.session_allow:
                 must_ask = False
             if must_ask and ctx.auto_all:
@@ -1162,6 +1219,7 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
                 yield {"type": "approval", "id": aid, "name": name, "args": args, "diff": ctx.preview(name, args),
                        "warnings": strong + soft, "dangerous": bool(strong), "can_always": not strong,
                        "can_rule": name == "run_command" and not strong,
+                       "can_trust": not ctx.cfg["commands_trusted"] and not strong and name in (WRITE_TOOLS | COMMAND_TOOLS),
                        "sandboxed": ctx.sandboxed if name == "run_command" else None}
                 try:
                     answer = await asyncio.wait_for(fut, APPROVAL_TIMEOUT)
