@@ -31,6 +31,7 @@ from . import router, sandbox
 from . import backup, costs, profiles, subagent
 from .mail import MailIndex, thunderbird_profiles, mail_sources
 from .mcp import MCPManager
+from .opencode import OpenCodeClient, OpenCodeError
 from .tasks import Scheduler, TaskError, TaskStore, next_run
 from .profiles import profile_for
 from .undo import UndoJournal
@@ -101,6 +102,17 @@ async def with_keepalive(agen, every: float = 15.0):
     finally:
         nxt.cancel()
         await it.aclose() if hasattr(it, "aclose") else None
+
+
+def oc_waiting(messages: list) -> bool:
+    """True si el agente aún no ha respondido al último mensaje del usuario de la sesión."""
+    for m in reversed(messages):
+        kind = m.get("type") if isinstance(m, dict) else None
+        if kind in ("assistant", "idle"):
+            return False  # ya hay respuesta tras el último mensaje del usuario
+        if kind == "user":
+            return True
+    return False
 
 
 NO_AGENT_NOTE = (
@@ -944,6 +956,119 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         prov["enabled"] = bool(body.get("enabled", True))
         cfg.update_public({"providers": provs})
         return {"enabled": prov["enabled"]}
+
+    # --- OpenCode (agente de código que corre en este equipo) -------------------------------------
+    oc = OpenCodeClient(cfg)
+
+    def oc_guard() -> None:
+        if not cfg["opencode_enabled"]:
+            raise HTTPException(404, "La integración con OpenCode está desactivada (Ajustes → OpenCode).")
+
+    def oc_fail(e: OpenCodeError) -> HTTPException:
+        """Un fallo de OpenCode es 502; si lo que no existe es la sesión, 404."""
+        return HTTPException(404 if e.status == 404 else 502, str(e))
+
+    @app.get("/api/opencode/status")
+    async def opencode_status():
+        oc_guard()
+        st = await oc.status()
+        return {**st, "url": oc.url, "enabled": bool(cfg["opencode_enabled"])}
+
+    @app.get("/api/opencode/sessions")
+    async def opencode_sessions(limit: int = 50):
+        oc_guard()
+        try:
+            return {"sessions": await oc.sessions(limit)}
+        except OpenCodeError as e:
+            raise oc_fail(e) from e
+
+    @app.post("/api/opencode/sessions")
+    async def opencode_create(body: dict | None = None):
+        oc_guard()
+        body = body or {}
+        try:
+            session = await oc.create_session(body.get("title") or None, body.get("directory") or None)
+        except OpenCodeError as e:
+            raise oc_fail(e) from e
+        return {"session": session}
+
+    @app.get("/api/opencode/sessions/{sid}/messages")
+    async def opencode_messages(sid: str):
+        oc_guard()
+        try:
+            return {"messages": await oc.messages(sid)}
+        except OpenCodeError as e:
+            raise oc_fail(e) from e
+
+    @app.post("/api/opencode/sessions/{sid}/prompt")
+    async def opencode_prompt(sid: str, body: dict):
+        """Envía el mensaje y emite en SSE la lista de mensajes hasta que OpenCode termina."""
+        oc_guard()
+        text = str(body.get("text") or "")
+        if not text.strip():
+            raise HTTPException(400, "Falta el texto del mensaje")
+        try:
+            await oc.prompt(sid, text)
+        except OpenCodeError as e:
+            raise oc_fail(e) from e
+
+        async def gen():
+            fin = time.time() + 600  # 10 minutos como máximo
+            while time.time() < fin:
+                await asyncio.sleep(1)
+                try:
+                    msgs = await oc.messages(sid)
+                    running = await oc.active()
+                except OpenCodeError as e:
+                    yield sse({"type": "error", "message": str(e)})
+                    break
+                yield sse({"type": "messages", "messages": msgs})
+                if msgs and not oc_waiting(msgs) and (running is None or sid not in running):
+                    break  # la sesión ha dejado de estar activa
+            yield sse({"type": "done"})
+
+        async def stream():
+            async for ev in with_keepalive(gen()):  # evita que un proxy cierre la conexión en silencio
+                yield ": ping\n\n" if ev is None else ev
+
+        return StreamingResponse(stream(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.post("/api/opencode/sessions/{sid}/interrupt")
+    async def opencode_interrupt(sid: str):
+        oc_guard()
+        try:
+            await oc.interrupt(sid)
+        except OpenCodeError as e:
+            raise oc_fail(e) from e
+        return {"ok": True}
+
+    @app.get("/api/opencode/permissions")
+    async def opencode_permissions():
+        """Peticiones de permiso pendientes en OpenCode (para aprobarlas o denegarlas)."""
+        oc_guard()
+        try:
+            return {"permissions": await oc.permissions()}
+        except OpenCodeError as e:
+            raise oc_fail(e) from e
+
+    @app.post("/api/opencode/sessions/{sid}/permissions/{rid}/reply")
+    async def opencode_permission_reply(sid: str, rid: str, body: dict):
+        oc_guard()
+        try:
+            await oc.reply_permission(sid, rid, bool(body.get("approved")))
+        except OpenCodeError as e:
+            raise oc_fail(e) from e
+        return {"ok": True}
+
+    @app.delete("/api/opencode/sessions/{sid}")
+    async def opencode_delete(sid: str):
+        oc_guard()
+        try:
+            await oc.delete_session(sid)
+        except OpenCodeError as e:
+            raise oc_fail(e) from e
+        return {"ok": True}
 
     # --- Herramientas de programación ------------------------------------------------------------
     devinst = devtools.DevEnvInstaller(cfg)
