@@ -2096,3 +2096,55 @@ def test_mail_person_filter_and_sender_vs_to(env):
     from g3g3ai.tools import ALL_SPECS
     d, schema = ALL_SPECS["mail_search"]
     assert "sender=X" in d and "ENVÍA" in schema["properties"]["sender"]["description"] and "person" in schema["properties"]
+
+
+def test_local_token_bypass_requires_localhost_host(env):
+    from fastapi.testclient import TestClient
+    client, cfg, *_ = env
+    cfg.data["localhost_without_token"] = True
+    c = TestClient(client.app, client=("127.0.0.1", 12345))
+    # Un Host local entra sin contraseña y el propio equipo ve su token
+    r = c.get("/api/status", headers={"Host": "localhost"})
+    assert r.status_code == 200 and r.json()["token"] == cfg["token"]
+    assert c.get("/api/status", headers={"Host": "127.0.0.1"}).status_code == 200
+    # Un dominio apuntando a 127.0.0.1 (DNS rebinding) no se salta la contraseña
+    assert c.get("/api/status", headers={"Host": "evil.example.com"}).status_code == 401
+    assert c.get("/api/status", headers={"Host": "192.168.1.50"}).status_code == 401
+    # Sin Host local tampoco (el Host por defecto de TestClient es «testserver»)
+    assert c.get("/api/status").status_code == 401
+    # ...y aunque se entre con la contraseña, a un Host que no sea local no se le devuelve el token
+    r = c.get("/api/status", headers=auth(cfg))
+    assert r.status_code == 200 and r.json()["token"] is None
+
+
+def test_files_write_scoped_to_write_roots(env):
+    client, cfg, home, tmp_path = env
+    work = tmp_path / "trabajo"
+    work.mkdir()
+    cfg.data["write_roots"] = [str(work)]
+    h = auth(cfg)
+    # Fuera de las carpetas que la IA puede modificar: rechazado y el archivo no se crea
+    r = client.post("/api/files/write", headers=h, json={"path": str(home / "fuera.txt"), "content": "x"})
+    assert r.status_code == 403 and not (home / "fuera.txt").exists()
+    # Dentro sí
+    r = client.post("/api/files/write", headers=h, json={"path": str(work / "dentro.txt"), "content": "x"})
+    assert r.status_code == 200 and (work / "dentro.txt").read_text() == "x"
+
+
+def test_grep_does_not_follow_symlink_into_blocked_path(env):
+    import asyncio
+    client, cfg, home, tmp_path = env
+    secreto = home / "secreto.txt"
+    secreto.write_text("valor-secreto-123")
+    cfg.data["blocked_paths"].append("secreto.txt")
+    try:
+        enlace = home / "enlace.txt"
+        enlace.symlink_to(secreto)
+    except (OSError, NotImplementedError):
+        pytest.skip("sin permiso para crear symlinks")
+    ctx = _ctx(cfg)
+    r = asyncio.run(ctx.run("grep_files", {"pattern": "valor-secreto", "path": str(home)}))
+    assert "valor-secreto-123" not in r                                  # el enlace no filtra el archivo protegido
+    (home / "visible.txt").write_text("valor-secreto-123")
+    r = asyncio.run(ctx.run("grep_files", {"pattern": "valor-secreto", "path": str(home)}))
+    assert "visible.txt" in r and "valor-secreto-123" in r               # ...pero un archivo normal sí se busca

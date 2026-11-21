@@ -206,6 +206,10 @@ class Files:
         for fp in files:
             if globs and not any(fnmatch.fnmatch(fp.name.lower(), g) for g in globs):
                 continue
+            try:
+                fp = fp.resolve()
+            except (OSError, RuntimeError):
+                continue
             if fp.name.startswith(".") and not base.is_file() or self.is_blocked(fp):
                 continue
             if scanned >= 20000 or time.time() > deadline:

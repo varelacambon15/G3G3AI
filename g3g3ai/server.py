@@ -191,9 +191,14 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     app.state.cfg, app.state.db, app.state.llama, app.state.hub = cfg, db, llama, hub
 
     # --- Autenticación --------------------------------------------------------------
+    def local_host(request: Request) -> bool:
+        """¿El Host es local? Sin esto, un sitio web puede apuntar su dominio a 127.0.0.1 (DNS rebinding)
+        y entrar sin contraseña; `request.url.hostname` ya trae el host sin puerto."""
+        return (request.url.hostname or "").lower() in ("localhost", "127.0.0.1", "::1")
+
     def authorized(request: Request) -> bool:
         client = request.client.host if request.client else ""
-        if cfg["localhost_without_token"] and client in ("127.0.0.1", "::1"):
+        if cfg["localhost_without_token"] and client in ("127.0.0.1", "::1") and local_host(request):
             return True
         token = request.cookies.get(COOKIE) or request.query_params.get("token") or ""
         auth = request.headers.get("authorization", "")
@@ -233,7 +238,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     # --- Estado / ajustes -------------------------------------------------------------
     @app.get("/api/status")
     async def status(request: Request):
-        is_local = request.client and request.client.host in ("127.0.0.1", "::1")
+        is_local = request.client and request.client.host in ("127.0.0.1", "::1") and local_host(request)
         port = cfg["port"]
         return {
             "version": __version__,
@@ -258,7 +263,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
 
     @app.post("/api/shutdown")
     async def shutdown(request: Request):
-        if not (request.client and request.client.host in ("127.0.0.1", "::1")):
+        if not (request.client and request.client.host in ("127.0.0.1", "::1") and local_host(request)):
             raise HTTPException(403, "Sólo se puede apagar desde el propio equipo")
         stop = getattr(app.state, "request_exit", None)
         if not stop:
@@ -1117,7 +1122,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
 
     @app.post("/api/files/write")
     async def file_write(body: dict):
-        return fa(files.write_text, body["path"], body.get("content", ""))
+        return fa(files.write_text, body["path"], body.get("content", ""), "ai_write")
 
     @app.post("/api/files/mkdir")
     async def file_mkdir(body: dict):
