@@ -14,6 +14,38 @@ el hilo sin leer la transcripción.
 
 ---
 
+## 2026-11-21 · OpenCode — Fase 1: integración con OpenCode
+
+**Estado:** Fase 0 y Fase 1 entregadas en dos PRs, APK publicado. **Claude pasa a ser el director.**
+
+**Hecho:**
+
+- **PR #1** (seguridad) — https://github.com/varelacambon15/G3G3AI/pull/1
+- **PR #2** (OpenCode en Code) — https://github.com/varelacambon15/G3G3AI/pull/2, apilado sobre #1
+  - `g3g3ai/opencode.py`: cliente de la API de OpenCode (Basic auth; la config se lee en cada llamada; sesiones normalizadas a **segundos** y con el **id** del modelo — contrastado con el OpenAPI real, no con el doble falso).
+  - `server.py`: `/api/opencode/status`, `/sessions` (GET/POST), `/{id}/messages`, `/{id}/prompt` (SSE), `/{id}/interrupt`, `/{id}/permissions/{rid}/reply`, `/permissions`, `DELETE`.
+  - `config.py`: `opencode_url`, `opencode_password` (secreta), `opencode_enabled`.
+  - Interfaz: conmutador **«G3G3AI · OpenCode»** en la sección Code, chat en vivo, permisos Permitir/Denegar (también en el chat cuando el panel lateral está oculto en móvil), pestaña de sesión, interrupción con ■/Esc, «web completa».
+  - `tests/fake_opencode.py` + 4 tests.
+- **Android**: JDK 17, Gradle 8.11.1 y Android SDK 35 instalados; APK compilado en local (2m36s) y publicado en **https://github.com/varelacambon15/G3G3AI/releases/tag/android-0.7.0**
+- **Acceso remoto**: Tailscale en el PC (`pc-a` → `100.79.12.46`) y **Funnel** activo → G3G3AI accesible desde cualquier navegador en `https://pc-a.taile4c633.ts.net/`; en el móvil no hace falta instalar nada.
+- `.gitignore`: salidas de Gradle/PyInstaller/APK.
+
+**Verificación:** `pytest -q tests` → **81 pasan, 5 omitidos, 2 fallan**. Los 2 fallos son **preexistentes** en `60b4d9a` (Python 3.14 frente al 3.12 de la CI): `test_cut_off_reasons_are_visible_and_recoverable` y `test_context_meter_and_compact`. `node --check g3g3ai/static/app.js` → OK.
+
+**Pendiente:**
+
+1. **Contraseña de OpenCode**: sin configurar; mientras tanto el conmutador avisa «no disponible» y vuelve a G3G3AI. Decidir: guardarla desde `opencode service get password` (necesita permiso explícito) o añadir el campo en Ajustes para pegarla.
+2. Merge de #1 y luego #2 (están apilados).
+3. Actualizar `README.md` con la sección OpenCode (lo pide `AGENTS.md` y el encargo del frontend no lo incluía).
+4. Los 2 tests preexistentes de arriba: arreglarlos aquí o tratarlos aparte.
+5. Verificación manual del flujo Code → OpenCode **contra OpenCode real** (solo se ha probado contra el doble falso).
+6. Exponer la *web completa* de OpenCode desde fuera: `status.url` es `127.0.0.1:28894`, accesible solo desde el PC/LAN.
+
+**Aviso de coordinación:** hay un worktree paralelo de Claude Code (`.claude/worktrees/polish-ai-app-712091`) en el mismo repo. Una limpieza de procesos mía demasiado amplia (filtro por «g3g3ai», que casa con la ruta del repo) pudo haber cortado su última tanda de tests. **Coordinar antes de tocar procesos.**
+
+---
+
 ## 2026-11-21 · OpenCode — sesión inicial
 
 **Objetivo:** integrar el trabajo de OpenCode en G3G3AI de la misma forma que Claude,
