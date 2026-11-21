@@ -5,3 +5,10 @@ venv/
 .pytest_cache/
 *.gguf
 *.part
+
+# Compilados
+build/
+dist/
+.gradle/
+*.apk
+*.exe
