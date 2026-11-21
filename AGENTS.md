@@ -2,6 +2,12 @@
 
 G3G3AI es un cliente de IA personal: modelos locales (llama.cpp) + APIs, con un agente que lee y edita archivos y ejecuta comandos, interfaz web, app Android e instaladores. Interfaz, mensajes de error y documentación en español.
 
+## Filosofía de producto
+
+- **Sencilla de entender y de usar, pero extremadamente completa.** La complejidad va por debajo: la interfaz explica lo esencial, esconde lo avanzado hasta que se necesita y nunca obliga al usuario a entender cómo funciona por dentro.
+- Antes de añadir una opción, una pantalla o un ajuste nuevo, preguntar si se puede resolver con menos pasos.
+- El resultado debe sentirse «todo incluido» sin abrumar: una sola aplicación, una sola contraseña, todo lo importante a un toque.
+
 ## Instalar y probar
 
 - Python 3.10+; dependencias en `requirements.txt`.
