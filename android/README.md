@@ -4,12 +4,14 @@ Dos formas de uso:
 
 1. **Conectar a un equipo** (otro equipo con G3G3AI): todas las funciones, incluidos modelos locales,
    agente, búsqueda web y archivos.
-2. **💬 Chat directo con API**: sin equipo encendido. La app habla directamente con DeepSeek, Claude, OpenAI,
-   Gemini, OpenRouter, Groq o cualquier API compatible con OpenAI. Respuestas en streaming, razonamiento,
-   varias conversaciones guardadas en el móvil, instrucciones del sistema y fotos para modelos con visión.
-   Las claves se guardan en el almacenamiento privado de la app; con **Importar** se copian de un equipo
-   guardado (endpoint `/api/providers/export`, protegido con su contraseña). Sin agente, búsqueda web ni modelos locales.
-   El puente que hace las peticiones con las claves sólo existe para esta página empaquetada en la APK.
+2. **Chat directo con API**: sin equipo encendido. La app habla directamente con el proveedor que elijas, del mismo
+   catálogo que el escritorio: **OpenCode Go**, OpenRouter, Claude, OpenAI, DeepSeek, Gemini, Groq, Cerebras, Mistral,
+   xAI, Kimi, GLM, Qwen y más, o cualquier API compatible con OpenAI. Eliges el proveedor, pegas la clave (con enlace a
+   dónde conseguirla) y pulsas **Probar**. Respuestas en streaming con formato, razonamiento, copiar, **volver a generar**
+   y **editar** mensajes, conversaciones guardadas en el móvil con **búsqueda**, instrucciones del sistema y fotos para
+   modelos con visión. Las claves se guardan en el almacenamiento privado de la app; con **Importar** se copian de un equipo
+   guardado. Sin agente, búsqueda web ni modelos locales (para eso, conecta a tu PC).
+   El catálogo se genera desde el del escritorio con `python scripts/gen_android_catalog.py`.
 
 - Lista de equipos (nombre, dirección y contraseña). Abre el último usado al iniciar.
 - Cámara y selector de archivos para adjuntar fotos y documentos.

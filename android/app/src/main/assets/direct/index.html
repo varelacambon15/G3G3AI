@@ -3,18 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>G3G3AI · Chat directo</title>
+<title>G3G3AI</title>
 <link rel="stylesheet" href="direct.css">
 </head>
 <body>
 <header class="top">
-  <button id="menu" class="icon" aria-label="Conversaciones">☰</button>
-  <div class="title"><b>Chat directo</b><small id="subtitle">sin equipo · con tus claves API</small></div>
-  <button id="settings-btn" class="icon" aria-label="Ajustes">⚙</button>
+  <button id="menu" class="icon" aria-label="Conversaciones" data-icon="menu"></button>
+  <div class="title"><b>G3G3AI</b><small id="subtitle">Chat directo con tus APIs</small></div>
+  <button id="settings-btn" class="icon" aria-label="Ajustes" data-icon="gear"></button>
 </header>
 
 <aside id="drawer" class="drawer">
-  <button id="new-chat" class="new"><span>＋</span> Nueva conversación</button>
+  <button id="new-chat" class="new"><span data-icon="plus"></span> Nueva conversación</button>
+  <input id="conv-search" type="search" placeholder="Buscar conversaciones…">
   <div id="convs"></div>
   <p class="foot">Las conversaciones se guardan sólo en este móvil.</p>
 </aside>
@@ -27,16 +28,16 @@
     <div id="attachments" class="chips"></div>
     <textarea id="input" rows="1" placeholder="Escribe un mensaje…"></textarea>
     <div class="row">
-      <button id="photo" class="round" title="Añadir foto" aria-label="Añadir foto">📷</button>
+      <button id="photo" class="round" title="Añadir foto" aria-label="Añadir foto" data-icon="camera"></button>
       <input id="photo-input" type="file" accept="image/*" hidden>
       <select id="model" aria-label="Modelo"></select>
-      <button id="send" class="send" aria-label="Enviar">↑</button>
+      <button id="send" class="send" aria-label="Enviar" data-icon="arrowUp"></button>
     </div>
   </div>
 </div>
 
 <section id="settings" class="panel hidden">
-  <div class="panel-head"><b>Ajustes del chat directo</b><button id="settings-close" class="icon">✕</button></div>
+  <div class="panel-head"><b>Ajustes</b><button id="settings-close" class="icon" aria-label="Cerrar" data-icon="x"></button></div>
   <div class="panel-body">
     <div class="card">
       <h3>Importar APIs de un equipo</h3>
@@ -44,9 +45,11 @@
       <div id="servers"></div>
     </div>
     <div class="card">
-      <h3>Proveedores</h3>
+      <h3>Proveedores de IA</h3>
+      <p class="muted small">Elige uno, pega tu clave y pruébala. Puedes activar varios.</p>
+      <input id="prov-search" type="search" placeholder="Buscar proveedor…">
       <div id="providers"></div>
-      <button id="add-provider" class="ghost">+ Añadir API compatible con OpenAI</button>
+      <button id="add-provider" class="ghost">+ Otro compatible con OpenAI</button>
     </div>
     <div class="card">
       <h3>General</h3>
@@ -60,6 +63,7 @@
 </section>
 
 <div id="toast"></div>
+<script src="catalog.js"></script>
 <script src="direct.js"></script>
 </body>
 </html>
