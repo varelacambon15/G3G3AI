@@ -52,6 +52,7 @@ DEFAULTS: dict = {
     "model_prices": [],         # «modelo = entrada, salida» ($ por millón de tokens); sobrescribe los precios orientativos
     "monthly_budget_usd": 0,    # aviso cuando el gasto estimado del mes se acerca a esta cifra (0 = sin aviso)
     "mcp_servers": [],          # «nombre = [VAR=valor] comando args»: servidores MCP (herramientas externas)
+    "mcp_default_model": "",   # modelo que usa Claude (u otro cliente MCP) al delegar en G3G3AI sin indicar uno
     "mail_enabled": False,      # la IA puede buscar en tu correo (solo lectura, con permiso)
     "mail_auto": True,          # usar automáticamente el perfil de Thunderbird si se encuentra
     "mail_paths": [],           # carpetas o archivos extra: buzones mbox o carpetas con .eml

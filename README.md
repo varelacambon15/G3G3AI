@@ -209,6 +209,16 @@ Flujo típico: «arregla el issue #12» → lee el issue, crea una rama, edita, 
 ### ☁ Proveedores
 Ajustes → **Proveedores** → «Añadir»: un catálogo con buscador de más de 20 proveedores listos para usar — **OpenCode Go** y **OpenCode Zen**, OpenRouter, Anthropic (Claude), OpenAI, DeepSeek, Google Gemini, Groq, Cerebras, Mistral, xAI (Grok), Moonshot (Kimi), Z.ai (GLM), Qwen, Together, Fireworks, Hugging Face, NVIDIA NIM, Perplexity, Ollama y LM Studio — más cualquier servidor compatible con OpenAI (otro equipo con G3G3AI, vLLM, LiteLLM…). Eliges uno, pegas la clave (con enlace directo a dónde conseguirla), pulsas **Probar conexión** y **Añadir**. Las claves nunca se devuelven en claro a la interfaz.
 
+### 🤝 Usarla desde Claude Code (subagente)
+G3G3AI es también un **servidor MCP**. Con la app abierta, ejecuta una vez:
+
+```bash
+claude mcp add --transport http g3g3ai http://127.0.0.1:8800/mcp
+```
+(Si desactivaste «Este mismo equipo entra sin contraseña», añade `--header "Authorization: Bearer TU_CONTRASEÑA"`; la orden exacta está en Ajustes → Correo e integraciones.)
+
+Claude verá dos herramientas: **`ask`** (preguntar o encargar una tarea a G3G3AI con el modelo local o el proveedor que quieras, con o sin herramientas) y **`list_models`**. Ejemplos: «pregúntale a g3g3ai con el modelo local si…», «que g3g3ai busque en mi correo lo último de jmoreno». Cada consulta queda como conversación en la app. Las tareas con herramientas van **sin supervisión**: por defecto solo lectura (`mode: edit` permite editar en tus carpetas) y todo lo que pediría permiso se deniega. En Ajustes puedes fijar el **modelo para Claude**.
+
 ### 🕒 Tareas programadas
 En la pestaña **Tareas** el agente trabaja solo a la hora que elijas (cada día a una hora, cada N minutos o una vez), con el modelo que tengas seleccionado, aunque no haya ninguna ventana abierta (G3G3AI debe estar en marcha en ese equipo). Ejemplo: «cada noche a las 03:00 ejecuta los tests y cuéntame qué falla».
 - **Sin supervisión:** nadie puede aprobar acciones, así que todo lo que pediría permiso se **deniega** (comandos fuera de «Comandos permitidos», servidores MCP, escribir en GitHub…) y el agente continúa sin ello y lo cuenta en su informe.

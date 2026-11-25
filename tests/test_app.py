@@ -2234,3 +2234,39 @@ def test_provider_catalog_test_and_add(env):
     # personalizado
     r = client.post("/api/providers/add", headers=h, json={"name": "Mi vLLM", "base_url": base, "type": "openai"}).json()
     assert cfg.provider(r["id"])["name"] == "Mi vLLM"
+
+
+def test_mcp_http_server_lets_claude_delegate(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+
+    def rpc(method, params=None, rid=1, headers=h):
+        return client.post("/mcp", headers=headers, json={"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}})
+    assert rpc("initialize", {"protocolVersion": "2025-06-18"}, headers={}).status_code == 401           # con contraseña
+    init = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "claude-code"}}).json()
+    assert init["result"]["serverInfo"]["name"] == "g3g3ai" and "tools" in init["result"]["capabilities"]
+    assert client.post("/mcp", headers=h, json={"jsonrpc": "2.0", "method": "notifications/initialized"}).status_code == 202
+    names = [t["name"] for t in rpc("tools/list").json()["result"]["tools"]]
+    assert names == ["ask", "list_models"]
+    # sin modelo: error claro
+    r = rpc("tools/call", {"name": "ask", "arguments": {"prompt": "hola"}}).json()["result"]
+    assert r["isError"] and "list_models" in r["content"][0]["text"]
+    load_model(client, h)
+    r = rpc("tools/call", {"name": "list_models", "arguments": {}}).json()["result"]
+    assert "local — cargado" in r["content"][0]["text"]
+    r = rpc("tools/call", {"name": "ask", "arguments": {"prompt": "escribe un texto largo"}}).json()["result"]
+    text = r["content"][0]["text"]
+    assert not r["isError"] and "primera parte, segunda parte." in text and "conversation_id:" in text
+    cid = text.split("conversation_id: ")[1].split(" ")[0]
+    conv = client.get(f"/api/conversations/{cid}", headers=h).json()
+    assert conv["title"].startswith("Claude:")                                                           # visible en la app
+    # con herramientas: sin supervisión, lo que pide permiso se deniega
+    r = rpc("tools/call", {"name": "ask", "arguments": {"prompt": "ejecuta un comando", "use_tools": True, "mode": "edit"}}).json()["result"]
+    assert not r["isError"]
+    msgs = client.get("/api/conversations", headers=h).json()
+    last = client.get(f"/api/conversations/{msgs[0]['id']}", headers=h).json()["messages"][-1]
+    res = [t for t in (last["meta"] or {}).get("tools") or [] if t["type"] == "tool_result"]
+    assert res and "Denegado" in res[0]["result"]
+    assert rpc("tools/call", {"name": "borrar_todo", "arguments": {}}).json()["error"]["code"] == -32602
+    assert rpc("metodo/raro").json()["error"]["code"] == -32601
+    assert client.get("/mcp", headers=h).status_code == 405

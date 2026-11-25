@@ -28,7 +28,7 @@ from .hub import Hub
 from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
-from . import backup, catalog, costs, profiles, subagent
+from . import backup, catalog, costs, mcp_server, profiles, subagent
 from .mail import MailIndex, thunderbird_profiles, mail_sources
 from .mcp import MCPManager
 from .tasks import Scheduler, TaskError, TaskStore, next_run
@@ -152,6 +152,73 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         await mcp_mgr.stop()
         await llama.unload()
 
+    async def chat_internal(body: dict) -> tuple[str | None, str, str | None, dict]:
+        """Llama al propio /api/chat (con todo: herramientas, memoria, uso…) y devuelve (conversación, texto, error, done)."""
+        cid, text, err, done = None, "", None, {}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://interno", timeout=3600) as c:
+            async with c.stream("POST", "/api/chat", json=body, headers={"Authorization": f"Bearer {cfg['token']}"}) as r:
+                if r.status_code >= 400:
+                    detail = (await r.aread()).decode("utf-8", "replace")
+                    try:
+                        detail = json.loads(detail).get("detail", detail)
+                    except ValueError:
+                        pass
+                    return None, "", str(detail), {}
+                async for line in r.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    ev = json.loads(line[5:])
+                    if ev["type"] == "start":
+                        cid = ev["conversation_id"]
+                    elif ev["type"] == "content":
+                        text += ev["text"]
+                    elif ev["type"] == "error":
+                        err = ev["message"]
+                    elif ev["type"] == "done":
+                        done = ev
+        return cid, text, err, done
+
+    async def mcp_call(name: str, args: dict) -> tuple[str, bool]:
+        if name == "list_models":
+            if args.get("provider"):
+                try:
+                    ms = await list_models(provider_for(str(args["provider"])))
+                except (ProviderError, httpx.HTTPError, HTTPException) as e:
+                    return f"No se pudo listar: {getattr(e, 'detail', e)}", True
+                return "\n".join(f"{args['provider']}::{m}" for m in ms) or "(sin modelos)", False
+            lines = [f"local — {'cargado: ' + (llama.status()['model'] or '') if llama.ready else 'no hay modelo local cargado'}"]
+            for p in cfg["providers"]:
+                if p.get("enabled") and (p.get("api_key") or str(p.get("base_url", "")).startswith("http://")):
+                    lines.append(f"{p['id']} — {p['name']} (usa list_models con provider={p['id']} para ver sus modelos)")
+            dm = cfg["mcp_default_model"]
+            lines.append(f"Modelo por defecto para «ask»: {dm or ('local' if llama.ready else 'ninguno: indica model')}")
+            return "\n".join(lines), False
+        prompt = str(args.get("prompt") or "").strip()
+        if not prompt:
+            return "Falta «prompt».", True
+        pid, model = mcp_server.parse_model(args.get("model") or cfg["mcp_default_model"])
+        if pid is None and model:
+            return "Indica el modelo como «proveedor::modelo» (o «local»); mira list_models.", True
+        if pid is None:
+            if not llama.ready:
+                return ("No hay modelo por defecto ni modelo local cargado. Indica «model» (ver list_models) o elige uno en "
+                        "G3G3AI → Ajustes → Correo e integraciones → «Modelo para Claude».", True)
+            pid, model = LOCAL_PROVIDER, "local"
+        tools = bool(args.get("use_tools"))
+        body = {"message": prompt, "provider": pid, "model": model, "use_tools": tools, "use_web": bool(args.get("web")),
+                "mode": "edits" if args.get("mode") == "edit" else "plan", "unattended": True}
+        if args.get("conversation_id"):
+            body["conversation_id"] = str(args["conversation_id"])
+        if args.get("workdir"):
+            body["workdir"] = str(args["workdir"])
+        cid, text, err, done = await chat_internal(body)
+        if cid and not args.get("conversation_id"):
+            db.update_conversation(cid, title=("Claude: " + " ".join(prompt.split()))[:60])
+        if err and not text.strip():
+            return f"G3G3AI no pudo responder: {err}", True
+        shown = llama.status()["model"] if pid == LOCAL_PROVIDER else model
+        return f"{text.strip()}\n\n[conversation_id: {cid} · modelo: {shown}]", False
+
     async def run_task(task: dict) -> tuple[str, str | None]:
         """Ejecuta una tarea programada llamando al propio /api/chat en modo sin supervisión."""
         pid, model = task["provider"] or LOCAL_PROVIDER, task["model"] or "local"
@@ -204,7 +271,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     @app.middleware("http")
     async def auth_mw(request: Request, call_next):
         path = request.url.path
-        if ((path.startswith("/api/") or path.startswith("/v1/"))
+        if ((path.startswith("/api/") or path.startswith("/v1/") or path == "/mcp")
                 and path not in ("/api/login", "/api/sync/exchange")):  # la sincronización va cifrada con su clave
             if not authorized(request):
                 return JSONResponse({"detail": "No autorizado"}, status_code=401)
@@ -464,6 +531,27 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             raise HTTPException(409, "Activa primero «La IA puede buscar en mi correo»")
         started = mail_index.start(rebuild=bool((body or {}).get("rebuild")))
         return {"started": started, **mail_index.stats()}
+
+    @app.post("/mcp")
+    async def mcp_http(request: Request):
+        """Servidor MCP (HTTP «streamable», respuestas JSON) para Claude Code y otros clientes."""
+        try:
+            msg = json.loads(await request.body())
+        except ValueError:
+            return JSONResponse(mcp_server.error(None, -32700, "JSON no válido"), status_code=400)
+        if isinstance(msg, list):
+            out = [r for r in [await mcp_server.handle(m, mcp_call) for m in msg] if r is not None]
+            return JSONResponse(out) if out else Response(status_code=202)
+        resp = await mcp_server.handle(msg, mcp_call)
+        return Response(status_code=202) if resp is None else JSONResponse(resp)
+
+    @app.get("/mcp")
+    async def mcp_http_get():
+        return Response(status_code=405, headers={"Allow": "POST"})
+
+    @app.delete("/mcp")
+    async def mcp_http_delete():
+        return Response(status_code=204)   # fin de sesión del cliente: no hay estado que borrar
 
     @app.get("/api/mcp")
     async def mcp_status(refresh: bool = True):

@@ -1601,6 +1601,7 @@ const FIELDS = [
   ["monthly_budget_usd", "Límite de gasto mensual estimado ($)", "number", "Te avisa al llegar al 80% y al 100%. 0 = sin aviso."],
   ["model_prices", "Precios por modelo ($ por millón de tokens, uno por línea)", "lines", "Formato: «modelo = entrada, salida», p.ej. «deepseek-chat = 0.27, 1.10». Sobrescribe los precios orientativos."],
   ["mcp_servers", "Servidores MCP (uno por línea)", "lines", "Formato: nombre = [VAR=valor] comando args. Se guardan al pulsar «Guardar ajustes»; luego usa «Probar servidores»."],
+  ["mcp_default_model", "Modelo para Claude (MCP)", "model", "El que usa Claude Code al delegar en G3G3AI sin indicar uno. Vacío = el modelo local cargado."],
   ["mail_paths", "Correo: rutas extra (una por línea)", "lines", "Carpetas con buzones mbox o archivos .eml, además del perfil de Thunderbird detectado."],
   ["commands_trusted", "Confiar en mis carpetas (menos permisos)", "checkbox", "Sin preguntar: crear y editar archivos en tus carpetas modificables (deshacible), python/pytest sobre scripts de esas carpetas, git de solo lectura (status, diff, log…), npm test/build, dir/ls de carpetas visibles y filtros como «| more» o «2>&1». Nunca: pip install, git push, python -c, comandos encadenados (; & |) ni nada fuera de tus carpetas. Un script de Python puede hacer cualquier cosa que tú puedas, así que actívalo solo si confías en lo que escribe la IA."],
   ["command_allow", "Comandos permitidos sin preguntar (uno por línea)", "lines", "Se ejecutan sin pedir confirmación (salvo los peligrosos). Puedes usar * como comodín, p.ej. «npm test*» o «git status». Un comando encadenado (con ; & | >) sólo se admite si coincide exactamente."],
@@ -1641,6 +1642,17 @@ $("#bk-file").addEventListener("change", async (e) => {
     $("#bk-pass").value = ""; loadSettings();
   } catch (er) { toast(er.message, 6000); }
 });
+function renderClaude() {
+  const box = $("#claude-box"); if (!box) return; box.innerHTML = "";
+  const st = S.status || {};
+  const port = S.settings?.port || 8800;
+  const url = `http://127.0.0.1:${port}/mcp`;
+  const needsToken = !S.settings?.localhost_without_token;
+  const cmd = `claude mcp add --transport http g3g3ai ${url}` + (needsToken && st.token ? ` --header "Authorization: Bearer ${st.token}"` : "");
+  box.append(h("p", { class: "muted" }, "Claude Code puede delegar en G3G3AI consultas para tu modelo local (privado y gratis) u otro proveedor, o tareas sobre tus archivos y tu correo. Ejecuta esto una vez en una terminal:"),
+    h("div", { class: "row" }, h("code", { class: "access-url grow" }, cmd), h("button", { class: "ghost small", onclick: () => copyText(cmd, "Orden copiada") }, ico("copy"), "Copiar")),
+    h("p", { class: "muted" }, "Después, en Claude Code, pide por ejemplo: «pregúntale a g3g3ai con el modelo local…». Las tareas con herramientas se hacen sin supervisión: lo que pediría permiso se deniega. Cada consulta queda como conversación en G3G3AI."));
+}
 async function renderMail() {
   const box = $("#mail-box"); box.innerHTML = "";
   box.append(h("p", { class: "muted" }, "Deja que la IA busque en tu correo (solo lectura): «mensajes de esta semana de Pérez», «qué me pidió Ana sobre la nómina»… Usa los buzones de Thunderbird (si el mismo correo está también en Outlook, Thunderbird basta) o carpetas con archivos .eml. El correo original no se modifica; se crea un índice local. ",
@@ -1720,6 +1732,7 @@ async function loadSettings() {
   renderUsage();
   renderMcp();
   renderMail();
+  renderClaude();
 
   const f = $("#settings-form"); f.innerHTML = "";
   for (let [key, label, type, hint] of FIELDS) {
@@ -1749,6 +1762,7 @@ async function loadSettings() {
     else if (type === "model") {
       const opts = MS.catalog.map((m) => [m.value, `${m.label} · ${m.group}`]);  // todos, también los ocultos
       if (key === "vision_fallback") opts.unshift(["", "Automático (el modelo local si tiene visión)"]);
+      if (key === "mcp_default_model") opts.unshift(["", "El modelo local cargado"]);
       if (v && !opts.some((o) => o[0] === v)) opts.push([v, v + " (no disponible ahora)"]);
       inp = selectEl(key, v, opts);
     }
@@ -1771,7 +1785,7 @@ const SETTINGS_SECTION = {};
 for (const [sec, keys] of Object.entries({
   local: "image_provider image_model image_mode image_size image_dir sd_steps sd_cfg sd_max_side models_dir llama_server_path llama_ctx llama_threads llama_gpu_layers llama_extra_args autoload_last_model hf_token agent_temperature local_thinking",
   agent: "file_roots ai_write ai_commands agent_max_steps agent_workdir ai_game_write commands_trusted command_allow write_roots blocked_paths command_sandbox agent_profile github_token",
-  mail: "mcp_servers mail_paths", data: "monthly_budget_usd model_prices", access: "localhost_without_token port",
+  mail: "mcp_servers mail_paths mcp_default_model", data: "monthly_budget_usd model_prices", access: "localhost_without_token port",
 })) for (const k of keys.split(" ")) SETTINGS_SECTION[k] = sec;
 const SETTINGS_TITLES = { general: "General", providers: "", agent: "Agente y permisos", local: "Modelos locales e imágenes", mail: "Correo e integraciones", data: "Datos y uso", access: "Acceso" };
 function showSettingsTab(tab) {
