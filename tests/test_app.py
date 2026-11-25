@@ -382,7 +382,7 @@ def test_web_tools_in_chat(env, monkeypatch):
     from g3g3ai.files import Files
     from g3g3ai.tools import ToolContext
     ctx = ToolContext(Files(cfg), cfg, agent=False, web=True)
-    assert ctx.names() == ["web_search", "fetch_url"]
+    assert ctx.names() == ["app_settings", "web_search", "fetch_url"]   # sin Agente: web y, si se lo pides, sus ajustes
     ctx = ToolContext(Files(cfg), cfg, agent=True, web=False)
     assert "web_search" not in ctx.names() and "read_file" in ctx.names()
     from g3g3ai import web
@@ -2169,3 +2169,39 @@ def test_local_models_only_get_tools_relevant_to_the_conversation(env):
     assert "mail_search" in ctx.names()
     ctx.compact_specs = False                                                                     # APIs en la nube: todas
     assert {"mail_search", "github", "compare_dirs", "system_info", "delegate"} <= set(ctx.names())
+
+
+def test_ai_can_read_and_change_its_own_settings_with_confirmation(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    ctx = _ctx(cfg)
+    assert "app_settings" in ctx.names()
+    listing = asyncio.run(ctx.run("app_settings", {"action": "get"}))
+    assert "temperature:" in listing and "ai_commands 🔒" in listing
+    assert not any(k in listing for k in ("github_token", "hf_token", "web_api_key", "sync_key", "api_key"))   # nada secreto
+    assert ctx.precheck("app_settings", {"action": "get"}) == (None, [], [])                  # leer: sin preguntar
+    # cambio normal: pregunta mostrando antes → después
+    err, strong, soft = ctx.precheck("app_settings", {"action": "set", "changes": {"temperature": "0.3", "memory_auto": "no"}})
+    assert not err and not strong and "temperature: 0.7 → 0.3" in soft[0] and "memory_auto: sí → no" in soft[0]
+    # cambio de seguridad: confirmación fuerte (sin «permitir siempre»)
+    err, strong, soft = ctx.precheck("app_settings", {"action": "set", "changes": {"commands_trusted": True}})
+    assert not err and strong
+    # nunca claves ni contraseñas, ni valores inválidos
+    err, *_ = ctx.precheck("app_settings", {"action": "set", "changes": {"github_token": "x", "token": "y"}})
+    assert err and "Ajustes" in err
+    assert ctx.precheck("app_settings", {"action": "set", "changes": {"ai_commands": "siempre"}})[0].startswith("Error")
+    assert ctx.precheck("app_settings", {"action": "set", "changes": {"temperature": 7}})[0].startswith("Error")
+    out = asyncio.run(ctx.run("app_settings", {"action": "set", "changes": {"temperature": "0.3", "write_roots": f"{home}\n{tmp}"}}))
+    assert "temperature: 0.7 → 0.3" in out and cfg["temperature"] == 0.3 and cfg["write_roots"] == [str(home), str(tmp)]
+    ctx.perm_mode = "plan"
+    assert ctx.precheck("app_settings", {"action": "set", "changes": {"temperature": 0.5}})[0].startswith("Error")
+    # en segundo plano no se puede cambiar nada (nadie confirma)
+    from g3g3ai.tools import tool_events
+    ctx.perm_mode = "normal"; ctx.unattended = True
+
+    async def run():
+        sink = []
+        async for _ in tool_events(ctx, "app_settings", {"action": "set", "changes": {"temperature": 0.9}}, sink):
+            pass
+        return sink[0]
+    assert "Denegado" in asyncio.run(run()) and cfg["temperature"] == 0.3

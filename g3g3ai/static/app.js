@@ -247,7 +247,7 @@ const TOOL_UI = {
   compare_dirs: ["folder", "Comparó carpetas", "Comparando carpetas", "a"], system_info: ["cpu", "Consultó el equipo", "Consultando el equipo", null],
   delegate: ["users", "Ayudante", "Ayudante trabajando", "task"], delegate_edit: ["users", "Ayudante (copia aislada)", "Ayudante trabajando", "task"],
   apply_patch: ["check", "Aplicó la propuesta", "Aplicando la propuesta", "id"], github: ["git", "GitHub", "GitHub", "action"],
-  request_folder_access: ["lock", "Pidió acceso a", "Pidiendo acceso a", "path"], steam_games: ["cube", "Juegos de Steam", "Juegos de Steam", "query"],
+  request_folder_access: ["lock", "Pidió acceso a", "Pidiendo acceso a", "path"], app_settings: ["gear", "Ajustes", "Ajustes", "action"], steam_games: ["cube", "Juegos de Steam", "Juegos de Steam", "query"],
   game_diagnostics: ["cube", "Diagnosticó", "Diagnosticando", "game"], generate_image: ["image", "Generó una imagen", "Generando una imagen", null],
   ask_local_model: ["cpu", "Consultó el modelo local", "Consultando el modelo local", null],
 };
@@ -1025,7 +1025,10 @@ async function send(text, attachments, isContinue = false) {
         else if (ev.type === "content") { content += ev.text; extra.status = null; }
         else if (ev.type === "reasoning") reasoning += ev.text;
         else if (ev.type === "tool_output") { extra.liveOut = (extra.liveOut || "") + ev.text; if (S.code) { const t = $("#ctab-term"); if (t) renderCodePanel({ tools, todos: extra.todos, liveOut: extra.liveOut }); } }
-        else if (ev.type === "tool_call" || ev.type === "tool_result") { tools.push(ev); if (ev.type === "tool_result") extra.liveOut = ""; }
+        else if (ev.type === "tool_call" || ev.type === "tool_result") {
+          tools.push(ev);
+          if (ev.type === "tool_result") { extra.liveOut = ""; if (ev.name === "app_settings" || ev.name === "request_folder_access") S.settings = null; }
+        }
         else if (ev.type === "approval") { tools.push(ev); notifyApproval(ev); }
         else if (ev.type === "approval_result") { const a = tools.find((t) => t.id === ev.id); if (a) a.state = ev.approved ? "approved" : "denied"; }
         else if (ev.type === "route") extra.route = ev;

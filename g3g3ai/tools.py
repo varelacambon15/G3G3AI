@@ -177,6 +177,11 @@ ALL_SPECS = {
                              "folder": {"type": "string", "description": "Parte del nombre de la carpeta (Inbox, Enviados…)"},
                              "limit": {"type": "integer", "description": "Máximo de resultados (por defecto 20, tope 50)"},
                              "include_junk": {"type": "boolean", "description": "Incluir papelera y spam"}})),
+    "app_settings": ("Consulta o cambia los ajustes de G3G3AI cuando el usuario lo pida («baja la temperatura», «activa el correo», "
+                     "«deja de preguntarme por los comandos»). action=get lista los ajustes con su valor; action=set con changes="
+                     "{ajuste: valor} los cambia (el usuario confirma). No puede ver ni cambiar claves API ni contraseñas.",
+                     _schema({"action": {"type": "string", "enum": ["get", "set"]},
+                              "changes": {"type": "object", "description": "{ajuste: nuevo valor} (solo con set)"}}, ["action"])),
     "mail_save_attachments": ("Guarda en una carpeta los adjuntos de uno o varios correos (los números de mail_search). La carpeta "
                               "se crea si no existe y debe estar entre las que puedes modificar; los nombres repetidos se numeran.",
                               _schema({"ids": {"type": "array", "items": {"type": "integer"}, "description": "Números de los correos"},
@@ -364,6 +369,7 @@ class ToolContext:
     # Grupos de herramientas que a un modelo local sólo se le ofrecen si la conversación va de eso (o ya los usó):
     # cada herramienta cuesta tokens en CADA turno y, en un equipo sin gráfica, eso son segundos o minutos.
     TOOL_GROUPS = [
+        ({"app_settings"}, r"ajuste|configur|temperatura|permis|activa|desactiva|pregunt|opci[oó]n|memoria|cambia(?:r)? (?:el|la|los|las|tu|tus)"),
         ({"mail_search", "mail_read", "mail_save_attachments"},
          r"correo|e-?mails?\b|mensaje|bandeja|adjunt|thunderbird|outlook|remitente|(?:me|te|le) (?:ha |han )?(?:mandado|enviado|escrito)"),
         ({"github"}, r"github|pull request|\bpr\b|\bissues?\b|repositorio|\brepo\b"),
@@ -505,6 +511,8 @@ class ToolContext:
                 out.append("mail_save_attachments")
         if self.agent and not plan and not self.auto_all:
             out.append("request_folder_access")
+        if not self.auto_all:
+            out.append("app_settings")
         if self.agent and self.mcp and not plan:
             out += list(self.mcp.map)
         if self.web:
@@ -650,6 +658,17 @@ class ToolContext:
                         return "Error: " + err, [], []
                 if self.files.is_game_path(p) and not any(is_under(p, r) for r in self.files.write_roots):
                     return None, ["modifica archivos de un juego (se guarda una copia de seguridad del original)"], []
+            if name == "app_settings":
+                if args.get("action") != "set":
+                    return None, [], []
+                if self.perm_mode == "plan":
+                    return "Error: en modo Plan no se pueden cambiar ajustes; propón el cambio.", [], []
+                from . import selfconfig as SC
+                norm, errors, diffs, security = SC.plan(self.cfg, args.get("changes"))
+                if not norm:
+                    return "Error: " + ("; ".join(errors) if errors else "esos ajustes ya tienen ese valor."), [], []
+                lines = ["cambia ajustes: " + " · ".join(diffs)] + [f"se ignora: {e}" for e in errors]
+                return (None, lines, []) if security else (None, [], lines)
             if name == "mail_save_attachments":
                 self.files.resolve(args.get("folder"), "ai_write")   # lanza FileAccessError con el motivo si no se puede
                 ids = args.get("ids") or []
@@ -792,6 +811,14 @@ class ToolContext:
                 return await asyncio.to_thread(self._save_attachments, args)
             if name == "request_folder_access":
                 return self._grant_folder(args)
+            if name == "app_settings":
+                from . import selfconfig as SC
+                if args.get("action") != "set":
+                    return SC.describe(self.cfg)
+                norm, errors, diffs, _ = SC.plan(self.cfg, args.get("changes"))
+                SC.apply(self.cfg, norm)
+                return ("Ajustes cambiados: " + "; ".join(diffs) if diffs else "No había nada que cambiar.") + (
+                    "\nNo aplicados: " + "; ".join(errors) if errors else "")
             if name == "ask_local_model":
                 if not self.local_chat:
                     return "Error: el modelo local no está disponible."
