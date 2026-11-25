@@ -189,7 +189,11 @@ class ProviderError(Exception):
     pass
 
 
-async def _raise_for(r: httpx.Response):
+GO_QUOTA_HINT = ("Se ha agotado la cuota del plan OpenCode Go. Espera a que se renueve (5 h, semanal o mensual) "
+                 "o cambia a un modelo gratuito como hy4-flash-free o beam-free.")
+
+
+async def _raise_for(r: httpx.Response, p: dict | None = None):
     if r.status_code >= 400:
         body = (await r.aread()).decode("utf-8", errors="replace")
         try:
@@ -198,7 +202,7 @@ async def _raise_for(r: httpx.Response):
             body = msg or body
         except json.JSONDecodeError:
             pass
-        raise ProviderError(f"HTTP {r.status_code}: {hint_for(body)[:800]}")
+        raise ProviderError(f"HTTP {r.status_code}: {hint_for(body, p, r.status_code)[:800]}")
 
 
 _CAP_PATTERNS = (r"can only afford (\d+)", r"\[1,\s*(\d+)\]", r"at most (\d+)", r"maximum (?:of )?(\d+)",
@@ -219,7 +223,9 @@ def cap_from_error(msg: str, current: int) -> int | None:
     return None
 
 
-def hint_for(body: str) -> str:
+def hint_for(body: str, p: dict | None = None, status: int | None = None) -> str:
+    if p and p.get("id") == GO_PROVIDER_ID and status in (402, 429):
+        return body + " — " + GO_QUOTA_HINT
     if re.search(r"exceed_context_size|context (length|size|window)|n_ctx|too many tokens", body, re.I):
         return (body + " — Se llenó el contexto del modelo. Sube el «Contexto» del modelo local en Ajustes "
                 "(según tu RAM) o abre una conversación nueva.")
@@ -240,17 +246,37 @@ async def _sse(r: httpx.Response) -> AsyncIterator[dict]:
 
 
 # --- Listado de modelos ---------------------------------------------------------
+_BLOCKED_MODEL_ID = re.compile(r"^(?:iceman|muse-spark)", re.I)  # modelos que no deben aparecer en ningún proveedor
+GO_PROVIDER_ID = "opencode-go"
+GO_CHAT_API = "chat-completions"
+
+
+def _usable_model(p: dict, m: dict) -> bool:
+    mid = str(m.get("id") or "").strip()
+    if not mid or _BLOCKED_MODEL_ID.match(mid):
+        return False
+    if p.get("id") == GO_PROVIDER_ID:
+        # En OpenCode Go sólo sirve la API de chat-completions; el resto (responses, messages,
+        # interactions, systemone, embeddings…) queda fuera de este proveedor.
+        api = m.get("api")
+        return isinstance(api, dict) and GO_CHAT_API in api
+    return True
+
+
 async def list_models(p: dict) -> list[str]:
     async with httpx.AsyncClient(timeout=15) as c:
         if p["type"] == "anthropic":
-            r = await c.get(p["base_url"].rstrip("/") + "/v1/models", params={"limit": 100},
+            url = p.get("models_url") or p["base_url"].rstrip("/") + "/v1/models"
+            r = await c.get(url, params={"limit": 100},
                             headers={"x-api-key": p.get("api_key", ""), "anthropic-version": "2023-06-01"})
         else:
+            url = p.get("models_url") or p["base_url"].rstrip("/") + "/models"
             headers = {"Authorization": f"Bearer {p['api_key']}"} if p.get("api_key") else {}
-            r = await c.get(p["base_url"].rstrip("/") + "/models", headers=headers)
+            r = await c.get(url, headers=headers)
         if r.status_code >= 400:
             raise ProviderError(f"HTTP {r.status_code}: {r.text[:300]}")
-        return sorted(m["id"] for m in r.json().get("data", []))
+        return sorted(m["id"] for m in r.json().get("data", [])
+                      if isinstance(m, dict) and _usable_model(p, m))
 
 
 # --- OpenAI compatible (incluye llama-server local) -----------------------------------
@@ -283,7 +309,7 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
             for attempt in range(3):
                 try:
                     async with c.stream("POST", url, json=body, headers=headers) as r:
-                        await _raise_for(r)
+                        await _raise_for(r, p)
                         async for j in _sse(r):
                             if j.get("error"):  # error a mitad de la respuesta
                                 e = j["error"]
@@ -429,7 +455,7 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
             stop_reason = None
             a_in = 0
             async with c.stream("POST", url, json=body, headers=headers) as r:
-                await _raise_for(r)
+                await _raise_for(r, p)
                 async for j in _sse(r):
                     t = j.get("type")
                     if t == "message_start":

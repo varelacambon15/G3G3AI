@@ -68,12 +68,12 @@ public class ServersActivity extends Activity {
         root.addView(add);
         setContentView(scroll);
 
-        // Abre directamente el último equipo usado (la flecha atrás vuelve aquí)
+        // Arranque sin PC: abre el chat directo. La flecha atrás vuelve a esta lista,
+        // donde siguen los equipos por si quieres conectarte a uno.
         if (savedInstanceState == null && !getIntent().getBooleanExtra("noauto", false)) {
-            int last = Servers.lastIndex(this);
-            if (last >= 0 && last < Servers.load(this).size()) {
-                open(last);
-            }
+            Intent i = new Intent(this, WebActivity.class);
+            i.putExtra("direct", true);
+            startActivity(i);
         }
     }
 

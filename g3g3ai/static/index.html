@@ -277,60 +277,122 @@
       <section id="view-settings" class="view">
         <div class="page">
           <h1 class="page-title">Ajustes</h1>
-          <div class="card">
-            <h2>📱 Acceso remoto (móvil / portátil)</h2>
-            <div id="access-info"></div>
-          </div>
-          <div class="card">
-            <h2>💸 Uso y coste</h2>
-            <div id="usage-box"></div>
-          </div>
-          <div class="card">
-            <h2>💾 Copia de seguridad cifrada</h2>
-            <p class="muted">Lleva tu configuración (con las claves API), la memoria y, si quieres, las conversaciones a otro equipo. El archivo va cifrado con una contraseña que eliges; sin ella no se puede leer.</p>
-            <div class="row"><label><input type="checkbox" id="bk-convs"> Incluir conversaciones</label></div>
-            <div class="row">
-              <input id="bk-pass" type="password" class="grow" placeholder="Contraseña de la copia (mín. 6 caracteres)" autocomplete="new-password">
-              <button id="bk-export" class="primary small">Exportar</button>
-              <button id="bk-import" class="ghost small">Importar…</button>
-              <input id="bk-file" type="file" accept=".g3bak" hidden>
-            </div>
-          </div>
-          <div class="card">
-            <h2>🔄 Sincronización entre equipos</h2>
-            <div id="sync-box"></div>
-          </div>
-          <div class="card">
-            <h2>🧰 Herramientas de programación</h2>
-            <div id="devtools-box"></div>
-          </div>
-          <div class="card">
-            <h2>📧 Correo</h2>
-            <div id="mail-box"></div>
-          </div>
-          <div class="card">
-            <h2>🔌 Servidores MCP</h2>
-            <div id="mcp-box"></div>
-          </div>
-          <div class="card">
-            <h2>🧠 Memoria</h2>
-            <p class="muted">Lo que la IA recuerda de ti entre conversaciones. Puedes editarlo o borrarlo cuando quieras. Los interruptores están en «General».</p>
-            <form id="memory-add" class="row"><input id="memory-new" class="grow" placeholder="Añadir un recuerdo, p.ej. «Prefiere respuestas cortas»"><button class="primary small">Añadir</button></form>
-            <ul id="memory-list" class="list"></ul>
-            <div class="row end"><button id="memory-clear" class="ghost small">Borrar todo</button></div>
-          </div>
-          <div class="card">
-            <h2>☁ Proveedores API</h2>
-            <div id="providers-edit"></div>
-            <button id="add-provider" class="ghost small">+ Añadir proveedor u otro equipo</button>
-          </div>
-          <div class="card">
-            <h2>General</h2>
-            <form id="settings-form" class="form-grid"></form>
-          </div>
+          <form id="settings-form" class="settings-form">
+            <details class="card settings-card" open>
+              <summary>
+                <span class="settings-icon" aria-hidden="true">🧩</span>
+                <span class="settings-title">Modelos y proveedores</span>
+                <span class="settings-state" data-state="models">—</span>
+              </summary>
+              <div class="settings-body">
+                <div id="providers-edit"></div>
+                <p class="muted">OpenCode Go: la cuota es la de tu plan (5 h, semanal, mensual). Desactiva «Extra Usage» en OpenCode para no gastar créditos.</p>
+                <button id="add-provider" class="ghost small" type="button">+ Añadir proveedor u otro equipo</button>
+                <div class="settings-group form-grid" data-group="models"></div>
+              </div>
+            </details>
+            <details class="card settings-card" open>
+              <summary>
+                <span class="settings-icon" aria-hidden="true">🧠</span>
+                <span class="settings-title">Memoria y chat</span>
+                <span class="settings-state" data-state="memory">—</span>
+              </summary>
+              <div class="settings-body">
+                <p class="muted">Lo que la IA recuerda de ti entre conversaciones. Puedes editarlo o borrarlo cuando quieras. Los interruptores están en «General».</p>
+                <div id="memory-add" class="row"><input id="memory-new" class="grow" placeholder="Añadir un recuerdo, p.ej. «Prefiere respuestas cortas»"><button class="primary small" type="button">Añadir</button></div>
+                <ul id="memory-list" class="list"></ul>
+                <div class="row end"><button id="memory-clear" class="ghost small" type="button">Borrar todo</button></div>
+                <div class="settings-group form-grid" data-group="memory"></div>
+              </div>
+            </details>
+            <details class="card settings-card" open>
+              <summary>
+                <span class="settings-icon" aria-hidden="true">🛡</span>
+                <span class="settings-title">Agente y permisos</span>
+                <span class="settings-state" data-state="agent">—</span>
+              </summary>
+              <div class="settings-body">
+                <div class="settings-group form-grid" data-group="agent"></div>
+              </div>
+            </details>
+            <details class="card settings-card" open>
+              <summary>
+                <span class="settings-icon" aria-hidden="true">📁</span>
+                <span class="settings-title">Carpetas y acceso</span>
+                <span class="settings-state" data-state="files">—</span>
+              </summary>
+              <div class="settings-body">
+                <div class="settings-group form-grid" data-group="files"></div>
+                <h3 class="settings-sub">📱 Acceso remoto (móvil / portátil)</h3>
+                <div id="access-info"></div>
+              </div>
+            </details>
+            <details class="card settings-card" open>
+              <summary>
+                <span class="settings-icon" aria-hidden="true">🎨</span>
+                <span class="settings-title">Imágenes</span>
+                <span class="settings-state" data-state="images">—</span>
+              </summary>
+              <div class="settings-body">
+                <div class="settings-group form-grid" data-group="images"></div>
+              </div>
+            </details>
+            <details class="card settings-card" open>
+              <summary>
+                <span class="settings-icon" aria-hidden="true">🔗</span>
+                <span class="settings-title">Herramientas e integraciones</span>
+                <span class="settings-state" data-state="tools">—</span>
+              </summary>
+              <div class="settings-body">
+                <h3 class="settings-sub">🧰 Herramientas de programación</h3>
+                <div id="devtools-box"></div>
+                <h3 class="settings-sub">📧 Correo</h3>
+                <div id="mail-box"></div>
+                <h3 class="settings-sub">🔌 Servidores MCP</h3>
+                <div id="mcp-box"></div>
+                <div class="settings-group form-grid" data-group="tools"></div>
+              </div>
+            </details>
+            <details class="card settings-card" open>
+              <summary>
+                <span class="settings-icon" aria-hidden="true">🖥</span>
+                <span class="settings-title">Este equipo</span>
+                <span class="settings-state" data-state="thispc">—</span>
+              </summary>
+              <div class="settings-body">
+                <div class="settings-group form-grid" data-group="thispc"></div>
+                <h3 class="settings-sub">🔄 Sincronización entre equipos</h3>
+                <div id="sync-box"></div>
+                <h3 class="settings-sub">💾 Copia de seguridad cifrada</h3>
+                <p class="muted">Lleva tu configuración (con las claves API), la memoria y, si quieres, las conversaciones a otro equipo. El archivo va cifrado con una contraseña que eliges; sin ella no se puede leer.</p>
+                <div class="row"><label><input type="checkbox" id="bk-convs"> Incluir conversaciones</label></div>
+                <div class="row">
+                  <input id="bk-pass" type="password" class="grow" placeholder="Contraseña de la copia (mín. 6 caracteres)" autocomplete="new-password">
+                  <button id="bk-export" class="primary small" type="button">Exportar</button>
+                  <button id="bk-import" class="ghost small" type="button">Importar…</button>
+                  <input id="bk-file" type="file" accept=".g3bak" hidden>
+                </div>
+                <div class="row">
+                  <input id="bk-drive-dir" type="text" class="grow" placeholder="G:\Mi unidad\G3G3AI" aria-label="Carpeta de Google Drive">
+                  <button id="bk-drive" class="ghost small" type="button">Guardar copia en Drive</button>
+                </div>
+                <div class="hint">Usa la carpeta de Google Drive para escritorio. La contraseña no se guarda: la pides cada vez.</div>
+              </div>
+            </details>
+            <details class="card settings-card" open>
+              <summary>
+                <span class="settings-icon" aria-hidden="true">💸</span>
+                <span class="settings-title">Uso y coste</span>
+                <span class="settings-state" data-state="usage">—</span>
+              </summary>
+              <div class="settings-body">
+                <div id="usage-box"></div>
+              </div>
+            </details>
+          </form>
           <div class="row end sticky-save">
-            <button id="logout" class="ghost">Cerrar sesión</button>
-            <button id="save-settings" class="primary">Guardar ajustes</button>
+            <button id="logout" class="ghost" type="button">Cerrar sesión</button>
+            <button id="save-settings" class="primary" type="button">Guardar ajustes</button>
           </div>
         </div>
       </section>

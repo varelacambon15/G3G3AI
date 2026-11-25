@@ -11,6 +11,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -28,9 +29,19 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Muestra la interfaz web de G3G3AI con soporte de cámara, archivos y descargas. */
 public class WebActivity extends Activity {
@@ -43,12 +54,14 @@ public class WebActivity extends Activity {
     private ValueCallback<Uri[]> fileCallback;
     private Uri cameraUri;
     private boolean direct;
+    private String page;
     private NativeBridge bridge;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         direct = getIntent().getBooleanExtra("direct", false);
+        page = getIntent().getStringExtra("page");
         baseUrl = direct ? "file:///android_asset/direct" : getIntent().getStringExtra("url");
         String token = getIntent().getStringExtra("token");
 
@@ -102,6 +115,7 @@ public class WebActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 CookieManager.getInstance().flush();
+                if (!direct && "tasks".equals(page)) openTasksTab(view);
             }
         });
 
@@ -203,9 +217,26 @@ public class WebActivity extends Activity {
         }
     }
 
+    /**
+     * Abre la pestaña Tareas de la interfaz del equipo. Se reintenta hasta que la página
+     * termina de cargar (y de iniciar sesión) y el botón queda marcado como activo.
+     */
+    private void openTasksTab(WebView view) {
+        String js = "(function(){var tries=0,active=0;"
+                + "var t=setInterval(function(){"
+                + "var login=document.getElementById('login');"
+                + "var b=document.querySelector('[data-view=\"tasks\"]');"
+                + "if(b&&(!login||login.classList.contains('hidden'))){"
+                + "if(b.classList.contains('active')){if(++active>=3)clearInterval(t);}"
+                + "else{active=0;b.click();}}"
+                + "if(++tries>240)clearInterval(t);},250);})();";
+        view.evaluateJavascript(js, null);
+    }
+
     // --- Descargas (con la cookie de sesión) ------------------------------------------------
     private void download(String url, String userAgent, String contentDisposition, String mimeType) {
-        if (url.startsWith("blob:") || url.startsWith("data:")) {
+        if (url.startsWith("data:")) { saveDataUrl(url, contentDisposition, mimeType); return; }
+        if (url.startsWith("blob:")) {
             Toast.makeText(this, "Este contenido no se puede descargar desde la app", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -223,6 +254,64 @@ public class WebActivity extends Activity {
         } catch (Exception e) {
             Toast.makeText(this, "No se pudo descargar: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
+    }
+
+    /**
+     * Guarda un enlace data: (por ejemplo la exportación de conversaciones del chat directo).
+     * DownloadManager no admite data: URL, así que se escriben los bytes directamente.
+     */
+    private void saveDataUrl(String url, String contentDisposition, String mimeType) {
+        try {
+            int comma = url.indexOf(',');
+            if (comma < 0) throw new IllegalArgumentException("datos incompletos");
+            String meta = url.substring(5, comma);
+            String payload = url.substring(comma + 1);
+            boolean base64 = meta.endsWith(";base64");
+            String mime = meta.replace(";base64", "");
+            if (mime.isEmpty() || "text/plain".equals(mime)) mime = mimeType == null ? "" : mimeType;
+            if (mime.isEmpty()) mime = "application/octet-stream";
+            byte[] bytes = base64
+                    ? Base64.decode(payload, Base64.DEFAULT)
+                    : Uri.decode(payload).getBytes(StandardCharsets.UTF_8);
+            String name = downloadName(contentDisposition, mime);
+            if (Build.VERSION.SDK_INT >= 29) {
+                ContentValues cv = new ContentValues();
+                cv.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                cv.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+                cv.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                Uri target = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
+                if (target == null) throw new IOException("no se pudo crear el archivo");
+                try (OutputStream out = getContentResolver().openOutputStream(target)) {
+                    if (out == null) throw new IOException("no se pudo abrir el archivo");
+                    out.write(bytes);
+                }
+                Toast.makeText(this, "Guardado en Descargas: " + name, Toast.LENGTH_LONG).show();
+            } else {
+                // Android 8 y anteriores: sin permiso de almacenamiento se guarda en la carpeta de la app
+                File dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                if (dir == null) throw new IOException("sin almacenamiento disponible");
+                dir.mkdirs();
+                File file = new File(dir, name);
+                try (OutputStream out = new FileOutputStream(file)) {
+                    out.write(bytes);
+                }
+                Toast.makeText(this, "Guardado en " + file.getAbsolutePath(), Toast.LENGTH_LONG).show();
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "No se pudo guardar: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** Nombre del archivo: el del content-disposition o, si no lo hay, uno con fecha. */
+    private String downloadName(String contentDisposition, String mime) {
+        if (contentDisposition != null) {
+            Matcher m = Pattern.compile("filename\\*?=(?:UTF-8'')?\"?([^\";]+)\"?", Pattern.CASE_INSENSITIVE)
+                    .matcher(contentDisposition);
+            if (m.find()) return m.group(1).trim();
+        }
+        String date = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+        if (mime != null && mime.contains("json")) return "g3g3ai-conversaciones-" + date + ".json";
+        return "g3g3ai-" + date + ".bin";
     }
 
     // --- Pantalla de error -----------------------------------------------------------------

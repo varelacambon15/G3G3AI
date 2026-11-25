@@ -37,6 +37,7 @@ from .undo import UndoJournal
 from .engine import EngineInstaller
 from . import documents as D
 from . import devtools, hardware, images, ollama
+from . import export
 from .context import HistoryBuilder
 from .sync import INTERVAL as SYNC_INTERVAL, Sync, SyncError, new_key as new_sync_key
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
@@ -341,6 +342,21 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         session_allow.pop(cid, None)
         return {"ok": True}
 
+    @app.get("/api/conversations/{cid}/export")
+    async def conversation_export(cid: str, format: str = "md"):
+        """Descarga la conversación como Markdown o HTML. Sólo texto, modelo y nombres de adjuntos."""
+        conv = db.get_conversation(cid)
+        if not conv:
+            raise HTTPException(404, "Conversación no encontrada")
+        fmt = (format or "md").strip().lower()
+        if fmt not in ("md", "html"):
+            raise HTTPException(400, "Formato no válido: usa md o html")
+        body = export.to_html(conv) if fmt == "html" else export.to_markdown(conv)
+        media = "text/html; charset=utf-8" if fmt == "html" else "text/markdown; charset=utf-8"
+        name = export.filename(conv.get("title"), fmt)
+        return Response(body, media_type=media,
+                        headers={"Content-Disposition": export.content_disposition(name)})
+
     @app.post("/api/backup/export")
     async def backup_export(body: dict):
         try:
@@ -351,6 +367,32 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         name = time.strftime("g3g3ai-%Y%m%d.g3bak")
         return Response(data, media_type="application/octet-stream",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @app.post("/api/backup/drive")
+    async def backup_drive(body: dict):
+        folder = str(cfg["drive_backup_dir"] or "").strip()
+        if not folder:
+            raise HTTPException(400, "Elige primero una carpeta de Drive en Ajustes → Copia de seguridad")
+        target_dir = Path(folder).expanduser()
+        if not target_dir.is_dir():
+            raise HTTPException(400, "La carpeta no existe. Comprueba que Google Drive está sincronizado.")
+        try:
+            data = await asyncio.to_thread(backup.export_bytes, sync, cfg, str(body.get("password") or ""),
+                                           bool(body.get("conversations")))
+        except backup.BackupError as e:
+            raise HTTPException(400, str(e))
+        path = target_dir / time.strftime("g3g3ai-%Y-%m-%d-%H%M%S.g3bak")
+        tmp = path.parent / (path.name + ".tmp")
+        try:
+            await asyncio.to_thread(tmp.write_bytes, data)
+            await asyncio.to_thread(os.replace, tmp, path)
+        except OSError as e:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise HTTPException(400, f"No se pudo escribir en la carpeta de Drive: {e}")
+        return {"path": str(path), "bytes": len(data)}
 
     @app.post("/api/backup/import")
     async def backup_import(body: dict):

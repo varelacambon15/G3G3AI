@@ -14,7 +14,7 @@ from .agent_prompt import BASE_PROMPT, OLD_DEFAULTS
 
 APP = "g3g3ai"
 HOME = Path.home()
-CONFIG_VERSION = 7
+CONFIG_VERSION = 8
 
 
 def _default_dirs() -> tuple[Path, Path]:
@@ -106,6 +106,8 @@ DEFAULTS: dict = {
     "sync_key": "",             # clave común en todos los equipos que se sincronizan
     "sync_peers": [],           # [{"url": "http://192.168.1.50:8800", "name": "..."}]
     "settings_updated": 0,      # cuándo se cambiaron por última vez los ajustes comunes
+    # Copia de seguridad: carpeta de Google Drive (Drive para escritorio) donde guardarla. Vacío = desactivado.
+    "drive_backup_dir": "",
     # Memoria entre conversaciones
     "memory_enabled": True,     # usar los recuerdos como contexto
     "memory_auto": True,        # la IA puede guardar recuerdos por su cuenta (se ve en el chat)
@@ -182,6 +184,16 @@ DEFAULTS: dict = {
             "name": "Groq",
             "type": "openai",
             "base_url": "https://api.groq.com/openai/v1",
+            "api_key": "",
+            "enabled": False,
+        },
+        {
+            "id": "opencode-go",
+            "name": "OpenCode Go",
+            "type": "openai",
+            "base_url": "https://opencode.ai/inference/go/openai/v1",
+            # El catálogo de Go no está bajo base_url: vive en /inference/go/v1/models.
+            "models_url": "https://opencode.ai/inference/go/v1/models",
             "api_key": "",
             "enabled": False,
         },
@@ -263,6 +275,11 @@ class Config:
         if "write_roots" not in self._stored_keys and d.get("agent_workdir"):
             # v3: la carpeta de trabajo del agente pasa a ser la carpeta modificable inicial
             d["write_roots"] = [d["agent_workdir"]]
+        if d.get("config_version", 1) < 8:  # v8: proveedor OpenCode Go
+            have = {p.get("id") for p in d.get("providers", [])}
+            if "opencode-go" not in have:
+                d.setdefault("providers", []).append(
+                    copy.deepcopy(next(p for p in DEFAULTS["providers"] if p["id"] == "opencode-go")))
         if d.get("config_version", 1) >= 2:
             d["config_version"] = CONFIG_VERSION
             return True

@@ -2,6 +2,7 @@ package com.g3g3ai.client;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
@@ -66,18 +67,44 @@ final class NativeBridge {
         prefs.edit().putString(key, value).apply();
     }
 
-    /** Equipos guardados en la app (para importar sus APIs). */
+    /** Equipos guardados en la app (para importar sus APIs y abrirlos desde el chat directo). */
     @JavascriptInterface
     public String getServers() {
         JSONArray arr = new JSONArray();
         try {
+            int last = Servers.lastIndex(activity);
+            int i = 0;
             for (Servers.Server s : Servers.load(activity)) {
-                arr.put(new JSONObject().put("name", s.name).put("url", s.url).put("token", s.token));
+                arr.put(new JSONObject().put("name", s.name).put("url", s.url).put("token", s.token)
+                        .put("last", i == last));
+                i++;
             }
         } catch (JSONException ignored) {
             // lista vacía
         }
         return arr.toString();
+    }
+
+    /**
+     * Abre un equipo desde el chat directo. Si url viene vacía, abre la lista de equipos.
+     * page = "tasks" abre el equipo en la pestaña Tareas.
+     */
+    @JavascriptInterface
+    public void openPc(String url, String token, String page) {
+        activity.runOnUiThread(() -> {
+            Intent i;
+            if (url != null && !url.isEmpty()) {
+                i = new Intent(activity, WebActivity.class);
+                i.putExtra("url", url);
+                i.putExtra("token", token == null ? "" : token);
+                if (page != null && !page.isEmpty()) i.putExtra("page", page);
+            } else {
+                i = new Intent(activity, ServersActivity.class);
+                i.putExtra("noauto", true);
+                i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            }
+            activity.startActivity(i);
+        });
     }
 
     private void run(String id, String method, String url, String headersJson, String body) {

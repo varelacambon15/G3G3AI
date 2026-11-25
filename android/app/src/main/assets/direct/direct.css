@@ -15,9 +15,10 @@ input, select, textarea { background: var(--panel); border: 1px solid var(--bord
 .hidden { display: none !important; }
 .muted { color: var(--muted); } .small { font-size: 13px; }
 .top { display: flex; align-items: center; gap: 6px; padding: 8px 10px; padding-top: max(8px, env(safe-area-inset-top)); border-bottom: 1px solid var(--border); background: var(--bg); }
-.top .title { flex: 1; display: flex; flex-direction: column; line-height: 1.2; text-align: center; }
-.top small { color: var(--muted); font-size: 12px; }
+.top .title { flex: 1; display: flex; flex-direction: column; line-height: 1.2; text-align: center; min-width: 0; }
+.top small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon { background: none; border: 0; font-size: 20px; padding: 6px 10px; border-radius: 10px; color: var(--muted); }
+.icon.pc { font-size: 13px; padding: 6px 8px; white-space: nowrap; }
 .drawer { position: fixed; z-index: 30; inset: 0 auto 0 0; width: min(300px, 84vw); background: var(--side); transform: translateX(-105%); transition: transform .2s; padding: 14px 10px; display: flex; flex-direction: column; box-shadow: 4px 0 24px rgba(0,0,0,.18); }
 body.drawer-open .drawer { transform: none; }
 body.drawer-open .scrim { display: block; }
@@ -59,6 +60,12 @@ body.drawer-open .scrim { display: block; }
 #input { border: 0; background: transparent; resize: none; padding: 4px 2px 6px; max-height: 35vh; outline: none; }
 .composer .row { display: flex; align-items: center; gap: 6px; }
 .round { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: transparent; }
+.add-wrap { position: relative; }
+.add-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 20; display: flex; flex-direction: column; gap: 2px; min-width: 200px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 4px; box-shadow: 0 8px 22px rgba(0,0,0,.18); }
+.add-menu button { background: none; border: 0; border-radius: 8px; padding: 11px 12px; text-align: left; font-size: 15px; }
+.add-menu button:active { background: var(--hover); }
+.add-menu button:disabled { color: var(--muted); opacity: .6; }
+.add-menu .add-hint { margin: 0; padding: 0 12px 8px; }
 #model { flex: 1; border: 0; background: transparent; color: var(--muted); font-size: 13px; text-overflow: ellipsis; }
 .send { width: 36px; height: 36px; border-radius: 10px; border: 0; background: var(--accent); color: #fff; font-weight: 700; font-size: 18px; }
 .send.stop { background: var(--text); color: var(--bg); font-size: 13px; }
@@ -79,6 +86,11 @@ body.drawer-open .scrim { display: block; }
 .prov .fields { display: grid; gap: 6px; margin-top: 8px; }
 .primary { width: 100%; background: var(--accent); color: #fff; border: 0; border-radius: 12px; padding: 12px; font-weight: 600; }
 .ghost { background: none; border: 1px solid var(--strong); border-radius: 10px; padding: 7px 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.actions .ghost { flex: 1; }
+.notice { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.notice p { margin: 0; }
+.notice .primary { width: auto; padding: 10px 18px; }
 .server { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; }
 #toast { position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%); z-index: 60; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
 #toast div { background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 10px; font-size: 14px; }

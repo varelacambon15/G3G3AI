@@ -400,7 +400,7 @@ def test_config_migration_v2_to_v3(tmp_path):
     p = tmp_path / "config.json"
     p.write_text(json.dumps({"config_version": 2, "token": "t", "agent_workdir": "/x/trabajo", "ai_write": "ask"}))
     c = Config(p)
-    assert c["write_roots"] == ["/x/trabajo"] and c["config_version"] == 7
+    assert c["write_roots"] == ["/x/trabajo"] and c["config_version"] == 8
     assert c.provider("ollama")["base_url"] == "http://127.0.0.1:11434/v1"  # v4 añade Ollama
     assert "~/.ssh" in c["blocked_paths"] and ".env" in c["blocked_paths"]
     p.write_text(json.dumps({"config_version": 1, "token": "t", "allow_ai_file_write": True}))
@@ -1666,6 +1666,33 @@ def test_encrypted_backup_roundtrip(env):
     assert ok.status_code == 200 and ok.json()["settings"] is True
     assert cfg["github_token"] == "ghp_token" and cfg.provider("deepseek")["api_key"] == "sk-secreta-123"
     assert [m["content"] for m in client.get("/api/memory", headers=h).json()] == ["Prefiere respuestas cortas"]
+
+
+def test_backup_drive(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    r = client.post("/api/backup/drive", headers=h, json={"password": "contraseña-larga"})
+    assert r.status_code == 400 and "Elige primero una carpeta de Drive" in r.json()["detail"]
+
+    cfg.set("drive_backup_dir", str(tmp / "no-existe"))
+    r = client.post("/api/backup/drive", headers=h, json={"password": "contraseña-larga"})
+    assert r.status_code == 400 and "La carpeta no existe" in r.json()["detail"]
+
+    folder = tmp / "drive"; folder.mkdir()
+    cfg.set("drive_backup_dir", str(folder))
+    r = client.post("/api/backup/drive", headers=h, json={"password": "corta"})
+    assert r.status_code == 400                                   # respeta el mínimo de export_bytes
+
+    r = client.post("/api/backup/drive", headers=h, json={"password": "contraseña-larga", "conversations": True})
+    assert r.status_code == 200
+    p = Path(r.json()["path"])
+    assert p.parent == folder and re.fullmatch(r"g3g3ai-\d{4}-\d{2}-\d{2}-\d{6}\.g3bak", p.name)
+    assert p.exists() and r.json()["bytes"] == p.stat().st_size
+    assert not (folder / (p.name + ".tmp")).exists()               # escritura atómica: el temporal desaparece
+    assert "contraseña-larga".encode("utf-8") not in p.read_bytes()  # la copia va cifrada
+    for f in (tmp / "cfg").rglob("*"):
+        if f.is_file():
+            assert "contraseña-larga" not in f.read_text("utf-8", errors="ignore")
 
 
 def test_subagent_patch_roundtrip_and_conflicts(env):

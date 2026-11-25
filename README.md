@@ -12,6 +12,7 @@ Cliente de IA al estilo de LM Studio para tus **PC** (Windows, Linux, macOS), al
 - 🌐 **Búsqueda web**: busca en internet y lee páginas, citando las fuentes.
 - 📷 **Fotos y documentos**: adjunta fotos (o hazlas con la cámara del móvil), PDF, Word, Excel, PowerPoint u OpenDocument, y pregunta sobre ellos. Si el modelo elegido no ve imágenes (como DeepSeek), otro modelo con visión las describe automáticamente.
 - 🗜 **Conversaciones largas**: cuando no caben en el contexto, lo antiguo se resume solo, y en las tareas largas del agente se recortan las salidas viejas de las herramientas.
+- 📤 **Exportar**: exporta cualquier conversación a Markdown o HTML (para imprimir o PDF) desde su menú.
 - 🎨 **Generación de imágenes**: por API (OpenAI, Gemini, OpenRouter…) o en local con stable-diffusion.cpp. Escribe `/imagen descripción` o pídeselo a la IA.
 - 🧠 **Memoria entre conversaciones**: recuerda datos duraderos sobre ti (preferencias, proyectos…). Cada recuerdo nuevo se ve en el chat y puedes editarlos o borrarlos en Ajustes → Memoria.
 - 🔄 **Sincronización entre equipos**: con una clave común se sincronizan conversaciones, memoria y APIs. Además, cada equipo puede usar el modelo local del otro (Ajustes → Añadir proveedor → «Otro equipo con G3G3AI»).
@@ -79,6 +80,8 @@ Con la estrategia *Inteligente*:
 - el código, los análisis, los documentos largos, los adjuntos y el modo agente van al modelo potente.
 
 Cada respuesta indica qué modelo contestó y por qué.
+
+**OpenCode Go** (MiMo, DeepSeek…) se conecta con tu clave del plan Go.
 
 ### Modo agente (🛠) y búsqueda web (🌐)
 
@@ -251,7 +254,7 @@ Según el modelo elegido (o lo que fijes en Ajustes → «Exigencia del agente»
 - **Comparar carpetas:** `compare_dirs` compara dos carpetas (solo lectura) y dice qué falta en cada una, qué tiene el mismo nombre pero contenido distinto (compara el contenido, no solo la fecha) y qué se ha movido o renombrado. Ignora `.git`, `node_modules` y similares, más los patrones que le des. Respeta las rutas protegidas. Ejemplo: «compara mis Documentos con la copia del disco externo y dime qué me falta».
 - **Conoce tu equipo:** la herramienta `system_info` le da al agente tu procesador, RAM, gráfica, disco y el modelo local que mejor te encaja, sin pedirte que ejecutes comandos. El agente viene **activado por defecto**; si lo desactivas (⚙ junto al cuadro de texto), el modelo lo sabe y te lo dice en vez de «no puedo».
 - **Correo protegido:** los perfiles de Thunderbird y Outlook están en las rutas protegidas por defecto (también en Windows y macOS). Si algún día quieres que la IA lea tu correo, quítalos de Ajustes → «Rutas protegidas» y añade la carpeta a las visibles.
-- **Copia de seguridad cifrada:** Ajustes → «💾 Copia de seguridad» exporta ajustes (con claves API), memoria y, si quieres, conversaciones a un archivo `.g3bak` cifrado con tu contraseña, para importarlo en otro equipo.
+- **Copia de seguridad cifrada:** Ajustes → «💾 Copia de seguridad» exporta ajustes (con claves API), memoria y, si quieres, conversaciones a un archivo `.g3bak` cifrado con tu contraseña, para importarlo en otro equipo. También puedes guardarla directamente en una carpeta de Google Drive para escritorio (p. ej. `G:\Mi unidad\G3G3AI`): escribe la carpeta en esa misma tarjeta y pulsa «Guardar copia en Drive». La contraseña no se guarda: se pide cada vez.
 - **Uso y coste:** cada respuesta muestra sus tokens y un coste estimado; Ajustes → «💸 Uso y coste» resume el mes por modelo. Los precios son orientativos y editables; con un límite mensual te avisa al 80% y al 100%.
 - **Contexto a la vista:** junto al cuadro de texto ves el % de contexto usado; `/compact` resume la conversación ahora y conserva el último intercambio.
 - **Volver atrás (↶):** en cada mensaje tuyo, el botón ↶ devuelve los archivos que la IA tocó desde ahí a su estado anterior y borra esa parte de la conversación para que reformules. Lo que hagan los comandos no se deshace.

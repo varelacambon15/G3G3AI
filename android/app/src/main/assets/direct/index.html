@@ -10,6 +10,7 @@
 <header class="top">
   <button id="menu" class="icon" aria-label="Conversaciones">☰</button>
   <div class="title"><b>Chat directo</b><small id="subtitle">sin equipo · con tus claves API</small></div>
+  <button id="my-pc" class="icon pc" aria-label="Mi PC" title="Abrir mi PC">🖥 Mi PC</button>
   <button id="settings-btn" class="icon" aria-label="Ajustes">⚙</button>
 </header>
 
@@ -27,8 +28,20 @@
     <div id="attachments" class="chips"></div>
     <textarea id="input" rows="1" placeholder="Escribe un mensaje…"></textarea>
     <div class="row">
-      <button id="photo" class="round" title="Añadir foto" aria-label="Añadir foto">📷</button>
-      <input id="photo-input" type="file" accept="image/*" hidden>
+      <div class="add-wrap">
+        <button id="add" class="round" title="Añadir" aria-label="Añadir">＋</button>
+        <div id="add-menu" class="add-menu hidden">
+          <button id="add-camera" type="button">📷 Hacer foto</button>
+          <button id="add-gallery" type="button">🖼 Elegir de la galería</button>
+          <button id="add-gbak" type="button">📂 Importar copia de G3G3AI (.g3bak)</button>
+          <button id="add-export" type="button">💾 Exportar conversaciones</button>
+          <button id="add-import" type="button">Importar conversaciones (.json)</button>
+          <button id="add-tasks" type="button">🤖 Tareas en mi PC</button>
+          <p id="add-tasks-hint" class="add-hint muted small hidden">Conecta un PC para usar sus tareas</p>
+        </div>
+      </div>
+      <input id="camera-input" type="file" accept="image/*" capture="environment" hidden>
+      <input id="gallery-input" type="file" accept="image/*" hidden>
       <select id="model" aria-label="Modelo"></select>
       <button id="send" class="send" aria-label="Enviar">↑</button>
     </div>
@@ -43,6 +56,15 @@
       <p class="muted">Copia los proveedores y sus claves desde tu PC (deben estar encendidos y en la misma red).</p>
       <div id="servers"></div>
     </div>
+    <div class="card" id="backup-card">
+      <h3>Importar copia de G3G3AI</h3>
+      <p class="muted small">Puedes elegir el archivo desde Google Drive. La copia se descifra en este móvil: la contraseña no se envía a ningún sitio.</p>
+      <label>Contraseña de la copia <input id="bak-password" type="password" autocomplete="off" placeholder="Contraseña de la copia"></label>
+      <div class="actions">
+        <button id="bak-pick" class="ghost">Elegir archivo…</button>
+      </div>
+      <input id="bak-input" type="file" accept=".g3bak,application/octet-stream" hidden>
+    </div>
     <div class="card">
       <h3>Proveedores</h3>
       <div id="providers"></div>
@@ -53,6 +75,15 @@
       <label>Instrucciones del sistema<textarea id="system" rows="3"></textarea></label>
       <label>Temperatura <input id="temperature" type="number" step="0.1" min="0" max="2"></label>
       <label>Máx. tokens por respuesta <input id="max-tokens" type="number" min="64" step="64"></label>
+    </div>
+    <div class="card">
+      <h3>Copia de tus conversaciones</h3>
+      <p class="muted small">Descarga un archivo .json con tus conversaciones de este móvil (sin tus claves API) o recupera una copia en otro teléfono.</p>
+      <div class="actions">
+        <button id="export-convs" class="ghost">Exportar</button>
+        <button id="import-convs" class="ghost">Importar…</button>
+      </div>
+      <input id="import-input" type="file" accept=".json,application/json" hidden>
     </div>
     <p class="muted small">Las claves se guardan en el almacenamiento privado de esta app y sólo se envían al proveedor correspondiente.</p>
     <button id="settings-save" class="primary">Guardar</button>

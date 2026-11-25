@@ -142,6 +142,12 @@ const S = {
 };
 const saveConvs = () => { try { localStorage.setItem("g3d:convs", JSON.stringify(S.convs)); } catch { toast("No queda espacio para guardar la conversación"); } };
 const ready = () => S.providers.filter((p) => p.enabled && p.api_key);
+const hasKey = () => S.providers.some((p) => p.api_key);
+// Cada conversación lleva un id propio para no duplicarla al importar una copia.
+const convId = () => "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+let needsId = false;
+for (const c of S.convs) if (c && !c.id) { c.id = convId(); needsId = true; }
+if (needsId) saveConvs();
 
 // --- Modelos ---------------------------------------------------------------------------
 async function fetchModels(p) {
@@ -210,12 +216,20 @@ function messageEl(m) {
   }
   return el;
 }
+// Aviso en el propio chat cuando no hay ninguna API configurada (no en un toast).
+function apiNotice() {
+  return h("div", { class: "notice" },
+    h("b", {}, "Añade una API para empezar"),
+    h("p", { class: "muted small" }, "El chat directo necesita al menos una clave de API. Puedes importarla desde tu PC o escribirla a mano."),
+    h("button", { class: "primary", onclick: openSettings }, "Abrir Ajustes"));
+}
 function renderMessages() {
   const box = $("#messages"); box.innerHTML = "";
+  if (!hasKey()) box.append(apiNotice());
   if (!S.current?.messages.length) {
     box.append(h("div", { class: "empty" }, h("h1", {}, h("span", { class: "logo" }, "✦ "), "Hola"),
-      h("p", {}, ready().length ? "Escribe abajo. Hablas directamente con la API, sin necesidad de tener el equipo encendido."
-        : "Pulsa ⚙ para importar tus APIs desde tu PC, o pega una clave.")));
+      h("p", {}, hasKey() ? "Escribe abajo. Hablas directamente con la API, sin necesidad de tener el equipo encendido."
+        : "Cuando tengas una clave, escribe aquí y hablarás directamente con la API sin pasar por el PC.")));
     return;
   }
   for (const m of S.current.messages) box.append(messageEl(m));
@@ -227,12 +241,36 @@ document.addEventListener("click", (e) => {
   }
 });
 
-// --- Fotos ------------------------------------------------------------------------------
-$("#photo").addEventListener("click", () => $("#photo-input").click());
-$("#photo-input").addEventListener("change", async (e) => {
-  for (const f of e.target.files) S.attachments.push(await shrink(f));
-  e.target.value = ""; renderChips();
+// --- Añadir (menú «＋») -------------------------------------------------------------------
+const addMenu = $("#add-menu");
+const closeAddMenu = () => addMenu.classList.add("hidden");
+function savedServers() {
+  try { const list = JSON.parse(Native.getServers() || "[]"); return Array.isArray(list) ? list : []; } catch { return []; }
+}
+function refreshAddTasks() {
+  const has = savedServers().length > 0;
+  $("#add-tasks").disabled = !has;
+  $("#add-tasks-hint").classList.toggle("hidden", has);
+}
+$("#add").addEventListener("click", () => { if (addMenu.classList.contains("hidden")) refreshAddTasks(); addMenu.classList.toggle("hidden"); });
+$("#add-camera").addEventListener("click", () => { closeAddMenu(); $("#camera-input").click(); });
+$("#add-gallery").addEventListener("click", () => { closeAddMenu(); $("#gallery-input").click(); });
+$("#add-gbak").addEventListener("click", () => {
+  closeAddMenu(); openSettings();
+  $("#backup-card").scrollIntoView({ block: "start" });
+  setTimeout(() => $("#bak-password").focus(), 80);
 });
+$("#add-export").addEventListener("click", () => { closeAddMenu(); $("#export-convs").click(); });
+$("#add-import").addEventListener("click", () => { closeAddMenu(); $("#import-input").click(); });
+$("#add-tasks").addEventListener("click", () => { if ($("#add-tasks").disabled) return; closeAddMenu(); openPc("tasks"); });
+document.addEventListener("click", (e) => { if (!e.target.closest(".add-wrap")) closeAddMenu(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAddMenu(); });
+for (const sel of ["#camera-input", "#gallery-input"]) {
+  $(sel).addEventListener("change", async (e) => {
+    for (const f of e.target.files) S.attachments.push(await shrink(f));
+    e.target.value = ""; closeAddMenu(); renderChips();
+  });
+}
 function shrink(file) {
   return new Promise((resolve, reject) => {
     const img = new Image(), url = URL.createObjectURL(file);
@@ -261,7 +299,7 @@ $("#send").addEventListener("click", () => {
   const [pid, ...rest] = ($("#model").value || "").split("::");
   const p = S.providers.find((x) => x.id === pid);
   if (!p) { toast("Elige un modelo (o configura una API en ⚙)"); return; }
-  if (!S.current) { S.current = { title: (text || "Foto").slice(0, 50), messages: [], created: Date.now() }; S.convs.unshift(S.current); }
+  if (!S.current) { S.current = { id: convId(), title: (text || "Foto").slice(0, 50), messages: [], created: Date.now() }; S.convs.unshift(S.current); }
   S.current.messages.push({ role: "user", content: text, images: S.attachments.slice() });
   input.value = ""; input.style.height = "auto"; S.attachments = []; renderChips();
   saveConvs(); renderMessages(); renderConvs();
@@ -399,7 +437,7 @@ async function importFrom(server, btn) {
     store.set("providers", S.providers); store.set("settings", S.settings);
     S.models = {}; renderProviders(); openSettings();
     toast(n ? `${n} API(s) importadas de ${server.name || server.url}` : "Ese equipo no tiene APIs configuradas");
-    await renderModels(true);
+    await renderModels(true); renderMessages();
   } catch (e) {
     toast("No se pudo importar: " + e.message + ". ¿Está el equipo encendido y en la misma red?", 5000);
   } finally { btn.disabled = false; btn.textContent = "Importar"; }
@@ -409,6 +447,248 @@ $("#settings-save").addEventListener("click", async () => {
   store.set("providers", S.providers); store.set("settings", S.settings);
   S.models = {}; $("#settings").classList.add("hidden"); toast("Guardado");
   await renderModels(true); renderMessages();
+});
+
+// --- Copia de conversaciones (exportar / importar) --------------------------------------
+// El JSON sólo lleva título, fecha, mensajes y modelo: nunca claves ni proveedores.
+function b64(text) {
+  const bytes = new TextEncoder().encode(text);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+$("#export-convs").addEventListener("click", () => {
+  const list = S.convs.map((c) => ({
+    id: c.id,
+    title: c.title || "Conversación",
+    created: c.created || null,
+    messages: (c.messages || []).map((m) => {
+      const out = { role: m.role, content: m.content || "", model: m.model || "" };
+      if (m.reasoning) out.reasoning = m.reasoning;
+      if (Array.isArray(m.images) && m.images.length) out.images = m.images;
+      if (m.error) out.error = m.error;
+      return out;
+    }),
+  }));
+  const text = JSON.stringify(list, null, 2);
+  if (new Blob([text]).size > 20 * 1024 * 1024) {
+    toast("Son más de 20 MB: borra fotos o conversaciones antes de exportar", 5000);
+    return;
+  }
+  const name = "g3g3ai-conversaciones-" + new Date().toISOString().slice(0, 10) + ".json";
+  const a = h("a", { href: "data:application/json;base64," + b64(text), download: name });
+  document.body.append(a); a.click(); a.remove();
+  toast(`${list.length} conversación(es) exportada(s)`);
+});
+$("#import-convs").addEventListener("click", () => $("#import-input").click());
+$("#import-input").addEventListener("change", (e) => {
+  const file = e.target.files[0]; e.target.value = "";
+  if (file) importConvs(file);
+});
+function importConvs(file) {
+  const reader = new FileReader();
+  reader.onerror = () => toast("No se pudo leer el archivo", 4000);
+  reader.onload = () => {
+    let list = null;
+    try {
+      const raw = JSON.parse(String(reader.result || ""));
+      list = Array.isArray(raw) ? raw : Array.isArray(raw?.conversations) ? raw.conversations : null;
+    } catch {
+      toast("Archivo no válido: no es un JSON de conversaciones", 5000); return;
+    }
+    if (!list) { toast("Archivo no válido: no contiene una lista de conversaciones", 5000); return; }
+    const ids = new Set(S.convs.map((c) => c.id));
+    const imported = [];
+    let valid = 0;
+    for (const c of list) {
+      if (!c || typeof c !== "object" || !Array.isArray(c.messages)) continue;
+      valid++;
+      if (c.id && ids.has(c.id)) continue;
+      const messages = c.messages.filter((m) => m && typeof m === "object" && (m.role === "user" || m.role === "assistant"))
+        .map((m) => {
+          const out = { role: m.role, content: typeof m.content === "string" ? m.content : "" };
+          if (typeof m.model === "string" && m.model) out.model = m.model;
+          if (typeof m.reasoning === "string" && m.reasoning) out.reasoning = m.reasoning;
+          if (Array.isArray(m.images)) {
+            const imgs = m.images.filter((x) => typeof x === "string" && x.startsWith("data:image/"));
+            if (imgs.length) out.images = imgs;
+          }
+          if (typeof m.error === "string" && m.error) out.error = m.error;
+          return out;
+        });
+      const conv = {
+        id: typeof c.id === "string" && c.id ? c.id : convId(),
+        title: typeof c.title === "string" && c.title.trim() ? c.title.trim().slice(0, 100) : "Conversación importada",
+        created: Number(c.created) || Date.now(),
+        messages,
+      };
+      ids.add(conv.id); imported.push(conv);
+    }
+    if (!valid) { toast("Archivo no válido: no contiene conversaciones", 5000); return; }
+    if (!imported.length) { toast("No hay conversaciones nuevas que importar", 4000); return; }
+    S.convs.unshift(...imported);
+    saveConvs(); renderConvs();
+    toast(`${imported.length} conversación(es) importada(s)`);
+  };
+  reader.readAsText(file);
+}
+
+// --- Mi PC desde el chat ---------------------------------------------------------------
+// Abre el equipo guardado (o la lista si hay varios) sin perder el chat directo.
+function openPc(page = "") {
+  const list = savedServers();
+  if (!list.length) {
+    toast("No hay ningún PC guardado. Añádelo en la pantalla de inicio de la app.", 5000);
+    return;
+  }
+  if (list.length === 1) { Native.openPc(list[0].url, list[0].token || "", page); return; }
+  // Varios equipos: el último usado para Tareas; para «Mi PC», la lista.
+  const last = list.find((s) => s && s.last);
+  if (page === "tasks" && last) { Native.openPc(last.url, last.token || "", page); return; }
+  Native.openPc("", "", "");
+}
+$("#my-pc").addEventListener("click", () => openPc(""));
+
+// --- Copia cifrada de G3G3AI (.g3bak) ----------------------------------------------------
+// Mismo formato que el PC: G3G3AI-BACKUP-1 + sal (base64) + token Fernet.
+// Fernet = versión(1) | fecha(8) | IV(16) | AES-128-CBC | HMAC-SHA256(32), con la clave
+// derivada con PBKDF2-HMAC-SHA256 (600000 iteraciones, 32 bytes).
+const BAK_MAGIC = "G3G3AI-BACKUP-1\n";
+const BAK_ITER = 600000;
+const BAK_NO_CRYPTO = "Este móvil no puede descifrar la copia en la app; usa la copia de conversaciones (.json) o el PC";
+const canDecrypt = () => typeof crypto !== "undefined" && !!crypto.subtle
+  && typeof crypto.subtle.deriveBits === "function" && window.isSecureContext !== false;
+
+function b64Bytes(text) {
+  const bin = atob(String(text).replace(/-/g, "+").replace(/_/g, "/").replace(/\s+/g, ""));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function readBytes(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(new Error("No se pudo leer el archivo"));
+    r.onload = () => resolve(new Uint8Array(r.result));
+    r.readAsArrayBuffer(file);
+  });
+}
+async function decryptBackup(data, password) {
+  const magic = new TextEncoder().encode(BAK_MAGIC);
+  if (data.length <= magic.length) throw new Error("Este archivo no es una copia de seguridad de G3G3AI");
+  for (let i = 0; i < magic.length; i++) {
+    if (data[i] !== magic[i]) throw new Error("Este archivo no es una copia de seguridad de G3G3AI");
+  }
+  let nl = magic.length;
+  while (nl < data.length && data[nl] !== 0x0a) nl++;
+  if (nl >= data.length) throw new Error("La copia está dañada");
+  const salt = b64Bytes(new TextDecoder().decode(data.subarray(magic.length, nl)));
+  const token = b64Bytes(new TextDecoder().decode(data.subarray(nl + 1)).trim());
+  if (token.length < 1 + 8 + 16 + 16 + 32 || token[0] !== 0x80) throw new Error("La copia está dañada");
+  const signed = token.subarray(0, token.length - 32);
+  const mac = token.subarray(token.length - 32);
+  const iv = token.subarray(9, 25);
+  const cipher = token.subarray(25, token.length - 32);
+  const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations: BAK_ITER, hash: "SHA-256" }, material, 256));
+  // El MAC se comprueba ANTES de descifrar (verify compara en tiempo constante).
+  const sigKey = await crypto.subtle.importKey("raw", bits.subarray(0, 16), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  const ok = await crypto.subtle.verify("HMAC", sigKey, mac, signed);
+  if (!ok) throw new Error("Contraseña incorrecta o archivo dañado");
+  const aesKey = await crypto.subtle.importKey("raw", bits.subarray(16, 32), { name: "AES-CBC" }, false, ["decrypt"]);
+  let plain;
+  try { plain = await crypto.subtle.decrypt({ name: "AES-CBC", iv }, aesKey, cipher); }
+  catch { throw new Error("Contraseña incorrecta o archivo dañado"); }
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+// Añade sólo lo que falte: conversaciones por id, memoria por uid y proveedores compatibles
+// (tipo openai/anthropic, con clave, que no apunten a localhost). Nunca se muestra una clave.
+function applyBackup(doc) {
+  const ch = (doc && doc.changes) || {};
+  const known = new Set(S.convs.map((c) => c.id));
+  const convs = [];
+  for (const c of Array.isArray(ch.conversations) ? ch.conversations : []) {
+    if (!c || typeof c !== "object" || !Array.isArray(c.messages) || (c.id && known.has(c.id))) continue;
+    const messages = c.messages
+      .filter((m) => m && typeof m === "object" && (m.role === "user" || m.role === "assistant"))
+      .map((m) => {
+        let meta = m.meta;
+        if (typeof meta === "string") { try { meta = JSON.parse(meta); } catch { meta = null; } }
+        const out = { role: m.role, content: typeof m.content === "string" ? m.content : "" };
+        const model = meta && typeof meta.model === "string" && meta.model ? meta.model
+          : (m.role === "assistant" && typeof c.model === "string" ? c.model : "");
+        if (model) out.model = model;
+        if (typeof m.reasoning === "string" && m.reasoning) out.reasoning = m.reasoning;
+        return out;
+      });
+    const secs = Number(c.created) || 0;
+    const conv = {
+      id: typeof c.id === "string" && c.id ? c.id : convId(),
+      title: typeof c.title === "string" && c.title.trim() ? c.title.trim().slice(0, 100) : "Conversación importada",
+      created: secs > 0 ? (secs < 1e12 ? secs * 1000 : secs) : Date.now(),
+      messages,
+    };
+    known.add(conv.id); convs.push(conv);
+  }
+  if (convs.length) { S.convs.unshift(...convs); saveConvs(); renderConvs(); }
+
+  let nMem = 0;
+  try {
+    const mems = JSON.parse(localStorage.getItem("g3d:memories") || "[]");
+    const uids = new Set((Array.isArray(mems) ? mems : []).map((m) => m && m.uid));
+    for (const m of Array.isArray(ch.memories) ? ch.memories : []) {
+      if (!m || typeof m.content !== "string" || !m.content.trim() || !m.uid || uids.has(m.uid)) continue;
+      mems.push({ uid: m.uid, content: m.content, source: m.source || "", created: Number(m.created) || 0, updated: Number(m.updated) || 0 });
+      uids.add(m.uid); nMem++;
+    }
+    if (nMem) localStorage.setItem("g3d:memories", JSON.stringify(mems));
+  } catch { /* sin espacio: lo importante (conversaciones y claves) ya está guardado */ }
+
+  const values = (ch.settings && ch.settings.values) || {};
+  let nProv = 0;
+  for (const p of Array.isArray(values.providers) ? values.providers : []) {
+    if (!p || typeof p !== "object") continue;
+    const type = p.type === "anthropic" ? "anthropic" : p.type === "openai" ? "openai" : null;
+    const url = typeof p.base_url === "string" ? p.base_url.trim() : "";
+    const key = typeof p.api_key === "string" ? p.api_key.trim() : "";
+    if (!type || !key || !/^https?:\/\//i.test(url)) continue;
+    if (/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::|\/|$)/i.test(url)) continue;  // no alcanzable desde el móvil
+    const clean = {
+      id: typeof p.id === "string" && p.id ? p.id : "importado-" + nProv,
+      name: String(p.name || p.id || "API").slice(0, 60), type,
+      base_url: url.replace(/\/+$/, ""), api_key: key, enabled: true,
+    };
+    const cur = S.providers.find((x) => x.id === clean.id);
+    if (cur) Object.assign(cur, clean); else S.providers.push(clean);
+    nProv++;
+  }
+  if (nProv) { store.set("providers", S.providers); S.models = {}; renderProviders(); renderModels(true); }
+
+  return { conversations: convs.length, providers: nProv, memories: nMem };
+}
+$("#bak-pick").addEventListener("click", () => {
+  if (!canDecrypt()) { toast(BAK_NO_CRYPTO, 6000); return; }
+  if (!$("#bak-password").value) { toast("Escribe la contraseña de la copia"); $("#bak-password").focus(); return; }
+  $("#bak-input").click();
+});
+$("#bak-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0]; e.target.value = "";
+  if (!file) return;
+  const password = $("#bak-password").value;
+  if (!password) { toast("Escribe la contraseña de la copia"); return; }
+  if (!canDecrypt()) { toast(BAK_NO_CRYPTO, 6000); return; }
+  const btn = $("#bak-pick"), label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Importando…";
+  try {
+    const doc = await decryptBackup(await readBytes(file), password);
+    const r = applyBackup(doc);
+    $("#bak-password").value = "";
+    renderMessages();
+    toast(`Importado: ${r.conversations} conversaciones, ${r.providers} proveedores`, 5000);
+  } catch (err) {
+    toast(err && err.message ? err.message : "No se pudo importar la copia", 6000);
+  } finally { btn.disabled = false; btn.textContent = label; }
 });
 
 // --- Arranque ---------------------------------------------------------------------------

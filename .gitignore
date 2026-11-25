@@ -5,3 +5,10 @@ venv/
 .pytest_cache/
 *.gguf
 *.part
+
+# Artefactos de build (no versionar)
+dist/
+build/
+android/build/
+android/app/build/
+android/.gradle/

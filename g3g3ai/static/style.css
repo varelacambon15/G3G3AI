@@ -109,6 +109,26 @@ main { flex: 1; min-height: 0; position: relative; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px; }
 .card h2 { margin: 0 0 10px; font-size: 16.5px; font-weight: 600; }
 .card h2 small { font-weight: 400; color: var(--muted); font-size: 13px; }
+/* Ajustes: tarjetas plegables */
+.settings-card { padding: 0; }
+.settings-card > summary {
+  display: flex; align-items: center; gap: 10px; padding: 13px 18px; cursor: pointer;
+  font-size: 16.5px; font-weight: 600; list-style: none;
+}
+.settings-card > summary::-webkit-details-marker { display: none; }
+.settings-card > summary .settings-icon { flex-shrink: 0; }
+.settings-card > summary .settings-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-card > summary .settings-state {
+  min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; font-weight: 400; color: var(--muted); text-align: right;
+}
+.settings-card > summary::after { content: "▾"; flex-shrink: 0; color: var(--muted); font-size: 13px; transition: transform .15s; }
+.settings-card[open] > summary::after { transform: rotate(180deg); }
+.settings-card[open] > summary { border-bottom: 1px solid var(--border); }
+.settings-body { padding: 14px 18px 16px; }
+.settings-sub { font-size: 15px; font-weight: 600; margin: 16px 0 8px; }
+.settings-body > h3.settings-sub:first-child { margin-top: 0; }
+.settings-group:not(:empty) { margin-top: 14px; }
 .sticky-save { position: sticky; bottom: 0; padding: 10px 0; background: linear-gradient(transparent, var(--bg) 35%); }
 
 /* Chat ------------------------------------------------------------------------- */
@@ -293,6 +313,11 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
   #model-select { max-width: 150px; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid .hint { grid-column: 1; }
+  .settings-card > summary { padding: 12px 14px; gap: 8px; font-size: 15.5px; flex-wrap: wrap; row-gap: 2px; }
+  .settings-card > summary .settings-title { flex: 1 1 auto; }
+  .settings-card > summary .settings-state { order: 3; flex-basis: 100%; max-width: 100%; padding-left: 26px; text-align: left; font-size: 12px; }
+  .settings-card > summary::after { order: 2; }
+  .settings-body { padding: 12px 14px 14px; }
   .artifact { position: fixed; inset: 0; width: 100%; z-index: 45; }
   .msg.user .bubble { max-width: 92%; }
   .popover { min-width: min(300px, 86vw); }

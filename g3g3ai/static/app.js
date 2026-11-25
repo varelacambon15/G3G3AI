@@ -579,6 +579,28 @@ async function loadConversations() {
   convCache = await api("/api/conversations");
   renderConvList();
 }
+// Exportar la conversación a Markdown o HTML (para imprimir o PDF).
+function exportName(cd, fallback) {
+  const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(cd || "");
+  if (star) { try { return decodeURIComponent(star[1].trim()); } catch { /* se usa el nombre simple */ } }
+  const plain = /filename\s*=\s*"([^"]*)"/i.exec(cd || "");
+  return (plain && plain[1]) || fallback;
+}
+async function exportConversation(c, fmt) {
+  const url = `/api/conversations/${encodeURIComponent(c.id)}/export?format=${fmt}`;
+  try {
+    const r = await fetch(url);
+    if (r.status === 401) { showLogin(); throw new Error("No autorizado"); }
+    if (!r.ok) {
+      let msg = r.statusText || `error ${r.status}`;
+      try { msg = (await r.json()).detail || msg; } catch { /* */ }
+      throw new Error(msg);
+    }
+    const a = h("a", { href: url, download: exportName(r.headers.get("content-disposition"), `conversacion.${fmt}`) });
+    document.body.append(a); a.click(); a.remove();
+    toast(`Exportando «${c.title}»`);
+  } catch (e) { toast("No se pudo exportar: " + e.message, 5000); }
+}
 function renderConvList() {
   const ul = $("#conv-list"), q = $("#conv-search").value.trim().toLowerCase();
   ul.innerHTML = "";
@@ -588,9 +610,23 @@ function renderConvList() {
   for (const c of list) {
     const g = dateGroup(c.updated);
     if (g !== group) { group = g; ul.append(h("div", { class: "conv-group" }, g)); }
+    const expMenu = h("div", { class: "popover hidden", style: "position:fixed;bottom:auto;min-width:220px" },
+      h("button", { onclick: (e) => { e.stopPropagation(); expMenu.classList.add("hidden"); exportConversation(c, "md"); } }, "📄 Markdown (.md)"),
+      h("button", { onclick: (e) => { e.stopPropagation(); expMenu.classList.add("hidden"); exportConversation(c, "html"); } }, "🖨 HTML (para imprimir o PDF)"));
+    expMenu.addEventListener("click", (e) => e.stopPropagation());
     const li = h("div", { class: "conv-item" + (c.id === S.convId ? " active" : ""), onclick: () => { setView("chat"); openConversation(c.id); } },
       h("span", { class: "t", title: c.title }, c.title),
       h("span", { class: "acts" },
+        h("button", { title: "Exportar", onclick: (e) => {
+          e.stopPropagation();
+          const wasHidden = expMenu.classList.contains("hidden");
+          $$(".popover").forEach((p) => p.classList.add("hidden"));
+          if (!wasHidden) return;
+          const r = e.currentTarget.getBoundingClientRect();
+          expMenu.style.left = Math.max(8, Math.min(r.left - 180, innerWidth - 236)) + "px";
+          expMenu.style.top = Math.min(r.bottom + 6, innerHeight - 130) + "px";
+          expMenu.classList.remove("hidden");
+        } }, "📤"),
         h("button", { title: "Renombrar", onclick: async (e) => {
           e.stopPropagation();
           const t = prompt("Nuevo título", c.title);
@@ -601,7 +637,8 @@ function renderConvList() {
           if (!confirm("¿Borrar esta conversación?")) return;
           await api(`/api/conversations/${c.id}`, { method: "DELETE" });
           if (S.convId === c.id) newChat(); else loadConversations();
-        } }, "🗑")));
+        } }, "🗑")),
+      expMenu);
     ul.append(li);
   }
 }
@@ -1527,6 +1564,48 @@ const FIELDS = [
   ["localhost_without_token", "Este mismo equipo entra sin contraseña", "checkbox"],
   ["port", "Puerto", "number", "Requiere reiniciar el servicio."],
 ];
+// Cada grupo de la pestaña Ajustes (tarjetas plegables) y las claves de FIELDS que contiene.
+const SETTINGS_GROUPS = [
+  ["models", ["router_mode", "router_fast", "router_strong", "default_system_prompt", "temperature", "max_tokens",
+    "context_budget", "monthly_budget_usd", "model_prices"]],
+  ["memory", ["memory_enabled", "memory_auto", "memory_api", "vision_fallback", "autoload_last_model"]],
+  ["agent", ["ai_write", "ai_commands", "commands_trusted", "command_allow", "agent_max_steps", "agent_workdir",
+    "agent_profile", "agent_temperature", "command_sandbox", "ai_game_write", "local_thinking"]],
+  ["files", ["file_roots", "write_roots", "blocked_paths", "localhost_without_token"]],
+  ["images", ["image_provider", "image_model", "image_mode", "image_size", "image_dir", "sd_steps", "sd_cfg", "sd_max_side"]],
+  ["tools", ["web_provider", "web_api_key", "github_token", "hf_token", "mail_paths", "mcp_servers"]],
+  ["thispc", ["models_dir", "llama_server_path", "llama_ctx", "llama_threads", "llama_gpu_layers", "llama_extra_args", "port"]],
+  ["usage", []],
+];
+const PERM_LABELS = { off: "Desactivado", ask: "Preguntar", auto: "Automático (sin preguntar)" };
+const ROUTER_LABELS = { smart: "Inteligente", local_first: "Local primero", api_first: "API primero" };
+const WEB_LABELS = { duckduckgo: "DuckDuckGo", brave: "Brave", tavily: "Tavily" };
+function setGroupState(id, text) {
+  const el = $(`.settings-state[data-state="${id}"]`);
+  if (el) el.textContent = text || "—";
+}
+function settingModelLabel(v) {
+  if (!v) return "—";
+  const m = MS.catalog.find((x) => x.value === v);
+  return m ? m.label : v;
+}
+function renderSettingsStates() {
+  const s = S.settings || {};
+  const strong = settingModelLabel(s.router_strong), fast = settingModelLabel(s.router_fast);
+  setGroupState("models", strong !== "—" ? `Auto: ${strong}` : fast !== "—" ? `Auto: ${fast}` : (ROUTER_LABELS[s.router_mode] || "—"));
+  setGroupState("memory", s.memory_enabled ? "activa" : s.memory_enabled === false ? "desactivada" : "—");
+  setGroupState("agent", PERM_LABELS[s.ai_commands] || "—");
+  setGroupState("files", Array.isArray(s.file_roots) ? `${s.file_roots.length} carpetas · ${(s.write_roots || []).length} editables` : "—");
+  let img = "—";
+  if (s.image_provider === "local") img = "Local";
+  else if (s.image_provider) img = (s.providers || []).find((p) => p.id === s.image_provider)?.name || s.image_provider;
+  else if (s.image_provider === "") img = "Desactivado";
+  setGroupState("images", img);
+  let tools = s.web_provider ? `Web: ${WEB_LABELS[s.web_provider] || s.web_provider}` : "—";
+  if (Array.isArray(s.mcp_servers) && s.mcp_servers.length) tools += ` · ${s.mcp_servers.length} MCP`;
+  setGroupState("tools", tools);
+  setGroupState("thispc", s.port ? `Puerto ${s.port}` : "—");
+}
 $("#bk-export").addEventListener("click", async () => {
   const password = $("#bk-pass").value;
   try {
@@ -1536,6 +1615,17 @@ $("#bk-export").addEventListener("click", async () => {
     const a = h("a", { href: URL.createObjectURL(await r.blob()), download: `g3g3ai-${new Date().toISOString().slice(0, 10)}.g3bak` });
     document.body.append(a); a.click(); a.remove();
     toast("Copia exportada. Guarda la contraseña: sin ella no se puede abrir.", 6000);
+  } catch (e) { toast(e.message, 6000); }
+});
+$("#bk-drive").addEventListener("click", async () => {
+  const password = $("#bk-pass").value;
+  if (!password) { toast("Escribe primero la contraseña de la copia"); return; }
+  const dir = $("#bk-drive-dir").value.trim();
+  try {
+    const st = await api("/api/settings");
+    S.settings = await api("/api/settings", { method: "PUT", body: { ...st, drive_backup_dir: dir } });
+    const r = await api("/api/backup/drive", { method: "POST", body: { password, conversations: $("#bk-convs").checked } });
+    toast(`Copia guardada en ${r.path}`, 6000);
   } catch (e) { toast(e.message, 6000); }
 });
 $("#bk-import").addEventListener("click", () => { if ($("#bk-pass").value) $("#bk-file").click(); else toast("Escribe primero la contraseña de la copia"); });
@@ -1603,10 +1693,12 @@ async function renderUsage() {
       rows.map(([name, m]) => h("tr", {}, h("td", {}, name), h("td", {}, m.calls), h("td", {}, k(m.input)), h("td", {}, k(m.output)),
         h("td", {}, m.unpriced ? "sin precio" : money(m.cost))))));
     box.append(h("p", { class: "muted" }, "Los precios son orientativos; ajústalos en «Precios por modelo». Los modelos locales cuestan 0."));
+    setGroupState("usage", `${money(u.total.cost)} este mes`);
   } catch (e) { box.append(h("p", { class: "muted" }, "No se pudo cargar el uso: " + e.message)); }
 }
 async function loadSettings() {
   S.settings = await api("/api/settings");
+  $("#bk-drive-dir").value = S.settings.drive_backup_dir || "";
   await refreshStatus();
   const st = S.status, acc = $("#access-info"); acc.innerHTML = "";
   acc.append(h("p", {}, "Conecta el móvil o portátil a la misma red Wi-Fi y abre:"));
@@ -1631,7 +1723,11 @@ async function loadSettings() {
   renderMcp();
   renderMail();
 
-  const f = $("#settings-form"); f.innerHTML = "";
+  const f = $("#settings-form");
+  const groups = new Map();
+  $$("[data-group]", f).forEach((el) => { groups.set(el.dataset.group, el); el.innerHTML = ""; });
+  const groupOf = {};
+  for (const [gid, keys] of SETTINGS_GROUPS) for (const k of keys) groupOf[k] = gid;
   for (let [key, label, type, hint] of FIELDS) {
     const v = S.settings[key];
     let inp;
@@ -1663,9 +1759,24 @@ async function loadSettings() {
       inp = selectEl(key, v, opts);
     }
     else inp = h("input", { type, name: key, value: v ?? "", step: type === "number" ? "any" : null });
-    f.append(h("label", {}, label), inp);
-    if (hint) f.append(h("div", { class: "hint" }, hint));
+    let gid = groupOf[key];
+    if (!gid) {  // red de seguridad: un campo nuevo de FIELDS sin grupo visible
+      gid = "otros";
+      if (!groups.has("otros")) {
+        const box = h("details", { class: "card settings-card", open: true },
+          h("summary", {}, h("span", { class: "settings-icon", "aria-hidden": "true" }, "⚙"),
+            h("span", { class: "settings-title" }, "Otros"), h("span", { class: "settings-state" }, "—")),
+          h("div", { class: "settings-body" }, h("div", { class: "settings-group form-grid", "data-group": "otros" })));
+        f.append(box);
+        groups.set("otros", $('[data-group="otros"]', box));
+      }
+    }
+    const g = groups.get(gid);
+    if (!g) continue;
+    g.append(h("label", {}, label), inp);
+    if (hint) g.append(h("div", { class: "hint" }, hint));
   }
+  renderSettingsStates();
 }
 // --- Herramientas de programación --------------------------------------------------------------
 let devTimer = null;
@@ -1786,10 +1897,17 @@ async function loadMemory() {
       h("button", { class: "ghost small", onclick: async () => { await api(`/api/memory/${m.id}`, { method: "DELETE" }); loadMemory(); } }, "🗑")));
   }
 }
-$("#memory-add").addEventListener("submit", async (e) => {
-  e.preventDefault(); const inp = $("#memory-new"); if (!inp.value.trim()) return;
+async function addMemory() {
+  const inp = $("#memory-new"); if (!inp.value.trim()) return;
   try { await api("/api/memory", { method: "POST", body: { content: inp.value } }); inp.value = ""; loadMemory(); }
   catch (err) { toast(err.message); }
+}
+$("#memory-add").addEventListener("click", (e) => {
+  if (!e.target.closest("button")) return;
+  e.preventDefault(); addMemory();
+});
+$("#memory-new").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); addMemory(); }
 });
 $("#memory-clear").addEventListener("click", async () => {
   if (!confirm("¿Borrar todos los recuerdos?")) return;
@@ -1840,6 +1958,7 @@ $("#add-provider").addEventListener("click", () => {
     name, type: "openai", base_url: url, api_key: key, enabled: true });
   loadSettingsProvidersOnly(); toast("Añadido. Pulsa «Guardar ajustes».");
 });
+$("#settings-form").addEventListener("submit", (e) => e.preventDefault());
 $("#save-settings").addEventListener("click", async () => {
   const f = $("#settings-form"), out = { providers: S.settings.providers };
   for (const [key, , type] of FIELDS) {
