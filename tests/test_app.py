@@ -2297,3 +2297,23 @@ def test_diagnostics_check_everything(env, monkeypatch):
     assert by["local"]["status"] == "ok" and "responde" in by["local"]["detail"]
     assert by["prov-deepseek"]["status"] == "error" and by["prov-deepseek"]["fix"]
     assert d["summary"]["error"] >= 1
+
+
+def test_ai_diagnoses_problems_and_points_to_settings(env, monkeypatch):
+    import asyncio
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    from g3g3ai import web
+    async def broken(*a, **k):
+        raise web.WebError("bloqueado")
+    monkeypatch.setattr(web, "search", broken)
+    cfg.set("ai_commands", "ask"); cfg.set("commands_trusted", False)
+    ctx = _ctx(cfg)
+    assert "diagnose" not in ctx.names()                                    # sin servidor no hay diagnóstico
+    d = client.get("/api/diagnostics", headers=h).json()
+    ctx.diagnostics = lambda: asyncio.sleep(0, result=d)
+    assert "diagnose" in ctx.names()
+    text = asyncio.run(ctx.run("diagnose", {}))
+    assert "Búsqueda web" in text and "Ajustes relacionados (app_settings): web_provider" in text
+    assert "commands_trusted" in text                                       # sabe qué ajuste quita las preguntas
+    assert "Proveedores" in text

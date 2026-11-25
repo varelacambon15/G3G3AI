@@ -177,6 +177,10 @@ ALL_SPECS = {
                              "folder": {"type": "string", "description": "Parte del nombre de la carpeta (Inbox, Enviados…)"},
                              "limit": {"type": "integer", "description": "Máximo de resultados (por defecto 20, tope 50)"},
                              "include_junk": {"type": "boolean", "description": "Incluir papelera y spam"}})),
+    "diagnose": ("Comprueba de verdad cómo funciona G3G3AI en este equipo (modelo local, proveedores, web, correo, carpetas, "
+                 "permisos, MCP, disco) y devuelve qué falla, por qué y qué ajuste cambiar. Úsalo cuando el usuario pregunte "
+                 "por qué algo no funciona; luego propón el arreglo con app_settings (si es un ajuste) o explica el paso.",
+                 _schema({})),
     "app_settings": ("Consulta o cambia los ajustes de G3G3AI cuando el usuario lo pida («baja la temperatura», «activa el correo», "
                      "«deja de preguntarme por los comandos»). action=get lista los ajustes con su valor; action=set con changes="
                      "{ajuste: valor} los cambia (el usuario confirma). No puede ver ni cambiar claves API ni contraseñas.",
@@ -339,6 +343,7 @@ class ToolContext:
         self.result_limit: int | None = None  # caracteres máximos por resultado (se fija en modelos locales)
         self.todos_dirty = False
         self.dirty = False  # se han modificado archivos y aún no se ha ejecutado nada para comprobarlo
+        self.diagnostics: Callable[[], Awaitable[dict]] | None = None  # «Comprobar todo» (lo fija el servidor)
         self.subagent: Callable[..., Awaitable[str]] | None = None  # lo fija el servidor: (tarea, write=False)
         self.mail = None             # MailIndex (búsqueda en el correo), lo fija el servidor si está activada
         self.cloud = False           # el modelo elegido es de una API en la nube
@@ -369,7 +374,8 @@ class ToolContext:
     # Grupos de herramientas que a un modelo local sólo se le ofrecen si la conversación va de eso (o ya los usó):
     # cada herramienta cuesta tokens en CADA turno y, en un equipo sin gráfica, eso son segundos o minutos.
     TOOL_GROUPS = [
-        ({"app_settings"}, r"ajuste|configur|temperatura|permis|activa|desactiva|pregunt|opci[oó]n|memoria|cambia(?:r)? (?:el|la|los|las|tu|tus)"),
+        ({"app_settings", "diagnose"}, r"ajuste|configur|temperatura|permis|activa|desactiva|pregunt|opci[oó]n|memoria|"
+                                       r"cambia(?:r)? (?:el|la|los|las|tu|tus)|falla|fallo|error|no funciona|no va|por ?qu[eé]|problema|arregl|diagn|comprueba"),
         ({"mail_search", "mail_read", "mail_save_attachments"},
          r"correo|e-?mails?\b|mensaje|bandeja|adjunt|thunderbird|outlook|remitente|(?:me|te|le) (?:ha |han )?(?:mandado|enviado|escrito)"),
         ({"github"}, r"github|pull request|\bpr\b|\bissues?\b|repositorio|\brepo\b"),
@@ -513,6 +519,8 @@ class ToolContext:
             out.append("request_folder_access")
         if not self.auto_all:
             out.append("app_settings")
+            if self.diagnostics:
+                out.append("diagnose")
         if self.agent and self.mcp and not plan:
             out += list(self.mcp.map)
         if self.web:
@@ -811,6 +819,11 @@ class ToolContext:
                 return await asyncio.to_thread(self._save_attachments, args)
             if name == "request_folder_access":
                 return self._grant_folder(args)
+            if name == "diagnose":
+                if not self.diagnostics:
+                    return "Error: el diagnóstico no está disponible aquí."
+                d = await asyncio.wait_for(self.diagnostics(), 180)
+                return self._format_diag(d)
             if name == "app_settings":
                 from . import selfconfig as SC
                 if args.get("action") != "set":
@@ -1099,6 +1112,23 @@ class ToolContext:
             ignore = [x.strip() for x in ignore.split(",")]
         r = C.compare(self.files, pa, pb, [str(x) for x in ignore], a.get("content") is not False, limit=max(5, min(int(a.get("limit") or 60), 300)))
         return C.format_report(r)
+
+    @staticmethod
+    def _format_diag(d: dict) -> str:
+        from . import selfconfig as SC
+        s = d.get("summary", {})
+        lines = [f"Resultado: {s.get('ok', 0)} correctas, {s.get('warn', 0)} avisos, {s.get('error', 0)} errores."]
+        mark = {"ok": "✔", "warn": "⚠", "error": "✕", "info": "ℹ", "skip": "–"}
+        for c in d.get("checks", []):
+            line = f"{mark.get(c['status'], '·')} {c['title']}: {c['detail']}"
+            if c["status"] in ("warn", "error", "info") and c.get("fix"):
+                line += f"\n    Cómo arreglarlo: {c['fix']}"
+            keys = [k for k in c.get("settings") or [] if k in SC.SETTINGS]
+            if c["status"] in ("warn", "error", "info") and keys:
+                line += "\n    Ajustes relacionados (app_settings): " + ", ".join(keys)
+            lines.append(line)
+        lines.append("Las claves API y la conexión de proveedores se arreglan en Ajustes → Proveedores (tú no puedes verlas).")
+        return "\n".join(lines)
 
     def _system_info(self) -> str:
         import shutil

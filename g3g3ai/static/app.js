@@ -250,7 +250,7 @@ const TOOL_UI = {
   compare_dirs: ["folder", "Comparó carpetas", "Comparando carpetas", "a"], system_info: ["cpu", "Consultó el equipo", "Consultando el equipo", null],
   delegate: ["users", "Ayudante", "Ayudante trabajando", "task"], delegate_edit: ["users", "Ayudante (copia aislada)", "Ayudante trabajando", "task"],
   apply_patch: ["check", "Aplicó la propuesta", "Aplicando la propuesta", "id"], github: ["git", "GitHub", "GitHub", "action"],
-  request_folder_access: ["lock", "Pidió acceso a", "Pidiendo acceso a", "path"], app_settings: ["gear", "Ajustes", "Ajustes", "action"], steam_games: ["cube", "Juegos de Steam", "Juegos de Steam", "query"],
+  request_folder_access: ["lock", "Pidió acceso a", "Pidiendo acceso a", "path"], app_settings: ["gear", "Ajustes", "Ajustes", "action"], diagnose: ["check", "Comprobó G3G3AI", "Comprobando G3G3AI", null], steam_games: ["cube", "Juegos de Steam", "Juegos de Steam", "query"],
   game_diagnostics: ["cube", "Diagnosticó", "Diagnosticando", "game"], generate_image: ["image", "Generó una imagen", "Generando una imagen", null],
   ask_local_model: ["cpu", "Consultó el modelo local", "Consultando el modelo local", null],
 };

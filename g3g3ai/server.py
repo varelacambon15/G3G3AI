@@ -602,13 +602,18 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         return {"ok": True}
 
     @app.get("/api/diagnostics")
-    async def diagnostics():
+    async def diagnostics(local_in_use: bool = False):
         """«Comprobar todo»: prueba de verdad cada pieza y dice en claro qué falla y cómo arreglarlo."""
         checks: list[dict] = []
+        # ajustes que la IA puede cambiar (app_settings) para arreglar cada comprobación
+        related = {"local": ["llama_ctx", "llama_gpu_layers", "llama_threads", "autoload_last_model"],
+                   "web": ["web_provider"], "folders": ["write_roots", "file_roots"],
+                   "commands": ["commands_trusted", "ai_commands", "command_allow"], "mail": ["mail_enabled", "mail_paths"],
+                   "disk": [], "providers": []}
 
         def add(cid, title, status, detail, fix="", action=None, order=0):
             checks.append({"id": cid, "title": title, "status": status, "detail": detail, "fix": fix, "action": action,
-                           "order": order})
+                           "order": order, "settings": related.get(cid, ["mcp_servers"] if cid.startswith("mcp-") else [])})
 
         async def timed(coro, secs):
             try:
@@ -631,7 +636,9 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         # --- Modelo local
         async def local_check():
             binary = find_llama_server(cfg["llama_server_path"])
-            if llama.ready:
+            if llama.ready and local_in_use:
+                add("local", "Modelo local", "ok", f"{llama.status()['model']} (es el que está respondiendo ahora)", order=1)
+            elif llama.ready:
                 t0 = time.time()
                 r = await timed(complete(provider_for(LOCAL_PROVIDER), "local", "Responde solo con la palabra: listo",
                                          max_tokens=8), 120)
@@ -1025,6 +1032,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                         if copy is not None:
                             await asyncio.to_thread(shutil.rmtree, copy, True)
                 tc.subagent = run_subagent
+            tc.diagnostics = lambda _pid=chosen_pid: diagnostics(local_in_use=_pid == LOCAL_PROVIDER)
             if chosen_pid == LOCAL_PROVIDER:  # ~1/4 del contexto (en tokens ≈ 4 caracteres) como máximo por resultado
                 n_ctx = int((llama.params or {}).get("ctx") or 8192)
                 tc.result_limit = max(3000, n_ctx)
