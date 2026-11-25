@@ -388,3 +388,61 @@ body.code-mode .code-panel { display: flex; }
 .task { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .task.off { opacity: .55; }
 .live-out { margin: 8px 0; max-height: 220px; overflow: auto; padding: 8px 10px; font: 12px/1.45 ui-monospace, Consolas, monospace; background: var(--code); border-radius: 8px; white-space: pre-wrap; opacity: .9; }
+
+/* ===================== Pulido visual (estilo Claude) ===================== */
+.ico { display: inline-flex; width: 18px; height: 18px; flex: none; align-items: center; justify-content: center; }
+.ico svg { width: 100%; height: 100%; }
+.icon-btn .ico, .round-btn .ico { width: 18px; height: 18px; }
+.side-nav button .ico, .foot-btn .ico { width: 18px; height: 18px; color: var(--muted); margin-right: 2px; }
+.side-nav button.active .ico { color: var(--text); }
+.brand .ico { width: 18px; height: 18px; color: var(--accent); margin-right: 4px; }
+.new-chat .ico { width: 16px; height: 16px; }
+.send-btn .ico { width: 18px; height: 18px; }
+.popover .ico { width: 17px; height: 17px; color: var(--muted); }
+/* Herramientas: una lista discreta, como en Claude Code */
+.tools { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 12px; }
+.msg .tools details.tool { border: 0; background: none; padding: 0; margin: 0; font-size: 13.5px; }
+.msg details.tool > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 8px; color: var(--muted); }
+.msg details.tool > summary::-webkit-details-marker { display: none; }
+.msg details.tool > summary:hover { background: var(--hover); color: var(--text); }
+.msg details.tool > summary .ico { width: 15px; height: 15px; }
+.tool-verb { white-space: nowrap; }
+.tool-arg { color: var(--text); opacity: .85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+code.tool-arg { font-size: 12.5px; background: var(--code); padding: 1px 6px; border-radius: 5px; }
+.tool-err { color: var(--danger); font-size: 12px; margin-left: auto; }
+.msg details.tool.failed > summary { color: var(--danger); }
+.msg .tools details.tool[open] { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 2px 6px 6px; }
+.spinner { width: 12px; height: 12px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; margin-left: 4px; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+details.thinking > summary { display: flex; align-items: center; gap: 6px; }
+details.thinking > summary .ico { width: 15px; height: 15px; }
+/* Acciones de cada mensaje: sólo al pasar el ratón (siempre en el último y en pantallas táctiles) */
+.msg.assistant .meta { opacity: 0; transition: opacity .15s; }
+.msg.assistant:hover .meta, .msg.assistant:focus-within .meta, .msg.assistant:last-child .meta { opacity: 1; }
+@media (hover: none) { .msg .meta, .msg.user .meta { opacity: 1; } }
+.msg .meta .act { display: inline-flex; align-items: center; gap: 4px; }
+.msg .meta .act .ico { width: 16px; height: 16px; }
+.meta-model { font-size: 12px; }
+.chip .ico { width: 14px; height: 14px; margin-right: 4px; vertical-align: -2px; }
+/* Bienvenida: saludo y cuadro de texto en el centro */
+#view-chat.is-empty .chat-main { justify-content: center; }
+#view-chat.is-empty #messages { flex: 0 0 auto; overflow: visible; padding-bottom: 8px; }
+#view-chat.is-empty .composer-hint { display: none; }
+.empty-state .greeting { display: flex; align-items: center; justify-content: center; gap: 12px; font-family: var(--serif, Georgia, serif); font-weight: 400; font-size: 34px; margin: 0 0 6px; }
+.empty-state .greeting .ico { width: 30px; height: 30px; color: var(--accent); }
+#welcome-ideas { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: var(--col, 760px); margin: 14px auto 0; }
+#welcome-ideas button { display: inline-flex; align-items: center; gap: 7px; background: none; border: 1px solid var(--border); border-radius: 10px; padding: 7px 12px; color: var(--muted); font-size: 13.5px; cursor: pointer; }
+#welcome-ideas button:hover { background: var(--hover); color: var(--text); }
+#welcome-ideas .ico { width: 15px; height: 15px; }
+.file-card .fi { display: inline-flex; flex-direction: column; align-items: center; gap: 1px; color: var(--muted); }
+.file-card .fi small { font-size: 9px; letter-spacing: .04em; }
+/* Ajustes por pestañas */
+.settings-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 16px; border-bottom: 1px solid var(--border); }
+.settings-tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; color: var(--muted); font-size: 14px; cursor: pointer; margin-bottom: -1px; }
+.settings-tabs button:hover { color: var(--text); }
+.settings-tabs button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
+#view-settings .hidden, #settings-form .hidden { display: none !important; }
+
+.form-grid input[type=checkbox] { justify-self: start; width: 18px; height: 18px; accent-color: var(--accent); }
+#adv-toggle { margin-top: 14px; }
+.active-tools .chip, .active-tools span { font-size: 12.5px; }

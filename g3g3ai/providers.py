@@ -266,8 +266,11 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
         max_tokens = local_reply_tokens(int(opts["n_ctx"]), int(opts.get("max_tokens") or 2048))
     continuations = nudges = verifies = empties = 0
     used_tools = False
+    tail, after_length = "", False   # último carácter mostrado y si el paso anterior se cortó por longitud
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), trust_env=not local) as c:
         for _ in range(steps_for(ctx)):
+            # Un paso nuevo (tras herramientas o un aviso) empieza párrafo; una continuación por longitud, no.
+            sep_pending, after_length = bool(tail) and not after_length, False
             _trim_openai(msgs)
             body = {"model": model, "messages": msgs, "stream": True,
                     "temperature": opts.get("temperature"), "max_tokens": max_tokens,
@@ -312,7 +315,11 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                             if delta.get("reasoning_content") or delta.get("reasoning"):
                                 yield {"type": "reasoning", "text": delta.get("reasoning_content") or delta.get("reasoning")}
                             if delta.get("content"):
+                                if sep_pending and not tail.isspace():
+                                    yield {"type": "content", "text": "\n\n"}
+                                sep_pending = False
                                 content += delta["content"]
+                                tail = delta["content"][-1:] or tail
                                 yield {"type": "content", "text": delta["content"]}
                             for tc in delta.get("tool_calls") or []:
                                 slot = calls.setdefault(tc.get("index", 0), {"id": "", "name": "", "args": ""})
@@ -347,6 +354,7 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
             if finish == "length" and continuations < MAX_CONTINUATIONS:
                 # Cortada por longitud: las llamadas a medias no sirven; se pide que siga
                 continuations += 1
+                after_length = True
                 yield {"type": "status", "text": "↪ La respuesta se cortó por longitud; continúa automáticamente…"}
                 if content:
                     msgs.append({"role": "assistant", "content": content})
@@ -415,8 +423,10 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
             for m in messages if m["role"] in ("user", "assistant")]
     continuations = nudges = verifies = 0
     used_tools = False
+    tail, after_length = "", False
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600)) as c:
         for _ in range(steps_for(ctx)):
+            sep_pending, after_length = bool(tail) and not after_length, False
             _trim_anthropic(msgs)
             # Los modelos actuales de Claude piensan antes de responder y ese razonamiento cuenta en
             # max_tokens: se deja margen suficiente. Tampoco admiten temperature (devuelven 400).
@@ -446,7 +456,11 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
                     elif t == "content_block_delta":
                         d, b = j["delta"], blocks.get(j["index"])
                         if d["type"] == "text_delta":
+                            if sep_pending and not tail.isspace():
+                                yield {"type": "content", "text": "\n\n"}
+                            sep_pending = False
                             b["text"] = b.get("text", "") + d["text"]
+                            tail = d["text"][-1:] or tail
                             yield {"type": "content", "text": d["text"]}
                         elif d["type"] == "thinking_delta":
                             yield {"type": "reasoning", "text": d["thinking"]}
@@ -463,6 +477,7 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
             text = "".join(b.get("text", "") for _, b in sorted(blocks.items()) if b.get("type") == "text")
             if stop_reason == "max_tokens" and continuations < MAX_CONTINUATIONS:
                 continuations += 1
+                after_length = True
                 yield {"type": "status", "text": "↪ La respuesta se cortó por longitud; continúa automáticamente…"}
                 if text:
                     msgs.append({"role": "assistant", "content": [{"type": "text", "text": text}]})

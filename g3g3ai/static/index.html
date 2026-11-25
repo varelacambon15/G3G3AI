@@ -27,21 +27,21 @@
   <!-- Barra lateral -->
   <aside id="sidebar">
     <div class="side-head">
-      <span class="brand"><span class="logo">✦</span> G3G3AI</span>
-      <button id="side-collapse" class="icon-btn" title="Ocultar barra lateral" aria-label="Ocultar barra lateral">⟨</button>
+      <span class="brand"><span class="logo" data-icon="spark"></span> G3G3AI</span>
+      <button id="side-collapse" class="icon-btn" title="Ocultar barra lateral" aria-label="Ocultar barra lateral" data-icon="sidebar"></button>
     </div>
-    <button id="new-chat" class="new-chat"><span class="plus">＋</span> Nueva conversación</button>
+    <button id="new-chat" class="new-chat"><span class="plus" data-icon="plus"></span> Nueva conversación</button>
     <nav class="tabs side-nav">
-      <button data-view="chat" class="active"><span class="ico">💬</span> Chats</button>
-      <button data-view="code"><span class="ico">💻</span> Code</button>
-      <button data-view="models"><span class="ico">🧩</span> Modelos</button>
-      <button data-view="tasks"><span class="ico">🕒</span> Tareas</button>
-      <button data-view="files"><span class="ico">📁</span> Archivos</button>
+      <button data-view="chat" class="active"><span class="ico" data-icon="chat"></span> Chats</button>
+      <button data-view="code"><span class="ico" data-icon="code"></span> Code</button>
+      <button data-view="models"><span class="ico" data-icon="cube"></span> Modelos</button>
+      <button data-view="tasks"><span class="ico" data-icon="clock"></span> Tareas</button>
+      <button data-view="files"><span class="ico" data-icon="folder"></span> Archivos</button>
     </nav>
     <div class="side-search"><input id="conv-search" type="search" placeholder="Buscar conversaciones…"></div>
     <div id="conv-list" class="conv-list"></div>
     <div class="side-foot">
-      <button data-view="settings" class="foot-btn tabs-like"><span class="ico">⚙</span> Ajustes</button>
+      <button data-view="settings" class="foot-btn tabs-like"><span class="ico" data-icon="gear"></span> Ajustes</button>
       <span id="status-pill" class="pill" title="Estado del modelo local">—</span>
     </div>
   </aside>
@@ -49,10 +49,10 @@
 
   <div class="main">
     <header class="topbar">
-      <button id="menu-btn" class="icon-btn" title="Mostrar barra lateral" aria-label="Mostrar barra lateral">☰</button>
+      <button id="menu-btn" class="icon-btn" title="Mostrar barra lateral" aria-label="Mostrar barra lateral" data-icon="menu"></button>
       <span id="top-title" class="top-title"></span>
       <button id="undo-btn" class="ghost small hidden" title="Devuelve los archivos que la IA modificó o creó en esta conversación a como estaban">↩ Deshacer cambios</button>
-      <button id="top-new" class="icon-btn" title="Nueva conversación" aria-label="Nueva conversación">✎</button>
+      <button id="top-new" class="icon-btn" title="Nueva conversación" aria-label="Nueva conversación" data-icon="new"></button>
     </header>
 
     <main>
@@ -67,38 +67,38 @@
               <div class="composer-row">
                 <div class="left-tools">
                   <div class="menu-anchor">
-                    <button id="plus-btn" class="round-btn" title="Añadir" aria-label="Añadir">＋</button>
+                    <button id="plus-btn" class="round-btn" title="Añadir" aria-label="Añadir" data-icon="plus"></button>
                     <div id="plus-menu" class="popover hidden">
-                      <button id="attach-btn"><span class="ico">📎</span> Adjuntar archivo o documento</button>
-                      <button id="camera-btn"><span class="ico">📷</span> Hacer o elegir una foto</button>
-                      <button id="image-btn"><span class="ico">🎨</span> Generar una imagen</button>
+                      <button id="attach-btn"><span class="ico" data-icon="clip"></span> Adjuntar archivo o documento</button>
+                      <button id="camera-btn"><span class="ico" data-icon="camera"></span> Hacer o elegir una foto</button>
+                      <button id="image-btn"><span class="ico" data-icon="image"></span> Generar una imagen</button>
                     </div>
                   </div>
                   <input id="camera-input" type="file" accept="image/*" capture="environment" hidden>
                   <div class="menu-anchor">
-                    <button id="tools-btn" class="round-btn" title="Herramientas" aria-label="Herramientas">⚙︎</button>
+                    <button id="tools-btn" class="round-btn" title="Herramientas y permisos" aria-label="Herramientas" data-icon="sliders"></button>
                     <div id="tools-menu" class="popover hidden">
                       <label class="switch-row" id="auto-label">
-                        <span><b>🔀 Auto</b><small>Elige local o API según la tarea</small></span>
+                        <span><b>Auto</b><small>Elige local o API según la tarea</small></span>
                         <input type="checkbox" id="auto-toggle" class="switch">
                       </label>
                       <label class="switch-row">
-                        <span><b>🌐 Búsqueda web</b><small>Buscar en internet y leer páginas</small></span>
+                        <span><b>Búsqueda web</b><small>Buscar en internet y leer páginas</small></span>
                         <input type="checkbox" id="web-toggle" class="switch">
                       </label>
                       <label class="switch-row">
-                        <span><b>🛠 Agente</b><small>Archivos y comandos (con tu permiso)</small></span>
+                        <span><b>Agente</b><small>Archivos y comandos (con tu permiso)</small></span>
                         <input type="checkbox" id="tools-toggle" class="switch">
                       </label>
                       <div class="switch-row mode-row">
-                        <span><b>🔒 Permisos del agente</b><small id="mode-hint">Pregunta según Ajustes</small></span>
+                        <span><b>Permisos</b><small id="mode-hint">Pregunta según Ajustes</small></span>
                         <select id="mode-select" aria-label="Permisos del agente">
                           <option value="normal">Normal</option>
                           <option value="plan">Plan</option>
                           <option value="edits">Aceptar ediciones</option>
                         </select>
                       </div>
-                      <button id="system-btn"><span class="ico">📝</span> Instrucciones y carpeta del proyecto</button>
+                      <button id="system-btn"><span class="ico" data-icon="doc"></span> Instrucciones y carpeta del proyecto</button>
                     </div>
                   </div>
                   <div id="active-tools" class="active-tools"></div>
@@ -149,11 +149,11 @@
         <div class="page">
           <h1 class="page-title">Modelos</h1>
           <div class="card">
-            <h2>🧭 Recomendado para este equipo</h2>
+            <h2>Recomendado para este equipo</h2>
             <div id="hw-box"><p class="muted">Analizando el equipo…</p></div>
           </div>
           <div class="card">
-            <h2>🦙 Ollama</h2>
+            <h2>Ollama</h2>
             <div id="ollama-box"><p class="muted">Comprobando Ollama…</p></div>
           </div>
           <div class="card">
@@ -171,7 +171,7 @@
             <ul id="local-models" class="list"></ul>
           </div>
           <div class="card">
-            <h2>🎨 Generación de imágenes</h2>
+            <h2>Generación de imágenes</h2>
             <div id="image-engine"></div>
           </div>
           <div class="card">
@@ -277,16 +277,25 @@
       <section id="view-settings" class="view">
         <div class="page">
           <h1 class="page-title">Ajustes</h1>
-          <div class="card">
-            <h2>📱 Acceso remoto (móvil / portátil)</h2>
+          <div class="settings-tabs" id="settings-tabs">
+            <button data-stab="general" class="active">General</button>
+            <button data-stab="providers">Proveedores</button>
+            <button data-stab="agent">Agente y permisos</button>
+            <button data-stab="local">Modelos locales</button>
+            <button data-stab="mail">Correo e integraciones</button>
+            <button data-stab="data">Datos y uso</button>
+            <button data-stab="access">Acceso</button>
+          </div>
+          <div class="card" data-stab="access">
+            <h2>Acceso remoto (móvil / portátil)</h2>
             <div id="access-info"></div>
           </div>
-          <div class="card">
-            <h2>💸 Uso y coste</h2>
+          <div class="card" data-stab="data">
+            <h2>Uso y coste</h2>
             <div id="usage-box"></div>
           </div>
-          <div class="card">
-            <h2>💾 Copia de seguridad cifrada</h2>
+          <div class="card" data-stab="data">
+            <h2>Copia de seguridad cifrada</h2>
             <p class="muted">Lleva tu configuración (con las claves API), la memoria y, si quieres, las conversaciones a otro equipo. El archivo va cifrado con una contraseña que eliges; sin ella no se puede leer.</p>
             <div class="row"><label><input type="checkbox" id="bk-convs"> Incluir conversaciones</label></div>
             <div class="row">
@@ -296,36 +305,36 @@
               <input id="bk-file" type="file" accept=".g3bak" hidden>
             </div>
           </div>
-          <div class="card">
-            <h2>🔄 Sincronización entre equipos</h2>
+          <div class="card" data-stab="data">
+            <h2>Sincronización entre equipos</h2>
             <div id="sync-box"></div>
           </div>
-          <div class="card">
-            <h2>🧰 Herramientas de programación</h2>
+          <div class="card" data-stab="agent">
+            <h2>Herramientas de programación</h2>
             <div id="devtools-box"></div>
           </div>
-          <div class="card">
-            <h2>📧 Correo</h2>
+          <div class="card" data-stab="mail">
+            <h2>Correo</h2>
             <div id="mail-box"></div>
           </div>
-          <div class="card">
-            <h2>🔌 Servidores MCP</h2>
+          <div class="card" data-stab="mail">
+            <h2>Servidores MCP</h2>
             <div id="mcp-box"></div>
           </div>
-          <div class="card">
-            <h2>🧠 Memoria</h2>
+          <div class="card" data-stab="data">
+            <h2>Memoria</h2>
             <p class="muted">Lo que la IA recuerda de ti entre conversaciones. Puedes editarlo o borrarlo cuando quieras. Los interruptores están en «General».</p>
             <form id="memory-add" class="row"><input id="memory-new" class="grow" placeholder="Añadir un recuerdo, p.ej. «Prefiere respuestas cortas»"><button class="primary small">Añadir</button></form>
             <ul id="memory-list" class="list"></ul>
             <div class="row end"><button id="memory-clear" class="ghost small">Borrar todo</button></div>
           </div>
-          <div class="card">
-            <h2>☁ Proveedores API</h2>
+          <div class="card" data-stab="providers">
+            <h2>Proveedores API</h2>
             <div id="providers-edit"></div>
             <button id="add-provider" class="ghost small">+ Añadir proveedor u otro equipo</button>
           </div>
-          <div class="card">
-            <h2>General</h2>
+          <div class="card" data-stab="all">
+            <h2 id="settings-form-title">General</h2>
             <form id="settings-form" class="form-grid"></form>
           </div>
           <div class="row end sticky-save">

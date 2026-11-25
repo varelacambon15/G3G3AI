@@ -179,6 +179,79 @@ $("#top-new").addEventListener("click", () => { setView("chat"); newChat(); });
 if (store.get("collapsed", false)) document.body.classList.add("side-collapsed");
 $$("dialog [data-close]").forEach((b) => b.addEventListener("click", () => b.closest("dialog").close()));
 
+// --- Iconos (línea, monocromos, como en Claude) ---------------------------------------------------
+const ICON_PATHS = {
+  chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12Z"/>',
+  code: '<path d="m8 9-4 3 4 3M16 9l4 3-4 3M13.5 5l-3 14"/>',
+  cube: '<path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  folder: '<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5v-10Z"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+  sidebar: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9.5 4.5v15"/>',
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  new: '<path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="M18.4 3.6a2 2 0 0 1 2.9 2.9L12 15.8 8 17l1.2-4 9.2-9.4Z"/>',
+  copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',
+  retry: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/>',
+  pencil: '<path d="M16.5 3.8a2 2 0 0 1 2.8 2.8L8 18l-4 1 1-4L16.5 3.8Z"/>',
+  rewind: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+  play: '<path d="m7 5 12 7-12 7V5Z"/>',
+  file: '<path d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8L14 3.5Z"/><path d="M14 3.5V8h4.5"/>',
+  doc: '<path d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8L14 3.5Z"/><path d="M14 3.5V8h4.5M9 12.5h6M9 16h6"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/>',
+  terminal: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="m7.5 9.5 3 2.5-3 2.5M12.5 15h4"/>',
+  globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.4 3.5 5.3 3.5 8.5s-1 6.1-3.5 8.5c-2.5-2.4-3.5-5.3-3.5-8.5s1-6.1 3.5-8.5Z"/>',
+  mail: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="m4 7 8 6 8-6"/>',
+  git: '<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 8v8M18 11c0 4-6 3-11 6"/>',
+  cpu: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/><path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M3 20c.5-3.5 3-5.5 6-5.5s5.5 2 6 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.7.7 2.8 2.5 3 5.2"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>',
+  clip: '<path d="m20 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/>',
+  camera: '<path d="M4 8.5A1.5 1.5 0 0 1 5.5 7H8l1.5-2h5L16 7h2.5A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5v-9Z"/><circle cx="12" cy="13" r="3.5"/>',
+  image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="m20.5 16-5-5-9 8.5"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  chevron: '<path d="m9 6 6 6-6 6"/>',
+  arrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  stop: '<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/>',
+  spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/>',
+  brain: '<path d="M9 4.5A2.5 2.5 0 0 0 6.5 7v.3A3 3 0 0 0 4.5 10c0 .9.4 1.7 1 2.2A3 3 0 0 0 7 17.5 2.5 2.5 0 0 0 12 18V6.5A2 2 0 0 0 9 4.5ZM15 4.5A2.5 2.5 0 0 1 17.5 7v.3a3 3 0 0 1 2 2.7c0 .9-.4 1.7-1 2.2a3 3 0 0 1-1.5 5.3A2.5 2.5 0 0 1 12 18"/>',
+  key: '<circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M16 7l2.5 2.5M14 9l2 2"/>',
+};
+function ico(name, cls = "") {
+  const s = document.createElement("span");
+  s.className = "ico" + (cls ? " " + cls : "");
+  s.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name] || ICON_PATHS.file}</svg>`;
+  return s;
+}
+function paintIcons(root = document) {
+  root.querySelectorAll("[data-icon]").forEach((el) => {
+    if (el.dataset.painted) return;
+    el.dataset.painted = "1";
+    el.prepend(ico(el.dataset.icon));
+    if (el.classList.contains("ico") || el.classList.contains("logo") || el.classList.contains("plus")) el.replaceWith(...el.childNodes);
+  });
+}
+paintIcons();
+
+// Herramientas en lenguaje normal (como Claude Code): «Leyó app.py», «Ejecutó `pytest`»
+const TOOL_UI = {
+  list_dir: ["folder", "Listó", "Listando", "path"], read_file: ["file", "Leyó", "Leyendo", "path"],
+  grep_files: ["search", "Buscó", "Buscando", "pattern"], search_files: ["search", "Buscó archivos", "Buscando archivos", "query"],
+  write_file: ["doc", "Escribió", "Escribiendo", "path"], edit_file: ["pencil", "Editó", "Editando", "path"],
+  create_document: ["doc", "Creó", "Creando", "path"], run_command: ["terminal", "Ejecutó", "Ejecutando", "command"],
+  build_exe: ["terminal", "Compiló", "Compilando", "script"], web_search: ["globe", "Buscó en la web", "Buscando en la web", "query"],
+  fetch_url: ["globe", "Abrió", "Abriendo", "url"], mail_search: ["mail", "Buscó en el correo", "Buscando en el correo", "query"],
+  mail_read: ["mail", "Leyó el correo", "Leyendo el correo", "id"], mail_save_attachments: ["clip", "Guardó adjuntos en", "Guardando adjuntos en", "folder"],
+  compare_dirs: ["folder", "Comparó carpetas", "Comparando carpetas", "a"], system_info: ["cpu", "Consultó el equipo", "Consultando el equipo", null],
+  delegate: ["users", "Ayudante", "Ayudante trabajando", "task"], delegate_edit: ["users", "Ayudante (copia aislada)", "Ayudante trabajando", "task"],
+  apply_patch: ["check", "Aplicó la propuesta", "Aplicando la propuesta", "id"], github: ["git", "GitHub", "GitHub", "action"],
+  request_folder_access: ["lock", "Pidió acceso a", "Pidiendo acceso a", "path"], steam_games: ["cube", "Juegos de Steam", "Juegos de Steam", "query"],
+  game_diagnostics: ["cube", "Diagnosticó", "Diagnosticando", "game"], generate_image: ["image", "Generó una imagen", "Generando una imagen", null],
+  ask_local_model: ["cpu", "Consultó el modelo local", "Consultando el modelo local", null],
+};
+
 // --- Estado general ----------------------------------------------------------------------
 async function refreshStatus() {
   try {
@@ -209,7 +282,7 @@ async function loadProviders() {
   const prev = store.get("model", "local::local");
   updateAutoTitle();
   const lm = S.status?.llama?.model;
-  MS.catalog = [{ value: "local::local", label: lm ? `💻 ${lm}` : "💻 Modelo local (cárgalo en Modelos)", group: "Local (llama.cpp)", pid: "local" }];
+  MS.catalog = [{ value: "local::local", label: lm ? `${lm}` : "Modelo local (cárgalo en Modelos)", group: "Local (llama.cpp)", pid: "local" }];
   const empty = [];
   for (const p of S.providers.filter((p) => !["local", "auto"].includes(p.id) && p.enabled)) {
     let models = S.models[p.id];
@@ -218,7 +291,7 @@ async function loadProviders() {
       catch (e) { models = []; toast(`${p.name}: ${e.message}`); }
     }
     if (!models.length) empty.push(p.name);
-    for (const m of models) MS.catalog.push({ value: `${p.id}::${m}`, label: `☁ ${m}`, group: p.name, pid: p.id });
+    for (const m of models) MS.catalog.push({ value: `${p.id}::${m}`, label: `${m}`, group: p.name, pid: p.id });
   }
   renderModelSelect(prev, empty);
 }
@@ -346,7 +419,7 @@ function renderActiveTools() {
     box.append(h("span", { title: "Pulsa para volver al modo normal", onclick: () => { $("#mode-select").value = "normal"; $("#mode-select").dispatchEvent(new Event("change")); } },
       (mode === "plan" ? "📝 Plan" : "✏ Ediciones") + " ✕"));
   }
-  const items = [["auto-toggle", "🔀 Auto"], ["web-toggle", "🌐 Web"], ["tools-toggle", "🛠 Agente"]];
+  const items = [["auto-toggle", "Auto"], ["web-toggle", "Web"], ["tools-toggle", "Agente"]];
   let any = false;
   for (const [id, label] of items) {
     if (!$("#" + id).checked) continue;
@@ -634,24 +707,24 @@ function renderMessages() {
     const hr = new Date().getHours();
     const hello = hr < 6 ? "Buenas noches" : hr < 13 ? "Buenos días" : hr < 21 ? "Buenas tardes" : "Buenas noches";
     const ideas = [
-      ["📄 Resume un documento", "Resume el documento que te adjunto en 5 puntos clave.", "attach"],
-      ["🌐 Busca en la web", "Busca las últimas novedades sobre ", "web"],
-      ["🎨 Crea una imagen", "/imagen ", null],
-      ["🎮 Arreglar un juego", "El juego … no arranca (o va mal). Diagnostica qué le pasa y propón cómo arreglarlo.", "agent"],
-      ["📗 Crear un Excel", "Crea un Excel con ", "agent"],
-      ["💡 Explícame algo", "Explícame de forma sencilla cómo funciona ", null],
+      ["doc", "Resumir un documento", "Resume el documento que te adjunto en 5 puntos clave.", "attach"],
+      ["globe", "Buscar en la web", "Busca las últimas novedades sobre ", "web"],
+      ["folder", "Revisar una carpeta", "Revisa la carpeta … y dime qué contiene y qué falta.", "agent"],
+      ["mail", "Buscar en mi correo", "Busca en mi correo el último mensaje de ", "agent"],
     ];
+    $("#view-chat").classList.add("is-empty");
     box.append(h("div", { class: "empty-state" },
-      h("h1", { class: "greeting" }, h("span", { class: "logo" }, "✦"), hello),
-      h("p", {}, S.status?.llama?.model ? "Modelo local listo: " + S.status.llama.model : "Elige un modelo abajo o carga uno local en Modelos."),
-      h("div", { class: "suggest" }, ideas.map(([label, text, mode]) => h("button", { onclick: () => {
+      h("h1", { class: "greeting" }, ico("spark", "logo"), hello)));
+    $("#welcome-ideas")?.remove();
+    $(".composer-wrap").append(h("div", { id: "welcome-ideas", class: "suggest" }, ideas.map(([icon, label, text, mode]) => h("button", { onclick: () => {
         input.value = text; input.focus(); input.dispatchEvent(new Event("input"));
         if (mode === "web") { $("#web-toggle").checked = true; $("#web-toggle").dispatchEvent(new Event("change")); }
         if (mode === "agent") { $("#tools-toggle").checked = true; $("#tools-toggle").dispatchEvent(new Event("change")); }
         if (mode === "attach") $("#attach-btn").click();
-      } }, label)))));
+      } }, ico(icon), label))));
     return;
   }
+  $("#view-chat").classList.remove("is-empty"); $("#welcome-ideas")?.remove();
   for (const m of msgs) box.append(messageEl(m));
   box.scrollTop = box.scrollHeight;
 }
@@ -670,18 +743,28 @@ function toolRow(name, argsJson, result) {
   let arg = key ? String(a[key]).replace(/\s+/g, " ") : "";
   if (key === "path" || key === "script") { const seg = arg.split(/[\\/]/).filter(Boolean); arg = seg.length > 2 ? "…/" + seg.slice(-2).join("/") : arg; }
   arg = arg.slice(0, 80);
-  const failed = result != null && /^(Error|Bloqueado|El usuario ha denegado|Has repetido)/.test(result);
-  const state = result == null ? "⏳" : failed ? "✕" : "✔";
+  const failed = result != null && /^(Error|Bloqueado|El usuario ha denegado|Has repetido|Denegado)/.test(result);
   let pretty = argsJson || ""; try { pretty = JSON.stringify(JSON.parse(argsJson), null, 2); } catch { /* */ }
-  return h("details", { class: "tool" + (failed ? " failed" : "") },
-    h("summary", {}, `🔧 ${name}`, arg ? h("span", { class: "tool-arg" }, ` ${arg}`) : null, h("span", { class: "tool-state" }, ` ${state}`)),
+  const ui = TOOL_UI[name] || (name.startsWith("mcp__") ? ["cube", name.split("__").slice(1).join(" · "), name.split("__").slice(1).join(" · "), null] : ["cube", name, name, null]);
+  const pick = ui[3] && a[ui[3]] != null ? String(a[ui[3]]) : arg;
+  let shown = (pick || "").replace(/\s+/g, " ");
+  if (ui[3] === "path" || ui[3] === "folder" || ui[3] === "a") { const seg = shown.split(/[\\/]/).filter(Boolean); shown = seg.slice(-2).join("/") || shown; }
+  if (name === "mail_read" || name === "apply_patch") shown = "#" + shown;
+  if (name === "list_dir" && !shown) shown = "carpeta de trabajo";
+  if (name === "mail_search" && !a.query) shown = [a.sender && "de " + a.sender, a.person, a.subject, a.since && "desde " + a.since].filter(Boolean).join(" · ");
+  shown = shown.slice(0, 90);
+  const running = result == null;
+  return h("details", { class: "tool" + (failed ? " failed" : "") + (running ? " running" : "") },
+    h("summary", {}, ico(ui[0]), h("span", { class: "tool-verb" }, running ? ui[2] : ui[1]),
+      shown ? (name === "run_command" ? h("code", { class: "tool-arg" }, shown) : h("span", { class: "tool-arg" }, shown)) : null,
+      running ? h("span", { class: "spinner" }) : failed ? h("span", { class: "tool-err" }, "error") : null),
     h("pre", {}, pretty), result != null ? h("pre", {}, result) : null);
 }
 function todoCard(items) {
   const done = items.filter((t) => t.status === "completed").length;
   const icon = { completed: "✔", in_progress: "●", pending: "○" };
   return h("div", { class: "todo-card" },
-    h("div", { class: "todo-head" }, h("b", {}, "📋 Plan"), h("span", { class: "muted" }, `${done}/${items.length}`),
+    h("div", { class: "todo-head" }, h("b", {}, "Plan"), h("span", { class: "muted" }, `${done}/${items.length}`),
       h("div", { class: "todo-bar" }, h("div", { style: `width:${Math.round(100 * done / items.length)}%` }))),
     h("ul", {}, items.map((t) => h("li", { class: t.status }, h("span", { class: "ti" }, icon[t.status] || "○"), t.content))));
 }
@@ -722,31 +805,36 @@ function approvalCard(a) {
 function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   const frag = document.createDocumentFragment();
   if (extra.todos?.length) frag.append(todoCard(extra.todos));
-  if (extra.compacted) frag.append(h("div", { class: "route" }, `🗜 Se resumieron ${extra.compacted} mensajes antiguos para que la conversación quepa en el contexto`));
+  if (extra.compacted) frag.append(h("div", { class: "route" }, `Se resumieron ${extra.compacted} mensajes antiguos para que la conversación quepa en el contexto`));
   if (extra.liveOut && streaming) frag.append(h("pre", { class: "live-out" }, extra.liveOut.slice(-4000)));
   if (extra.status && streaming) frag.append(h("div", { class: "route" }, extra.status));
-  if (extra.route) frag.append(h("div", { class: "route" }, `🔀 ${extra.route.provider === "local" ? "💻" : "☁"} ${extra.route.model}` + (extra.route.reason ? ` — ${extra.route.reason}` : "")));
+  if (extra.route) frag.append(h("div", { class: "route" }, `Auto: ${extra.route.model}` + (extra.route.reason ? ` — ${extra.route.reason}` : "")));
   for (const f of extra.fallbacks || []) frag.append(h("div", { class: "route warn" }, "↪ falló " + f + ", probando el otro modelo…"));
   const { think, body, open } = splitThink(content || "");
   const r = [reasoning, think].filter(Boolean).join("\n");
-  if (r) frag.append(h("details", { open: streaming && (open || !body) ? true : false }, h("summary", {}, "💭 Razonamiento"), h("pre", {}, r)));
+  if (r) frag.append(h("details", { class: "thinking", open: streaming && (open || !body) ? true : false }, h("summary", {}, ico("brain"), streaming && !body ? "Pensando…" : "Razonamiento"), h("pre", {}, r)));
   const pendingCalls = {};
+  const toolList = () => {  // filas de herramientas seguidas: un único bloque discreto
+    const last = frag.lastChild;
+    if (last && last.classList?.contains("tools")) return last;
+    const box = h("div", { class: "tools" }); frag.append(box); return box;
+  };
   for (const t of tools || []) {
     if (t.name && t.name.startsWith("memory_")) {
       if (t.type === "tool_call") {
         let a = {}; try { a = JSON.parse(t.args || "{}"); } catch { /* */ }
         frag.append(h("div", { class: "memory-note", title: "Gestiona la memoria en Ajustes → Memoria" },
-          t.name === "memory_save" ? `💾 Recordado: ${a.content || ""}` : `🗑 Olvidado el recuerdo ${a.id}`));
+          t.name === "memory_save" ? `Recordado: ${a.content || ""}` : `Olvidado el recuerdo ${a.id}`));
       } else if (/^No guardado|^Error/.test(t.result || "")) frag.append(h("div", { class: "memory-note warn" }, t.result));
       continue;
     }
     if (t.name === "todo_write") continue;  // ya se ve en la tarjeta del plan
     if (t.type === "tool_call") pendingCalls[t.name] = t;  // se muestra junto a su resultado
     else if (t.type === "approval") frag.append(approvalCard(t));
-    else if (t.type === "tool_result") { frag.append(toolRow(t.name, pendingCalls[t.name]?.args, t.result)); delete pendingCalls[t.name]; }
+    else if (t.type === "tool_result") { toolList().append(toolRow(t.name, pendingCalls[t.name]?.args, t.result)); delete pendingCalls[t.name]; }
   }
   if (streaming) for (const [name, c] of Object.entries(pendingCalls)) {  // en curso
-    if (!(tools || []).some((x) => x.type === "approval" && x.name === name && !x.state)) frag.append(toolRow(name, c.args, null));
+    if (!(tools || []).some((x) => x.type === "approval" && x.name === name && !x.state)) toolList().append(toolRow(name, c.args, null));
   }
   const b = h("div", { class: "bubble" + (streaming ? " cursor" : "") });
   b.innerHTML = md(body);
@@ -755,7 +843,7 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   const outs = [...new Set(extra.files || [])];
   if (outs.length) frag.append(h("div", { class: "file-cards" }, outs.map((p) =>
     h("a", { class: "file-card", href: "/api/files/download?" + qs({ path: p }), title: p },
-      h("span", { class: "fi" }, fileIcon(p)), h("span", { class: "fn" }, baseName(p), h("small", {}, "Descargar")))))); 
+      h("span", { class: "fi" }, ico("file"), h("small", {}, String(p).split(".").pop().toUpperCase().slice(0, 4))), h("span", { class: "fn" }, baseName(p), h("small", {}, "Descargar")))))); 
   const imgs = extra.images || [];
   if (imgs.length) frag.append(h("div", { class: "gen-images" }, imgs.map((p) =>
     h("a", { href: fileUrl(p), target: "_blank", title: p }, h("img", { src: fileUrl(p), alt: "imagen generada", loading: "lazy" })))));
@@ -770,20 +858,19 @@ function messageEl(m) {
     if (imgs.length) el.append(h("div", { class: "msg-images" }, imgs.map((a) =>
       h("img", { src: fileUrl(a.path), alt: a.name, loading: "lazy", onclick: () => previewFile(a.path) }))));
     el.append(h("div", { class: "meta" },
-      att.filter((a) => !imgs.includes(a)).map((a) => h("span", { class: "chip" }, (a.kind === "document" || a.kind === "pdf_scan" ? "📄 " : "📎 ") + a.name)),
-      h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, "⧉"),
-      h("button", { class: "act", title: "Editar", onclick: () => editFrom(m) }, "✎"),
-      (S.checkpoints || []).some((c) => c.id >= m.id) ? h("button", { class: "act", title: "Volver aquí: los archivos que la IA tocó desde este mensaje vuelven a como estaban antes", onclick: () => rewindTo(m) }, "↶") : null));
+      att.filter((a) => !imgs.includes(a)).map((a) => h("span", { class: "chip" }, ico(a.kind === "document" || a.kind === "pdf_scan" ? "doc" : "clip"), a.name)),
+      h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, ico("copy")),
+      h("button", { class: "act", title: "Editar", onclick: () => editFrom(m) }, ico("pencil")),
+      (S.checkpoints || []).some((c) => c.id >= m.id) ? h("button", { class: "act", title: "Volver aquí: los archivos que la IA tocó desde este mensaje vuelven a como estaban antes", onclick: () => rewindTo(m) }, ico("rewind")) : null));
   } else {
     el.append(assistantInner(m.content, m.reasoning, m.meta?.tools, false, { images: m.meta?.images || [], files: m.meta?.files || [], todos: m.meta?.todos || [] }));
     const st = m.meta?.stats || {};
     el.append(h("div", { class: "meta" },
-      h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, "⧉"),
-      h("button", { class: "act", title: "Volver a generar", onclick: () => regenerate(m) }, "↻"),
+      h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, ico("copy")),
+      h("button", { class: "act", title: "Volver a generar", onclick: () => regenerate(m) }, ico("retry")),
       m.meta?.finish ? h("button", { class: "act continue", title: "La respuesta quedó incompleta",
-        onclick: () => { if (!S.streaming) send("Continúa exactamente donde lo dejaste.", []); } }, "▶ Continuar") : null,
-      h("span", { title: m.meta?.route || "" }, (m.meta?.provider === "local" ? "💻 " : m.meta?.provider === "imagen" ? "🎨 " : "☁ ") + (m.meta?.model || "")),
-      m.meta?.route ? h("span", {}, "🔀 " + m.meta.route) : null,
+        onclick: () => { if (!S.streaming) send("Continúa exactamente donde lo dejaste.", []); } }, ico("play"), "Continuar") : null,
+      h("span", { class: "meta-model", title: (m.meta?.provider === "local" ? "Modelo local" : "API") + (m.meta?.route ? " · " + m.meta.route : "") }, m.meta?.model || ""),
       st.tokens_per_second ? h("span", {}, `${st.tokens_per_second.toFixed(1)} tok/s`) : null,
       m.meta?.usage ? h("span", { title: "Tokens de entrada/salida de toda la respuesta (incluidas las herramientas)" }, `↑${m.meta.usage.in} ↓${m.meta.usage.out}` + (m.meta.usage.cost ? ` · ~$${m.meta.usage.cost.toFixed(m.meta.usage.cost < 0.01 ? 4 : 3)}` : "")) : null));
   }
@@ -851,7 +938,7 @@ async function regenerate(m) {
 // --- Envío con streaming -----------------------------------------------------------------
 function setSending(on) {
   const b = $("#send-btn");
-  b.textContent = on ? "■" : "↑"; b.classList.toggle("stop", on);
+  b.innerHTML = ""; b.append(ico(on ? "stop" : "arrowUp")); b.classList.toggle("stop", on);
   b.title = on ? "Detener" : "Enviar"; b.dataset.state = on ? "sending" : "idle";
 }
 const input = $("#input");
@@ -894,7 +981,7 @@ $("#send-btn").addEventListener("click", () => {
 async function send(text, attachments, isContinue = false) {
   const { provider, model } = currentModel();
   const box = $("#messages");
-  if (!S.conv?.messages?.length) box.innerHTML = "";
+  if (!S.conv?.messages?.length) { box.innerHTML = ""; $("#view-chat").classList.remove("is-empty"); $("#welcome-ideas")?.remove(); }
   if (text || attachments.length) {
     const um = { id: 0, role: "user", content: text, meta: { attachments: attachments.map((p) => ({ name: baseName(p), path: p })) } };
     box.append(messageEl(um));
@@ -1297,7 +1384,7 @@ function fitInfo(gb) {
   return h("span", { class: "badge bad", title: `~${gb} GB; este equipo tiene ~${HUB.budget} GB disponibles` }, "no cabe");
 }
 const sizeBucket = (r) => !r.params ? "" : r.params <= 2 ? "xs" : r.params <= 4.5 ? "s" : r.params <= 9.5 ? "m" : r.params <= 15 ? "l" : "xl";
-const CAP_BADGE = { vision: "👁 visión", code: "🧑‍💻 código", reasoning: "🧠 razonamiento", image: "🎨 imágenes" };
+const CAP_BADGE = { vision: "visión", code: "código", reasoning: "razonamiento", image: "imágenes" };
 
 $("#hub-search").addEventListener("submit", (e) => { e.preventDefault(); hubSearch($("#hub-q").value.trim()); });
 $("#hub-sort").addEventListener("change", () => { if ($("#hub-q").value.trim()) hubSearch($("#hub-q").value.trim()); });
@@ -1663,10 +1750,49 @@ async function loadSettings() {
       inp = selectEl(key, v, opts);
     }
     else inp = h("input", { type, name: key, value: v ?? "", step: type === "number" ? "any" : null });
-    f.append(h("label", {}, label), inp);
-    if (hint) f.append(h("div", { class: "hint" }, hint));
+    const sec = SETTINGS_SECTION[key] || "general";
+    const adv = ADVANCED_KEYS.has(key) ? "1" : "";
+    const lab = h("label", {}, String(label).replace(/^[^\p{L}\p{N}]+\s*/u, "")); lab.dataset.stab = sec; inp.dataset.stab = sec;
+    lab.dataset.adv = inp.dataset.adv = adv;
+    f.append(lab, inp);
+    if (hint) { const hd = h("div", { class: "hint" }, hint); hd.dataset.stab = sec; hd.dataset.adv = adv; f.append(hd); }
   }
+  showSettingsTab(store.get("settings_tab", "general"));
 }
+// Lo esencial a la vista; lo técnico, plegado (la IA también puede cambiarlo si se lo pides)
+const ADVANCED_KEYS = new Set(("context_budget router_mode router_fast router_strong vision_fallback memory_api image_mode image_dir " +
+  "sd_steps sd_cfg sd_max_side llama_server_path llama_extra_args llama_gpu_layers llama_threads models_dir agent_max_steps " +
+  "agent_workdir ai_game_write blocked_paths command_sandbox agent_profile command_allow model_prices localhost_without_token " +
+  "port hf_token agent_temperature image_model web_api_key").split(" "));
+const SETTINGS_SECTION = {};
+for (const [sec, keys] of Object.entries({
+  local: "image_provider image_model image_mode image_size image_dir sd_steps sd_cfg sd_max_side models_dir llama_server_path llama_ctx llama_threads llama_gpu_layers llama_extra_args autoload_last_model hf_token agent_temperature local_thinking",
+  agent: "file_roots ai_write ai_commands agent_max_steps agent_workdir ai_game_write commands_trusted command_allow write_roots blocked_paths command_sandbox agent_profile github_token",
+  mail: "mcp_servers mail_paths", data: "monthly_budget_usd model_prices", access: "localhost_without_token port",
+})) for (const k of keys.split(" ")) SETTINGS_SECTION[k] = sec;
+const SETTINGS_TITLES = { general: "General", providers: "", agent: "Agente y permisos", local: "Modelos locales e imágenes", mail: "Correo e integraciones", data: "Datos y uso", access: "Acceso" };
+function showSettingsTab(tab) {
+  store.set("settings_tab", tab);
+  $$("#settings-tabs [data-stab]").forEach((b) => b.classList.toggle("active", b.dataset.stab === tab));
+  $$("#view-settings .card[data-stab]").forEach((c) => { if (c.dataset.stab !== "all") c.classList.toggle("hidden", c.dataset.stab !== tab); });
+  let any = false, advCount = 0;
+  const showAdv = !!S.showAdvanced;
+  $$("#settings-form [data-stab]").forEach((el) => {
+    const inTab = el.dataset.stab === tab, adv = el.dataset.adv === "1";
+    if (inTab && adv && el.tagName === "LABEL") advCount++;
+    const on = inTab && (!adv || showAdv);
+    el.classList.toggle("hidden", !on); any = any || on;
+  });
+  let btn = $("#adv-toggle");
+  if (!btn) { btn = h("button", { id: "adv-toggle", type: "button", class: "ghost small", onclick: () => { S.showAdvanced = !S.showAdvanced; showSettingsTab(store.get("settings_tab", "general")); } }); $("#settings-form").after(btn); }
+  btn.textContent = showAdv ? "Ocultar opciones avanzadas" : `Mostrar opciones avanzadas (${advCount})`;
+  btn.classList.toggle("hidden", !advCount);
+  any = any || advCount > 0;
+  const formCard = $("#settings-form").closest(".card");
+  formCard.classList.toggle("hidden", !any);
+  $("#settings-form-title").textContent = SETTINGS_TITLES[tab] || "Opciones";
+}
+$$("#settings-tabs [data-stab]").forEach((b) => b.addEventListener("click", () => showSettingsTab(b.dataset.stab)));
 // --- Herramientas de programación --------------------------------------------------------------
 let devTimer = null;
 async function renderDevtools(refresh = false) {
@@ -1864,7 +1990,7 @@ async function init() {
   await loadProviders();
   await loadConversations();
   const last = store.get("conv", null);
-  if (last) await openConversation(last).catch(newChat);
+  if (last) await openConversation(last).catch(newChat); else newChat();
   setView(store.get("view", "chat"));
   renderActiveTools(); setSending(false);
   setInterval(refreshStatus, 8000);

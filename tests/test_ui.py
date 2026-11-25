@@ -86,9 +86,16 @@ def test_ui_end_to_end(live):
             page.click(f"[data-view={view}]")
             page.wait_for_selector(marker, state="visible", timeout=5000)
             assert page.is_visible("#code-panel") == (view == "code"), view
+        # Ajustes por pestañas: cada sección muestra sólo lo suyo
+        page.click("#settings-tabs [data-stab=data]")
         page.wait_for_selector("#usage-box >> text=Este mes", timeout=5000)     # Uso y coste
         assert page.is_visible("#bk-export")                                      # Copia de seguridad
+        assert not page.is_visible("#mail-box")
+        page.click("#settings-tabs [data-stab=mail]")
         page.wait_for_selector("#mail-box >> text=La IA puede buscar en mi correo", timeout=5000)   # Correo
+        assert not page.is_visible("#usage-box")
+        page.click("#settings-tabs [data-stab=general]")
+        assert page.is_visible("#settings-form [name=temperature]") and not page.is_visible("#settings-form [name=port]")
 
         # 2) Cargar el modelo falso y mantener una conversación (con corte por longitud y continuación automática)
         page.evaluate("""async () => {
