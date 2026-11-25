@@ -460,3 +460,8 @@ details.thinking > summary .ico { width: 15px; height: 15px; }
 .prov-detail h3 { margin: 10px 0 4px; }
 .prov-result { margin: 10px 0; font-size: 13px; }
 .prov-result.ok { color: var(--ok); } .prov-result.err { color: var(--danger); }
+
+.settings-search { position: relative; margin: 0 0 12px; }
+.settings-search .ico { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 17px; height: 17px; color: var(--muted); pointer-events: none; }
+.settings-search input { width: 100%; padding: 10px 12px 10px 38px; border-radius: 12px; font-size: 15px; }
+#settings-noresults { margin: 4px 2px 16px; }

@@ -96,6 +96,19 @@ def test_ui_end_to_end(live):
         assert not page.is_visible("#usage-box")
         page.click("#settings-tabs [data-stab=general]")
         assert page.is_visible("#settings-form [name=temperature]") and not page.is_visible("#settings-form [name=port]")
+        # Buscador de ajustes: encuentra opciones de cualquier pestaña (también avanzadas), sin acentos
+        page.fill("#settings-search", "puerto")
+        assert page.is_visible("#settings-form [name=port]") and not page.is_visible("#settings-form [name=temperature]")
+        page.fill("#settings-search", "temperatura")
+        assert page.is_visible("#settings-form [name=temperature]") and page.is_visible("#settings-form [name=agent_temperature]")
+        page.fill("#settings-search", "correo")
+        assert page.is_visible("#mail-box") and not page.is_visible("#usage-box")
+        page.fill("#settings-search", "copia de seguridad")
+        assert page.is_visible("#bk-export")
+        page.fill("#settings-search", "zzqqxx")
+        assert page.is_visible("#settings-noresults")
+        page.press("#settings-search", "Escape")
+        assert page.input_value("#settings-search") == "" and page.is_visible("#settings-form [name=temperature]")
 
         # 2) Cargar el modelo falso y mantener una conversación (con corte por longitud y continuación automática)
         page.evaluate("""async () => {

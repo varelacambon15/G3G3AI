@@ -1771,10 +1771,13 @@ async function loadSettings() {
     const adv = ADVANCED_KEYS.has(key) ? "1" : "";
     const lab = h("label", {}, String(label).replace(/^[^\p{L}\p{N}]+\s*/u, "")); lab.dataset.stab = sec; inp.dataset.stab = sec;
     lab.dataset.adv = inp.dataset.adv = adv;
+    lab.dataset.key = inp.dataset.key = key;
+    lab.dataset.find = `${label} ${hint || ""} ${key.replace(/_/g, " ")}`.toLowerCase();
     f.append(lab, inp);
-    if (hint) { const hd = h("div", { class: "hint" }, hint); hd.dataset.stab = sec; hd.dataset.adv = adv; f.append(hd); }
+    if (hint) { const hd = h("div", { class: "hint" }, hint); hd.dataset.stab = sec; hd.dataset.adv = adv; hd.dataset.key = key; f.append(hd); }
   }
   showSettingsTab(store.get("settings_tab", "general"));
+  if ($("#settings-search").value.trim()) searchSettings();
 }
 // Lo esencial a la vista; lo técnico, plegado (la IA también puede cambiarlo si se lo pides)
 const ADVANCED_KEYS = new Set(("context_budget router_mode router_fast router_strong vision_fallback memory_api image_mode image_dir " +
@@ -1788,6 +1791,33 @@ for (const [sec, keys] of Object.entries({
   mail: "mcp_servers mail_paths mcp_default_model", data: "monthly_budget_usd model_prices", access: "localhost_without_token port",
 })) for (const k of keys.split(" ")) SETTINGS_SECTION[k] = sec;
 const SETTINGS_TITLES = { general: "General", providers: "", agent: "Agente y permisos", local: "Modelos locales e imágenes", mail: "Correo e integraciones", data: "Datos y uso", access: "Acceso" };
+// Buscar entre todas las opciones (de cualquier pestaña, también las avanzadas)
+const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+function searchSettings() {
+  const q = norm($("#settings-search").value.trim());
+  if (!q) { $("#settings-noresults").classList.add("hidden"); showSettingsTab(store.get("settings_tab", "general")); return; }
+  const words = q.split(/\s+/);
+  const hit = (text) => { const t = norm(text); return words.every((w) => t.includes(w)); };
+  $$("#settings-tabs [data-stab]").forEach((b) => b.classList.remove("active"));
+  let found = 0;
+  const keys = new Set();
+  $$("#settings-form label[data-key]").forEach((l) => { if (hit(l.dataset.find)) keys.add(l.dataset.key); });
+  $$("#settings-form [data-key]").forEach((el) => el.classList.toggle("hidden", !keys.has(el.dataset.key)));
+  found += keys.size;
+  const formCard = $("#settings-form").closest(".card");
+  formCard.classList.toggle("hidden", !keys.size);
+  $("#settings-form-title").textContent = "Opciones";
+  $("#adv-toggle")?.classList.add("hidden");
+  $$("#view-settings .card[data-stab]").forEach((c) => {
+    if (c === formCard) return;
+    const ok = hit(c.textContent + " " + [...c.querySelectorAll("input,textarea")].map((i) => i.placeholder || "").join(" "));
+    c.classList.toggle("hidden", !ok);
+    if (ok) found++;
+  });
+  $("#settings-noresults").classList.toggle("hidden", found > 0);
+}
+$("#settings-search").addEventListener("input", searchSettings);
+$("#settings-search").addEventListener("keydown", (e) => { if (e.key === "Escape") { e.target.value = ""; searchSettings(); } });
 function showSettingsTab(tab) {
   store.set("settings_tab", tab);
   $$("#settings-tabs [data-stab]").forEach((b) => b.classList.toggle("active", b.dataset.stab === tab));
@@ -1809,7 +1839,10 @@ function showSettingsTab(tab) {
   formCard.classList.toggle("hidden", !any);
   $("#settings-form-title").textContent = SETTINGS_TITLES[tab] || "Opciones";
 }
-$$("#settings-tabs [data-stab]").forEach((b) => b.addEventListener("click", () => showSettingsTab(b.dataset.stab)));
+$$("#settings-tabs [data-stab]").forEach((b) => b.addEventListener("click", () => {
+  $("#settings-search").value = ""; $("#settings-noresults").classList.add("hidden");
+  showSettingsTab(b.dataset.stab);
+}));
 // --- Herramientas de programación --------------------------------------------------------------
 let devTimer = null;
 async function renderDevtools(refresh = false) {
