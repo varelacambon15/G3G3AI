@@ -446,3 +446,17 @@ details.thinking > summary .ico { width: 15px; height: 15px; }
 .form-grid input[type=checkbox] { justify-self: start; width: 18px; height: 18px; accent-color: var(--accent); }
 #adv-toggle { margin-top: 14px; }
 .active-tools .chip, .active-tools span { font-size: 12.5px; }
+
+/* Catálogo de proveedores */
+#provider-dialog { width: min(820px, 96vw); }
+.prov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; margin-top: 10px; max-height: 60dvh; overflow: auto; }
+.prov-card { display: flex; flex-direction: column; gap: 4px; text-align: left; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; cursor: pointer; color: var(--text); font-size: 13px; }
+.prov-card:hover { border-color: var(--border-strong); background: var(--hover); }
+.prov-card.added { border-color: color-mix(in srgb, var(--ok) 40%, var(--border)); }
+.prov-card b { font-size: 14px; }
+.prov-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.tag { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: var(--hover); color: var(--muted); }
+.tag.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.prov-detail h3 { margin: 10px 0 4px; }
+.prov-result { margin: 10px 0; font-size: 13px; }
+.prov-result.ok { color: var(--ok); } .prov-result.err { color: var(--danger); }

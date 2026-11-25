@@ -2205,3 +2205,32 @@ def test_ai_can_read_and_change_its_own_settings_with_confirmation(env):
             pass
         return sink[0]
     assert "Denegado" in asyncio.run(run()) and cfg["temperature"] == 0.3
+
+
+def test_provider_catalog_test_and_add(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    cat = client.get("/api/providers/catalog", headers=h).json()
+    ids = {c["id"] for c in cat}
+    assert {"opencode-go", "openrouter", "anthropic", "deepseek", "gemini", "groq", "ollama"} <= ids and len(cat) >= 18
+    og = next(c for c in cat if c["id"] == "opencode-go")
+    assert og["base_url"] == "https://opencode.ai/zen/go/v1" and og["type"] == "openai" and og["needs_key"]
+    # probar contra un servidor compatible con OpenAI (el llama falso sirve /models)
+    load_model(client, h)
+    base = f"http://127.0.0.1:{cfg['llama_port']}/v1"
+    r = client.post("/api/providers/test", headers=h, json={"base_url": base, "type": "openai", "api_key": "x"}).json()
+    assert r["ok"] and r["count"] >= 1
+    bad = client.post("/api/providers/test", headers=h, json={"base_url": "http://127.0.0.1:9/v1", "type": "openai"}).json()
+    assert not bad["ok"] and bad["error"]
+    assert client.post("/api/providers/test", headers=h, json={"base_url": "ftp://x"}).status_code == 400
+    # añadir del catálogo: exige clave; se guarda activado y la clave nunca vuelve en claro
+    assert client.post("/api/providers/add", headers=h, json={"preset": "opencode-go"}).status_code == 400
+    assert client.post("/api/providers/add", headers=h, json={"preset": "opencode-go", "api_key": "sk-go-123"}).json()["ok"]
+    p = cfg.provider("opencode-go")
+    assert p["enabled"] and p["api_key"] == "sk-go-123" and p["base_url"] == "https://opencode.ai/zen/go/v1"
+    s = client.get("/api/settings", headers=h).json()
+    assert "sk-go-123" not in str(s)
+    assert next(c for c in client.get("/api/providers/catalog", headers=h).json() if c["id"] == "opencode-go")["configured"]
+    # personalizado
+    r = client.post("/api/providers/add", headers=h, json={"name": "Mi vLLM", "base_url": base, "type": "openai"}).json()
+    assert cfg.provider(r["id"])["name"] == "Mi vLLM"

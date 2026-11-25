@@ -206,6 +206,9 @@ Con un **token de GitHub** (Ajustes → «Token de GitHub», o la variable `GITH
 - **Git** con `run_command`: crea ramas, commits y `git push` (el push siempre pide confirmación; los push forzados avisan como peligrosos). Usa el remoto `origin` de la carpeta del proyecto.
 Flujo típico: «arregla el issue #12» → lee el issue, crea una rama, edita, ejecuta los tests, hace commit, te pide permiso para el push, abre el PR y comprueba el CI.
 
+### ☁ Proveedores
+Ajustes → **Proveedores** → «Añadir»: un catálogo con buscador de más de 20 proveedores listos para usar — **OpenCode Go** y **OpenCode Zen**, OpenRouter, Anthropic (Claude), OpenAI, DeepSeek, Google Gemini, Groq, Cerebras, Mistral, xAI (Grok), Moonshot (Kimi), Z.ai (GLM), Qwen, Together, Fireworks, Hugging Face, NVIDIA NIM, Perplexity, Ollama y LM Studio — más cualquier servidor compatible con OpenAI (otro equipo con G3G3AI, vLLM, LiteLLM…). Eliges uno, pegas la clave (con enlace directo a dónde conseguirla), pulsas **Probar conexión** y **Añadir**. Las claves nunca se devuelven en claro a la interfaz.
+
 ### 🕒 Tareas programadas
 En la pestaña **Tareas** el agente trabaja solo a la hora que elijas (cada día a una hora, cada N minutos o una vez), con el modelo que tengas seleccionado, aunque no haya ninguna ventana abierta (G3G3AI debe estar en marcha en ese equipo). Ejemplo: «cada noche a las 03:00 ejecuta los tests y cuéntame qué falla».
 - **Sin supervisión:** nadie puede aprobar acciones, así que todo lo que pediría permiso se **deniega** (comandos fuera de «Comandos permitidos», servidores MCP, escribir en GitHub…) y el agente continúa sin ello y lo cuenta en su informe.

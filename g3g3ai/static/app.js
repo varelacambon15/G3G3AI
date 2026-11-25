@@ -1951,7 +1951,71 @@ function loadSettingsProvidersOnly() {
   const pe = $("#providers-edit"); pe.innerHTML = "";
   S.settings.providers.forEach((p, idx) => pe.append(providerBox(p, idx)));
 }
-$("#add-provider").addEventListener("click", () => {
+// --- Añadir proveedor: catálogo con búsqueda, clave y prueba de conexión ------------------------
+async function providerDialog(focusId) {
+  let dlg = $("#provider-dialog");
+  if (!dlg) { dlg = h("dialog", { id: "provider-dialog" }); document.body.append(dlg); }
+  dlg.innerHTML = "";
+  const list = await api("/api/providers/catalog");
+  const search = h("input", { type: "search", placeholder: "Buscar proveedor…", class: "grow" });
+  const grid = h("div", { class: "prov-grid" });
+  const detail = h("div", { class: "prov-detail hidden" });
+  dlg.append(h("div", { class: "dialog-head" }, h("b", {}, "Añadir un proveedor de IA"),
+    h("button", { class: "icon-btn", onclick: () => dlg.close(), "aria-label": "Cerrar" }, ico("x"))),
+    h("div", { class: "row" }, search), grid, detail);
+  const draw = () => {
+    const q = search.value.trim().toLowerCase();
+    grid.innerHTML = "";
+    for (const c of list.filter((c) => !q || (c.name + " " + c.description + " " + c.tags.join(" ")).toLowerCase().includes(q)))
+      grid.append(h("button", { class: "prov-card" + (c.configured ? " added" : ""), onclick: () => open(c) },
+        h("b", {}, c.name), h("span", { class: "muted" }, c.description),
+        h("span", { class: "prov-tags" }, c.configured ? h("span", { class: "tag ok" }, "Configurado") : null, c.tags.map((t) => h("span", { class: "tag" }, t)))));
+    grid.append(h("button", { class: "prov-card", onclick: () => open({ id: "", name: "", type: "openai", base_url: "", key_url: "", description: "", tags: [], needs_key: false, custom: true }) },
+      h("b", {}, "Otro (compatible con OpenAI)"), h("span", { class: "muted" }, "Cualquier servidor con API de OpenAI: otro equipo con G3G3AI, vLLM, LiteLLM…")));
+  };
+  const open = (c) => {
+    grid.classList.add("hidden"); search.closest(".row").classList.add("hidden"); detail.classList.remove("hidden"); detail.innerHTML = "";
+    const name = h("input", { value: c.name, placeholder: "Nombre" });
+    const url = h("input", { value: c.base_url, placeholder: "https://…/v1" });
+    const key = h("input", { type: "password", placeholder: c.needs_key ? "Pega aquí tu clave API" : "Clave (si hace falta)", autocomplete: "off" });
+    const type = selectEl("", c.type, [["openai", "Compatible con OpenAI"], ["anthropic", "Anthropic"]]);
+    const out = h("div", { class: "prov-result muted" });
+    const body = () => ({ preset: c.custom ? "" : c.id, id: c.custom ? "" : c.id, name: name.value.trim(), base_url: url.value.trim(), api_key: key.value.trim(), type: type.value });
+    detail.append(
+      h("button", { class: "ghost small", onclick: () => { detail.classList.add("hidden"); grid.classList.remove("hidden"); search.closest(".row").classList.remove("hidden"); } }, "← Volver"),
+      h("h3", {}, c.name || "Proveedor personalizado"), c.description ? h("p", { class: "muted" }, c.description) : null,
+      c.key_url ? h("p", {}, h("a", { href: c.key_url, target: "_blank", rel: "noopener" }, c.needs_key ? "Conseguir una clave ↗" : "Descargar / documentación ↗")) : null,
+      h("div", { class: "form-grid" },
+        c.custom ? h("label", {}, "Nombre") : null, c.custom ? name : null,
+        h("label", {}, "Clave API"), key,
+        h("label", {}, "URL base"), url,
+        c.custom ? h("label", {}, "Tipo") : null, c.custom ? type : null),
+      out,
+      h("div", { class: "row end" },
+        h("button", { class: "ghost small", onclick: async () => {
+          out.textContent = "Probando…";
+          try {
+            const r = await api("/api/providers/test", { method: "POST", body: body() });
+            out.textContent = r.ok ? `Conectado: ${r.count} modelos (${r.sample.slice(0, 4).join(", ")}${r.count > 4 ? "…" : ""})` : "No funciona: " + r.error;
+            out.className = "prov-result " + (r.ok ? "ok" : "err");
+          } catch (e) { out.textContent = e.message; out.className = "prov-result err"; }
+        } }, "Probar conexión"),
+        h("button", { class: "primary small", onclick: async () => {
+          try {
+            await api("/api/providers/add", { method: "POST", body: body() });
+            dlg.close(); toast(`${c.name || name.value} añadido`, 3000);
+            S.settings = await api("/api/settings"); loadSettingsProvidersOnly(); loadProviders();
+          } catch (e) { out.textContent = e.message; out.className = "prov-result err"; }
+        } }, "Añadir")));
+    (c.needs_key ? key : url).focus();
+  };
+  search.oninput = draw;
+  draw();
+  dlg.showModal();
+  if (focusId) { const c = list.find((x) => x.id === focusId); if (c) open(c); } else search.focus();
+}
+$("#add-provider").addEventListener("click", () => providerDialog());
+$("#add-provider-legacy")?.addEventListener("click", () => {
   const kind = prompt("¿Qué quieres añadir?\n1 = Otro equipo con G3G3AI (PC ↔ portátil)\n2 = Ollama / LM Studio / servidor compatible con OpenAI", "1");
   if (!kind) return;
   let name, url, key = "";

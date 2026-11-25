@@ -21,14 +21,14 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
 from . import __version__
-from .config import DATA_DIR, Config
+from .config import MASK, DATA_DIR, Config
 from .db import DB
 from .files import FileAccessError, Files
 from .hub import Hub
 from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
-from . import backup, costs, profiles, subagent
+from . import backup, catalog, costs, profiles, subagent
 from .mail import MailIndex, thunderbird_profiles, mail_sources
 from .mcp import MCPManager
 from .tasks import Scheduler, TaskError, TaskStore, next_run
@@ -292,6 +292,58 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         for p in cfg.public()["providers"]:
             out.append({k: p.get(k) for k in ("id", "name", "type", "enabled")})
         return out
+
+    @app.get("/api/providers/catalog")
+    async def providers_catalog():
+        have = {p.get("id"): p for p in cfg["providers"]}
+        return [{**c, "added": c["id"] in have, "configured": bool((have.get(c["id"]) or {}).get("api_key"))
+                 or (c["id"] in have and not c["needs_key"])} for c in catalog.as_list()]
+
+    def _provider_from_body(body: dict) -> dict:
+        cur = cfg.provider(str(body.get("id") or "")) or {}
+        key = body.get("api_key")
+        if key in (None, MASK):
+            key = cur.get("api_key", "")
+        p = {"id": body.get("id") or "", "name": body.get("name") or cur.get("name") or "Proveedor",
+             "type": body.get("type") or cur.get("type") or "openai",
+             "base_url": (body.get("base_url") or cur.get("base_url") or "").strip().rstrip("/"), "api_key": (key or "").strip()}
+        if not p["base_url"].startswith(("http://", "https://")):
+            raise HTTPException(400, "La URL base debe empezar por http:// o https://")
+        return p
+
+    @app.post("/api/providers/test")
+    async def providers_test(body: dict):
+        """Comprueba una configuración (aún sin guardar) pidiendo la lista de modelos."""
+        p = _provider_from_body(body)
+        try:
+            models = await list_models(p)
+        except (ProviderError, httpx.HTTPError) as e:
+            msg = str(e)
+            hint = (" (la clave no es válida o no tiene permiso)" if "401" in msg or "403" in msg else
+                    " (¿la URL base es correcta?)" if "404" in msg else "")
+            return {"ok": False, "error": msg[:300] + hint}
+        return {"ok": True, "count": len(models), "sample": models[:8]}
+
+    @app.post("/api/providers/add")
+    async def providers_add(body: dict):
+        """Añade (o actualiza) un proveedor del catálogo o personalizado, activado y listo para usar."""
+        pre = catalog.preset(str(body.get("preset") or "")) or {}
+        merged = {**{k: pre.get(k) for k in ("id", "name", "type", "base_url")}, **{k: v for k, v in body.items() if v not in (None, "")}}
+        if not merged.get("id"):
+            merged["id"] = re.sub(r"[^a-z0-9]+", "-", str(merged.get("name") or "proveedor").lower()).strip("-")[:24] \
+                + "-" + secrets.token_hex(2)
+        p = _provider_from_body(merged)
+        if pre.get("needs_key") and not p["api_key"]:
+            raise HTTPException(400, "Falta la clave API")
+        provs = list(cfg["providers"])
+        cur = next((x for x in provs if x.get("id") == p["id"]), None)
+        if cur:
+            cur.update({**p, "enabled": True})
+        else:
+            provs.append({**p, "enabled": True})
+        cfg.data["settings_updated"] = time.time()
+        cfg.set("providers", provs)
+        return {"ok": True, "id": p["id"]}
 
     @app.get("/api/providers/export")
     async def providers_export():
