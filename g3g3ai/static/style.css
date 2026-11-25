@@ -465,3 +465,41 @@ details.thinking > summary .ico { width: 15px; height: 15px; }
 .settings-search .ico { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 17px; height: 17px; color: var(--muted); pointer-events: none; }
 .settings-search input { width: 100%; padding: 10px 12px 10px 38px; border-radius: 12px; font-size: 15px; }
 #settings-noresults { margin: 4px 2px 16px; }
+
+/* Comprobar todo */
+.settings-head { align-items: center; gap: 8px; }
+#diag-dialog { width: min(760px, 96vw); }
+.diag-summary { font-weight: 600; margin: 4px 0 10px; }
+.diag-list { display: flex; flex-direction: column; gap: 6px; max-height: 62dvh; overflow: auto; }
+.diag { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.diag-ico { margin-top: 2px; }
+.diag-ico .ico { width: 18px; height: 18px; }
+.diag.ok .diag-ico { color: var(--ok); } .diag.warn .diag-ico { color: var(--warn); } .diag.error .diag-ico { color: var(--danger); }
+.diag.info .diag-ico, .diag.skip .diag-ico { color: var(--muted); }
+.diag.error { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+.diag .muted { font-size: 13.5px; }
+.diag-fix { font-size: 13px; margin-top: 4px; }
+.diag button { white-space: nowrap; display: inline-flex; gap: 5px; align-items: center; }
+.diag-wait { display: flex; align-items: center; gap: 8px; }
+/* Asistente */
+#wizard { width: min(720px, 96vw); }
+.wiz-dots { display: flex; gap: 6px; justify-content: center; margin: 0 0 8px; }
+.wiz-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--border-strong); }
+.wiz-dots span.on { background: var(--accent); width: 22px; border-radius: 4px; } .wiz-dots span.done { background: var(--accent); opacity: .5; }
+.wiz-body h2 { font-family: var(--serif, Georgia, serif); font-weight: 400; font-size: 26px; margin: 10px 0 6px; }
+.wiz-body { min-height: 260px; }
+.wiz-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+@media (max-width: 600px) { .wiz-cards { grid-template-columns: 1fr; } }
+.wiz-card { border: 1px solid var(--border); border-radius: 14px; padding: 14px; background: var(--panel); display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.wiz-card.done { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); }
+.wiz-card b { display: inline-flex; align-items: center; gap: 6px; font-size: 16px; }
+.wiz-card p { margin: 0; }
+.wiz-nav { margin-top: 16px; gap: 8px; }
+p.ok, .ok { color: var(--ok); } p.error { color: var(--danger); }
+label.check.big { display: flex; align-items: center; gap: 10px; font-size: 16px; margin-top: 10px; }
+label.check.big input { width: 20px; height: 20px; accent-color: var(--accent); }
+
+dialog:focus, dialog:focus-visible { outline: none; }
+#wizard .diag-list { max-height: 38dvh; }
+#wizard { display: flex; flex-direction: column; }
+#wizard:not([open]) { display: none; }

@@ -217,6 +217,9 @@ const ICON_PATHS = {
   stop: '<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/>',
   spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/>',
   brain: '<path d="M9 4.5A2.5 2.5 0 0 0 6.5 7v.3A3 3 0 0 0 4.5 10c0 .9.4 1.7 1 2.2A3 3 0 0 0 7 17.5 2.5 2.5 0 0 0 12 18V6.5A2 2 0 0 0 9 4.5ZM15 4.5A2.5 2.5 0 0 1 17.5 7v.3a3 3 0 0 1 2 2.7c0 .9-.4 1.7-1 2.2a3 3 0 0 1-1.5 5.3A2.5 2.5 0 0 1 12 18"/>',
+  alert: '<path d="M12 4 2.8 19.5h18.4L12 4Z"/><path d="M12 10v4.5M12 17.2v.1"/>',
+  info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8v.1"/>',
+  minus: '<path d="M6 12h12"/>',
   key: '<circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M16 7l2.5 2.5M14 9l2 2"/>',
 };
 function ico(name, cls = "") {
@@ -510,6 +513,110 @@ setInterval(async () => {
     if (S.view === "tasks") loadTasks();
   } catch { /* sin sesión o sin red */ }
 }, 30000);
+
+// --- «Comprobar todo» ---------------------------------------------------------------------------
+const DIAG_ICON = { ok: "check", warn: "alert", error: "x", info: "info", skip: "minus" };
+function diagAction(a) {
+  if (!a) return null;
+  if (a.startsWith("copy:")) return h("button", { class: "ghost small", onclick: () => copyText(a.slice(5), "Orden copiada") }, ico("copy"), "Copiar orden");
+  const go = { providers: ["settings", "providers"], agent: ["settings", "agent"], mail: ["settings", "mail"], general: ["settings", "general"], models: ["models"] }[a];
+  if (!go) return null;
+  return h("button", { class: "ghost small", onclick: () => { $$("dialog[open]").forEach((d) => d.close()); setView(go[0]); if (go[1]) setTimeout(() => showSettingsTab(go[1]), 300); } },
+    { providers: "Abrir proveedores", agent: "Abrir permisos", mail: "Abrir correo", general: "Abrir ajustes", models: "Abrir modelos" }[a]);
+}
+async function renderDiagnostics(box) {
+  box.innerHTML = "";
+  box.append(h("p", { class: "muted diag-wait" }, h("span", { class: "spinner" }), " Comprobando todo… (puede tardar hasta un minuto si hay modelos o proveedores lentos)"));
+  let d;
+  try { d = await api("/api/diagnostics"); } catch (e) { box.innerHTML = ""; box.append(h("p", { class: "error" }, e.message)); return null; }
+  box.innerHTML = "";
+  const s = d.summary;
+  box.append(h("p", { class: "diag-summary" }, s.error ? `${s.error} cosa(s) por arreglar` : s.warn ? "Todo funciona, con algún aviso" : "Todo funciona",
+    h("span", { class: "muted" }, ` · ${s.ok} correctas` + (s.warn ? ` · ${s.warn} avisos` : "") + (s.error ? ` · ${s.error} errores` : ""))));
+  const list = h("div", { class: "diag-list" });
+  for (const c of d.checks) list.append(h("div", { class: "diag " + c.status },
+    h("span", { class: "diag-ico" }, ico(DIAG_ICON[c.status] || "info")),
+    h("div", { class: "grow" }, h("b", {}, c.title), h("div", { class: "muted" }, c.detail), c.fix ? h("div", { class: "diag-fix" }, c.fix) : null),
+    diagAction(c.action)));
+  box.append(list);
+  return d;
+}
+async function openDiagnostics() {
+  let dlg = $("#diag-dialog");
+  if (!dlg) { dlg = h("dialog", { id: "diag-dialog" }); document.body.append(dlg); }
+  dlg.innerHTML = "";
+  const box = h("div");
+  dlg.append(h("div", { class: "dialog-head" }, h("b", {}, "Comprobar todo"),
+    h("span", {}, h("button", { class: "ghost small", onclick: () => renderDiagnostics(box) }, ico("retry"), "Repetir"),
+      h("button", { class: "icon-btn", "aria-label": "Cerrar", onclick: () => dlg.close() }, ico("x")))), box);
+  dlg.showModal();
+  renderDiagnostics(box);
+}
+$("#open-diag").addEventListener("click", openDiagnostics);
+
+// --- Asistente de primer arranque --------------------------------------------------------------
+async function openWizard() {
+  let dlg = $("#wizard");
+  if (!dlg) { dlg = h("dialog", { id: "wizard" }); document.body.append(dlg); }
+  let ob = await api("/api/onboarding");
+  let step = 0;
+  const steps = ["ai", "folder", "mail", "check"];
+  const finish = async () => { await api("/api/onboarding/done", { method: "POST" }).catch(() => {}); dlg.close(); loadProviders(); };
+  const draw = async () => {
+    dlg.innerHTML = "";
+    const body = h("div", { class: "wiz-body" });
+    const dots = h("div", { class: "wiz-dots" }, steps.map((_, i) => h("span", { class: i === step ? "on" : i < step ? "done" : "" })));
+    const back = h("button", { class: "ghost", onclick: () => { step = Math.max(0, step - 1); draw(); } }, "Atrás");
+    const next = h("button", { class: "primary", onclick: () => { if (step === steps.length - 1) finish(); else { step++; draw(); } } }, step === steps.length - 1 ? "Empezar" : "Siguiente");
+    dlg.append(h("div", { class: "dialog-head" }, h("b", {}, "Configurar G3G3AI"), h("button", { class: "ghost small", onclick: finish }, "Saltar")), dots, body,
+      h("div", { class: "row end wiz-nav" }, step ? back : null, next));
+    const kind = steps[step];
+    if (kind === "ai") {
+      ob = await api("/api/onboarding");
+      body.append(h("h2", {}, "¿Con qué IA quieres trabajar?"),
+        h("p", { class: "muted" }, "Puedes usar las dos: un modelo en tu equipo (privado y gratis, pero más lento) y un proveedor en la nube (rápido y potente)."),
+        h("div", { class: "wiz-cards" },
+          h("div", { class: "wiz-card" + (ob.has_provider ? " done" : "") }, h("b", {}, ico("globe"), " En la nube"),
+            h("p", { class: "muted" }, "OpenCode Go, OpenRouter, DeepSeek, Claude, Gemini… Solo necesitas una clave."),
+            ob.has_provider ? h("p", { class: "ok" }, ico("check"), " Ya tienes un proveedor configurado") : null,
+            h("button", { class: ob.has_provider ? "ghost small" : "primary small", onclick: async () => { await providerDialog(); $("#provider-dialog").addEventListener("close", () => draw(), { once: true }); } },
+              ob.has_provider ? "Añadir otro" : "Elegir proveedor")),
+          h("div", { class: "wiz-card" + (ob.has_local ? " done" : "") }, h("b", {}, ico("cpu"), " En este equipo"),
+            h("p", { class: "muted" }, ob.recommendation ? `Para tu equipo (${ob.recommendation.ram_gb} GB de RAM, ${/^ninguna$/i.test(ob.recommendation.gpu) ? "sin gráfica dedicada" : ob.recommendation.gpu}) encaja un modelo ${ob.recommendation.tier}.` : "Descarga un modelo y se ejecuta sin internet."),
+            ob.has_local ? h("p", { class: "ok" }, ico("check"), " Modelo local cargado") : null,
+            h("button", { class: "ghost small", onclick: () => { dlg.close(); setView("models"); toast("Descarga y carga un modelo; luego vuelve a Ajustes → Asistente inicial", 6000); } }, "Ir a Modelos"))));
+    } else if (kind === "folder") {
+      const inp = h("input", { value: ob.write_roots[0] || ob.suggested_folder });
+      const out = h("p", { class: "muted" });
+      body.append(h("h2", {}, "¿Dónde puede trabajar?"),
+        h("p", { class: "muted" }, "La IA solo podrá crear y modificar archivos dentro de las carpetas que elijas (y siempre se puede deshacer). Puede leer más carpetas si se lo permites en Ajustes."),
+        h("div", { class: "row" }, inp, h("button", { class: "ghost small", onclick: async () => {
+          try { const r = await api("/api/onboarding/folder", { method: "POST", body: { path: inp.value } }); out.className = "ok"; out.textContent = "Listo: " + r.path; ob = await api("/api/onboarding"); }
+          catch (e) { out.className = "error"; out.textContent = e.message; }
+        } }, "Usar esta carpeta")), out,
+        ob.write_roots.length ? h("p", { class: "muted small" }, "Ya puede trabajar en: " + ob.write_roots.join(", ")) : null);
+    } else if (kind === "mail") {
+      body.append(h("h2", {}, "¿Quieres que busque en tu correo?"));
+      if (!ob.thunderbird) body.append(h("p", { class: "muted" }, "No he encontrado Thunderbird en este equipo. Si usas otro programa, puedes indicar la carpeta del correo más tarde en Ajustes → Correo e integraciones."));
+      else {
+        const sw = h("input", { type: "checkbox", checked: ob.mail_enabled, onchange: async (e) => {
+          await api("/api/settings", { method: "PUT", body: { ...(await api("/api/settings")), mail_enabled: e.target.checked } }).catch((er) => toast(er.message));
+          if (e.target.checked) await api("/api/mail/index", { method: "POST", body: {} }).catch(() => {});
+          ob = await api("/api/onboarding");
+        } });
+        body.append(h("p", { class: "muted" }, "He encontrado Thunderbird. Si lo activas, podrás pedir cosas como «¿qué me mandó jmoreno esta semana?» o «guarda sus adjuntos en una carpeta». Es solo lectura y cada búsqueda te pide permiso; con un modelo en la nube, lo que lea se envía a ese servicio."),
+          h("label", { class: "check big" }, sw, " Sí, la IA puede buscar en mi correo"));
+      }
+    } else {
+      body.append(h("h2", {}, "Comprobación final"));
+      const box = h("div"); body.append(box);
+      renderDiagnostics(box);
+    }
+  };
+  dlg.showModal();
+  draw();
+}
+$("#open-wizard").addEventListener("click", openWizard);
 
 // --- Medidor de contexto y /compact ----------------------------------------------------------
 async function refreshContext() {
@@ -2105,6 +2212,7 @@ async function init() {
   await loadConversations();
   const last = store.get("conv", null);
   if (last) await openConversation(last).catch(newChat); else newChat();
+  api("/api/onboarding").then((o) => { if (o.needed) openWizard(); }).catch(() => {});
   setView(store.get("view", "chat"));
   renderActiveTools(); setSending(false);
   setInterval(refreshStatus, 8000);

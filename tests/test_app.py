@@ -2270,3 +2270,30 @@ def test_mcp_http_server_lets_claude_delegate(env):
     assert rpc("tools/call", {"name": "borrar_todo", "arguments": {}}).json()["error"]["code"] == -32602
     assert rpc("metodo/raro").json()["error"]["code"] == -32601
     assert client.get("/mcp", headers=h).status_code == 405
+
+
+def test_diagnostics_check_everything(env, monkeypatch):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    from g3g3ai import web
+    async def fake_search(cfg_, q, limit=8):
+        return [{"title": "Wikipedia", "url": "https://es.wikipedia.org", "snippet": "x"}]
+    monkeypatch.setattr(web, "search", fake_search)
+    d = client.get("/api/diagnostics", headers=h).json()
+    by = {c["id"]: c for c in d["checks"]}
+    assert by["app"]["status"] == "ok" and by["claude"]["status"] == "ok" and by["claude"]["action"].startswith("copy:claude mcp add")
+    assert by["providers"]["status"] == "warn" and by["providers"]["action"] == "providers"         # nada configurado: lo dice
+    assert by["local"]["status"] in ("info", "warn") and by["mail"]["status"] == "skip" and by["web"]["status"] == "ok"
+    assert by["folders"]["status"] == "ok" and "disk" in by
+    # con el modelo local cargado y un proveedor roto, cada cosa en su sitio
+    load_model(client, h)
+    s = client.get("/api/settings", headers=h).json()
+    for p in s["providers"]:
+        if p["id"] == "deepseek":
+            p.update({"enabled": True, "api_key": "sk-x", "base_url": "http://127.0.0.1:9"})
+    client.put("/api/settings", headers=h, json=s)
+    d = client.get("/api/diagnostics", headers=h).json()
+    by = {c["id"]: c for c in d["checks"]}
+    assert by["local"]["status"] == "ok" and "responde" in by["local"]["detail"]
+    assert by["prov-deepseek"]["status"] == "error" and by["prov-deepseek"]["fix"]
+    assert d["summary"]["error"] >= 1

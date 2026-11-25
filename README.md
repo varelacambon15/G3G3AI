@@ -206,6 +206,10 @@ Con un **token de GitHub** (Ajustes → «Token de GitHub», o la variable `GITH
 - **Git** con `run_command`: crea ramas, commits y `git push` (el push siempre pide confirmación; los push forzados avisan como peligrosos). Usa el remoto `origin` de la carpeta del proyecto.
 Flujo típico: «arregla el issue #12» → lee el issue, crea una rama, edita, ejecuta los tests, hace commit, te pide permiso para el push, abre el PR y comprueba el CI.
 
+### 🚀 Primer arranque y «Comprobar todo»
+- **Asistente inicial:** la primera vez (o desde Ajustes → «Asistente inicial») te guía en cuatro pasos: elegir IA (proveedor en la nube con el catálogo, o modelo en tu equipo con la recomendación para tu hardware), elegir la carpeta de trabajo, activar el correo si tienes Thunderbird y una comprobación final.
+- **Comprobar todo** (Ajustes, arriba): prueba de verdad el modelo local, cada proveedor, la búsqueda web, los servidores MCP, la conexión con Claude Code, las carpetas, los permisos, el correo y el disco, y te dice en claro qué falla, cómo arreglarlo y con un botón que te lleva al sitio.
+
 ### ☁ Proveedores
 Ajustes → **Proveedores** → «Añadir»: un catálogo con buscador de más de 20 proveedores listos para usar — **OpenCode Go** y **OpenCode Zen**, OpenRouter, Anthropic (Claude), OpenAI, DeepSeek, Google Gemini, Groq, Cerebras, Mistral, xAI (Grok), Moonshot (Kimi), Z.ai (GLM), Qwen, Together, Fireworks, Hugging Face, NVIDIA NIM, Perplexity, Ollama y LM Studio — más cualquier servidor compatible con OpenAI (otro equipo con G3G3AI, vLLM, LiteLLM…). Eliges uno, pegas la clave (con enlace directo a dónde conseguirla), pulsas **Probar conexión** y **Añadir**. Las claves nunca se devuelven en claro a la interfaz.
 

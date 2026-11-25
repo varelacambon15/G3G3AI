@@ -45,7 +45,8 @@ def live(tmp_path, monkeypatch):
         fake.chmod(0o755)
     cfg = Config(tmp_path / "cfg" / "config.json")
     cfg.data.update({"file_roots": [str(home)], "write_roots": [str(home)], "models_dir": str(tmp_path / "models"),
-                     "llama_server_path": str(fake), "llama_port": free_port(), "autoload_last_model": False})
+                     "llama_server_path": str(fake), "llama_port": free_port(), "autoload_last_model": False,
+                     "onboarded": True})
     cfg.save()
     port = free_port()
     server = uvicorn.Server(uvicorn.Config(create_app(cfg), host="127.0.0.1", port=port, log_level="warning"))
@@ -156,5 +157,42 @@ def test_ui_end_to_end(live):
         # 5) La app sigue viva
         page.click("[data-view=chat]")
         assert page.is_visible("#input")
+        browser.close()
+    assert errors == [], errors
+
+
+def test_first_run_wizard_and_check_everything(live):
+    base, cfg = live
+    cfg.set("onboarded", False)
+    errors: list[str] = []
+    with playwright_sync.sync_playwright() as p:
+        browser = launch(p)
+        page = browser.new_context(viewport={"width": 1100, "height": 800}).new_page()
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/?token={cfg['token']}")
+        # Sin nada configurado, el asistente se abre solo
+        page.wait_for_selector("#wizard[open] >> text=¿Con qué IA quieres trabajar?", timeout=8000)
+        assert page.is_visible("#wizard >> text=En la nube") and page.is_visible("#wizard >> text=En este equipo")
+        page.click("#wizard .wiz-nav .primary")                                   # → carpetas
+        page.wait_for_selector("#wizard >> text=¿Dónde puede trabajar?")
+        folder = str(Path(cfg["write_roots"][0]) / "Trabajo IA")
+        page.fill("#wizard .wiz-body input", folder)
+        page.click("#wizard button:has-text('Usar esta carpeta')")
+        page.wait_for_selector("#wizard .wiz-body .ok >> text=Listo")
+        assert Path(folder).is_dir() and folder in cfg["write_roots"]
+        page.click("#wizard .wiz-nav .primary")                                   # → correo
+        page.wait_for_selector("#wizard >> text=¿Quieres que busque en tu correo?")
+        page.click("#wizard .wiz-nav .primary")                                   # → comprobación
+        page.wait_for_selector("#wizard .diag-summary", timeout=60000)
+        assert page.locator("#wizard .diag").count() >= 6
+        page.click("#wizard .wiz-nav .primary")                                   # Empezar
+        page.wait_for_selector("#wizard", state="hidden")
+        assert cfg["onboarded"] is True
+        # «Comprobar todo» desde Ajustes, con botón que lleva a donde se arregla
+        page.click("[data-view=settings]")
+        page.click("#open-diag")
+        page.wait_for_selector("#diag-dialog .diag-summary", timeout=60000)
+        page.click("#diag-dialog .diag button:has-text('Abrir proveedores')")
+        page.wait_for_selector("#settings-tabs [data-stab=providers].active")
         browser.close()
     assert errors == [], errors

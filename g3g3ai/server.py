@@ -36,7 +36,7 @@ from .profiles import profile_for
 from .undo import UndoJournal
 from .engine import EngineInstaller
 from . import documents as D
-from . import devtools, hardware, images, ollama
+from . import devtools, hardware, images, ollama, web
 from .context import HistoryBuilder
 from .sync import INTERVAL as SYNC_INTERVAL, Sync, SyncError, new_key as new_sync_key
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
@@ -552,6 +552,220 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     @app.delete("/mcp")
     async def mcp_http_delete():
         return Response(status_code=204)   # fin de sesión del cliente: no hay estado que borrar
+
+    def _has_provider() -> bool:
+        return any(p.get("enabled") and p.get("api_key") for p in cfg["providers"])
+
+    @app.get("/api/onboarding")
+    async def onboarding():
+        profs = await asyncio.to_thread(thunderbird_profiles)
+        docs = Path.home() / "Documents"
+        suggested = (docs if docs.is_dir() else Path.home()) / "G3G3AI"
+        rec = None
+        try:
+            if "hw" not in hw_cache:
+                hw_cache["hw"] = await asyncio.to_thread(hardware.detect)
+            r = hardware.recommend(hw_cache["hw"])
+            rec = {"tier": r["main"]["tier"], "searches": r["main"]["searches"], "ram_gb": r["summary"]["ram_gb"],
+                   "gpu": r["summary"]["gpu"]}
+        except Exception:  # noqa: BLE001
+            pass
+        return {"needed": not cfg["onboarded"] and not _has_provider() and not llama.ready,
+                "has_provider": _has_provider(), "has_local": llama.ready, "thunderbird": bool(profs),
+                "mail_enabled": bool(cfg["mail_enabled"]), "suggested_folder": str(suggested),
+                "write_roots": [str(p) for p in cfg["write_roots"] or []], "recommendation": rec}
+
+    @app.post("/api/onboarding/folder")
+    async def onboarding_folder(body: dict):
+        raw = str(body.get("path") or "").strip()
+        p = Path(os.path.expandvars(os.path.expanduser(raw))) if raw else None
+        if not p or not p.is_absolute():
+            raise HTTPException(400, "Indica la ruta completa de la carpeta")
+        p = p.resolve()
+        if p == Path.home().resolve() or p.parent == p or len(p.parts) <= 2 and sys.platform == "win32":
+            raise HTTPException(400, "Elige una carpeta concreta, no la carpeta personal entera ni la raíz del disco")
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise HTTPException(400, f"No se pudo crear: {e}")
+        for k in ("file_roots", "write_roots"):
+            cur = list(cfg[k] or [])
+            if str(p) not in cur:
+                cfg.set(k, cur + [str(p)])
+        if not cfg["agent_workdir"]:
+            cfg.set("agent_workdir", str(p))
+        return {"ok": True, "path": str(p)}
+
+    @app.post("/api/onboarding/done")
+    async def onboarding_done():
+        cfg.set("onboarded", True)
+        return {"ok": True}
+
+    @app.get("/api/diagnostics")
+    async def diagnostics():
+        """«Comprobar todo»: prueba de verdad cada pieza y dice en claro qué falla y cómo arreglarlo."""
+        checks: list[dict] = []
+
+        def add(cid, title, status, detail, fix="", action=None, order=0):
+            checks.append({"id": cid, "title": title, "status": status, "detail": detail, "fix": fix, "action": action,
+                           "order": order})
+
+        async def timed(coro, secs):
+            try:
+                return await asyncio.wait_for(coro, secs)
+            except Exception as e:  # noqa: BLE001
+                return e
+
+        def why(e) -> str:
+            m = str(getattr(e, "detail", "") or e) or type(e).__name__
+            if isinstance(e, asyncio.TimeoutError):
+                return "no respondió a tiempo"
+            if "401" in m or "403" in m and "proxy" not in m:
+                return m[:160] + " → la clave no es válida o no tiene permiso"
+            if "404" in m:
+                return m[:160] + " → revisa la URL base"
+            return m[:200]
+
+        add("app", "G3G3AI", "ok", f"Versión {__version__} en {platform.system()} {platform.machine()}", order=0)
+
+        # --- Modelo local
+        async def local_check():
+            binary = find_llama_server(cfg["llama_server_path"])
+            if llama.ready:
+                t0 = time.time()
+                r = await timed(complete(provider_for(LOCAL_PROVIDER), "local", "Responde solo con la palabra: listo",
+                                         max_tokens=8), 120)
+                if isinstance(r, Exception):
+                    add("local", "Modelo local", "error", f"{llama.status()['model']} no respondió: {why(r)}",
+                        "Descárgalo de memoria y vuelve a cargarlo en Modelos; si sigue, prueba con un modelo más pequeño.", "models", 1)
+                else:
+                    add("local", "Modelo local", "ok", f"{llama.status()['model']} responde ({time.time() - t0:.1f} s)",
+                        "En Modelos, «Probar con el agente» comprueba además si sabe usar herramientas.", "models", 1)
+            elif not binary:
+                add("local", "Modelo local", "warn", "No está instalado el motor de modelos locales (llama.cpp).",
+                    "Modelos → instalar el motor. O usa solo proveedores en la nube.", "models", 1)
+            elif llama.status().get("error"):
+                add("local", "Modelo local", "error", "El último modelo no pudo cargarse: " + str(llama.status()["error"])[:200],
+                    "Prueba otro modelo o menos contexto en Modelos.", "models", 1)
+            else:
+                add("local", "Modelo local", "info", "Hay motor, pero ningún modelo cargado.",
+                    "Modelos → carga uno (el recomendado para tu equipo aparece arriba), o usa un proveedor.", "models", 1)
+
+        # --- Proveedores
+        async def providers_check():
+            active = [p for p in cfg["providers"] if p.get("enabled") and (p.get("api_key") or
+                                                                        str(p.get("base_url", "")).startswith("http://"))]
+            if not active:
+                add("providers", "Proveedores de IA", "warn" if not llama.ready else "info",
+                    "No tienes ningún proveedor en la nube activo.",
+                    "Ajustes → Proveedores → Añadir (OpenCode Go, OpenRouter, DeepSeek, Claude…).", "providers", 2)
+                return
+
+            async def one(p):
+                r = await timed(list_models(p), 20)
+                if isinstance(r, Exception):
+                    add(f"prov-{p['id']}", p["name"], "error", "No conecta: " + why(r),
+                        "Revisa la clave y la URL en Ajustes → Proveedores («Probar conexión»).", "providers", 2)
+                else:
+                    add(f"prov-{p['id']}", p["name"], "ok", f"Conectado: {len(r)} modelos disponibles", order=2)
+            await asyncio.gather(*(one(p) for p in active))
+
+        # --- Web
+        async def web_check():
+            r = await timed(web.search(cfg, "Wikipedia", 2), 15)
+            if isinstance(r, Exception) or not r:
+                add("web", "Búsqueda web", "warn", f"No funciona con {cfg['web_provider']}: " + (why(r) if isinstance(r, Exception) else "sin resultados"),
+                    "Ajustes → General: cambia de buscador (Brave o Tavily son más fiables, con clave gratuita).", "general", 6)
+            else:
+                add("web", "Búsqueda web", "ok", f"Funciona ({cfg['web_provider']})", order=6)
+
+        # --- Servidores MCP externos
+        async def mcp_check():
+            if not cfg["mcp_servers"]:
+                return
+            await timed(mcp_mgr.refresh(force=True), 45)
+            for s in mcp_mgr.status():
+                if s["ok"]:
+                    add(f"mcp-{s['name']}", f"MCP · {s['name']}", "ok", f"{len(s['tools'])} herramientas", order=7)
+                else:
+                    add(f"mcp-{s['name']}", f"MCP · {s['name']}", "error", s.get("error") or "no arranca",
+                        "Revisa la línea del servidor en Ajustes → Correo e integraciones.", "mail", 7)
+
+        # --- Conexión con Claude Code (el propio /mcp)
+        async def claude_check():
+            async def probe():
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://interno", timeout=10) as c:
+                    r = await c.post("/mcp", headers={"Authorization": f"Bearer {cfg['token']}"},
+                                     json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+                    return r.json()["result"]["serverInfo"]["name"]
+            r = await timed(probe(), 15)
+            cmd = f"claude mcp add --transport http g3g3ai http://127.0.0.1:{cfg['port']}/mcp"
+            if isinstance(r, Exception):
+                add("claude", "Conexión con Claude Code", "error", "El servidor MCP no responde: " + why(r), order=8)
+            else:
+                add("claude", "Conexión con Claude Code", "ok", "Listo para usarse como subagente.",
+                    "Si aún no lo has hecho, ejecuta una vez: " + cmd, "copy:" + cmd, 8)
+
+        await asyncio.gather(local_check(), providers_check(), web_check(), mcp_check(), claude_check())
+
+        # --- Carpetas y permisos (sin red)
+        missing_w = [str(p) for p in cfg["write_roots"] or [] if not Path(os.path.expanduser(str(p))).is_dir()]
+        if not cfg["write_roots"]:
+            add("folders", "Carpetas de trabajo", "warn", "La IA no puede crear ni modificar archivos en ninguna carpeta.",
+                "Ajustes → Agente y permisos → «Carpetas que la IA puede modificar».", "agent", 3)
+        elif missing_w:
+            add("folders", "Carpetas de trabajo", "warn", "No existen: " + ", ".join(missing_w),
+                "Créalas o quítalas en Ajustes → Agente y permisos.", "agent", 3)
+        else:
+            add("folders", "Carpetas de trabajo", "ok", "La IA puede trabajar en: " + ", ".join(str(p) for p in cfg["write_roots"]), order=3)
+        cmd_mode = cfg["ai_commands"] or "off"
+        if cmd_mode == "off":
+            add("commands", "Comandos", "info", "La IA no puede ejecutar comandos (desactivado).",
+                "Actívalo en Ajustes → Agente y permisos si quieres que ejecute scripts o pruebas.", "agent", 4)
+        elif not sandbox.available(cfg) and not cfg["commands_trusted"]:
+            add("commands", "Comandos", "info", "Te pedirá permiso para cada comando (en este sistema no hay aislamiento).",
+                "Si te resulta pesado, activa «Confiar en mis carpetas» (python, pytest, git de lectura… sin preguntar).", "agent", 4)
+        else:
+            add("commands", "Comandos", "ok", "Aislados" if sandbox.available(cfg) else "Comandos de desarrollo habituales sin preguntar", order=4)
+
+        # --- Correo
+        if not cfg["mail_enabled"]:
+            profs = await asyncio.to_thread(thunderbird_profiles)
+            add("mail", "Correo", "skip", "Desactivado" + (" (Thunderbird detectado)" if profs else ""),
+                "Actívalo en Ajustes → Correo e integraciones si quieres que la IA busque en tu correo.", "mail", 5)
+        else:
+            st = mail_index.stats()
+            srcs = await asyncio.to_thread(mail_sources, cfg)
+            if not srcs:
+                add("mail", "Correo", "error", "No encuentro el correo: ni perfil de Thunderbird ni rutas extra.",
+                    "Añade la carpeta del correo en Ajustes → Correo e integraciones.", "mail", 5)
+            elif st["error"]:
+                add("mail", "Correo", "error", "Error al indexar: " + st["error"], "Pulsa «Reconstruir» en Ajustes → Correo.", "mail", 5)
+            elif st["running"]:
+                add("mail", "Correo", "info", f"Indexando… {st['files_done']}/{st['files_total']} buzones, {st['messages']} mensajes", order=5)
+            elif not st["messages"]:
+                add("mail", "Correo", "warn", "El índice está vacío.", "Ajustes → Correo → «Actualizar índice».", "mail", 5)
+            else:
+                add("mail", "Correo", "ok", f"{st['messages']} mensajes indexados", order=5)
+
+        # --- Disco y equipo
+        try:
+            free = shutil.disk_usage(DATA_DIR if DATA_DIR.exists() else Path.home()).free / 1024 ** 3
+            add("disk", "Espacio en disco", "warn" if free < 5 else "ok", f"{free:.0f} GB libres",
+                "Libera espacio: los modelos locales ocupan entre 2 y 20 GB." if free < 5 else "", order=9)
+        except OSError:
+            pass
+        try:
+            if "hw" not in hw_cache:
+                hw_cache["hw"] = await asyncio.to_thread(hardware.detect)
+            rec = hardware.recommend(hw_cache["hw"])
+            add("hardware", "Tu equipo", "info", f"{rec['summary']['cpu']} · {rec['summary']['ram_gb']} GB RAM · "
+                f"modelo local recomendado: {rec['main']['tier']}", order=10)
+        except Exception:  # noqa: BLE001
+            pass
+        checks.sort(key=lambda c: (c["order"], c["title"]))
+        summary = {k: sum(1 for c in checks if c["status"] == k) for k in ("ok", "warn", "error", "info", "skip")}
+        return {"checks": checks, "summary": summary}
 
     @app.get("/api/mcp")
     async def mcp_status(refresh: bool = True):
