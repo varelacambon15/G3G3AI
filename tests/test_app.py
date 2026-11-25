@@ -1485,8 +1485,8 @@ def test_github_tool_and_profiles_in_agent(env, monkeypatch):
         assert sandbox.assess("git push origin rama")[0] == "warn"
         # un modelo pequeño ve menos herramientas y un prompt más corto
         ctx.profile = "small"
-        assert set(ctx.names()) <= {"compare_dirs", "system_info", "list_dir", "read_file", "grep_files", "edit_file", "write_file",
-                                    "run_command", "web_search", "fetch_url", "memory_save"}
+        from g3g3ai.profiles import SMALL_TOOLS
+        assert set(ctx.names()) <= SMALL_TOOLS and not set(ctx.names()) & {"delegate", "delegate_edit", "github", "todo_write"}
         assert "UNA llamada" in ctx.system_hint()
         ctx.profile = "full"
         assert "Git y GitHub" in ctx.system_hint() and "en profundidad" in ctx.system_hint()
@@ -1799,8 +1799,8 @@ def test_local_models_get_lean_requests(env):
     ctx.profile = "small"; ctx.compact_specs = True
     ctx.subagent = lambda *a, **k: None
     names = set(ctx.names())
-    assert names <= {"compare_dirs", "system_info", "list_dir", "read_file", "grep_files", "edit_file", "write_file", "run_command",
-                     "web_search", "fetch_url", "memory_save"} and "edit_file" in names
+    from g3g3ai.profiles import SMALL_TOOLS
+    assert names <= SMALL_TOOLS and "edit_file" in names
     assert not names & {"delegate", "delegate_edit", "apply_patch", "github", "todo_write"}
     lean = len(_json.dumps(ctx.openai_specs()))
     ctx.profile, ctx.compact_specs = "standard", False
@@ -2096,3 +2096,76 @@ def test_mail_person_filter_and_sender_vs_to(env):
     from g3g3ai.tools import ALL_SPECS
     d, schema = ALL_SPECS["mail_search"]
     assert "sender=X" in d and "ENVÍA" in schema["properties"]["sender"]["description"] and "person" in schema["properties"]
+
+
+def test_local_history_budget_is_sane(env):
+    """Antes el «Máx. tokens» (8192) se restaba entero y el presupuesto salía negativo: se resumía en cada turno."""
+    client, cfg, home, tmp = env
+    from g3g3ai.context import local_reply_tokens
+    b = client.app.state.llama
+    builder_budget = None
+    from g3g3ai.context import HistoryBuilder
+    hb = HistoryBuilder(client.app.state.db, cfg, b, None, None, None)
+    for ctx_size in (5120, 8192, 17408):
+        b.params = {"ctx": ctx_size}
+        budget = hb.budget("local", 8192)
+        reply = local_reply_tokens(ctx_size, 8192)
+        assert reply <= ctx_size // 4 and budget >= ctx_size * 0.6 and budget + reply <= ctx_size, (ctx_size, budget, reply)
+
+
+def test_request_folder_access_and_save_attachments(env, monkeypatch):
+    import asyncio
+    from g3g3ai import mail as M
+    client, cfg, home, tmp = env
+    ctx = _ctx(cfg)
+    docs = tmp / "Documentos" / "G3G3AI"
+    docs.mkdir(parents=True)
+    assert "request_folder_access" in ctx.names()
+    # pedir acceso siempre pregunta (aviso fuerte, sin «permitir siempre») y rechaza rutas demasiado amplias
+    err, strong, soft = ctx.precheck("request_folder_access", {"path": str(docs), "write": True, "reason": "guardar adjuntos"})
+    assert not err and strong and "modificar" in strong[0]
+    for bad in ("/", str(Path.home()), "/etc", "relativa/ruta"):
+        assert ctx.precheck("request_folder_access", {"path": bad})[0].startswith("Error"), bad
+    out = asyncio.run(ctx.run("request_folder_access", {"path": str(docs), "write": True}))
+    assert "concedido" in out and str(docs) in cfg["write_roots"] and str(docs) in cfg["file_roots"]
+    # guardar adjuntos de un correo en esa carpeta
+    raw = ("From: Javier Moreno <jmoreno@i2m.net>\nTo: yo@x.com\nSubject: Cedulas\nDate: Mon, 17 Nov 2026 15:39:00 +0100\n"
+           "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=XX\n\n--XX\nContent-Type: text/plain\n\nadjunto las cedulas\n"
+           "--XX\nContent-Type: application/pdf\nContent-Disposition: attachment; filename=\"cedula 1.pdf\"\nContent-Transfer-Encoding: base64\n\n"
+           "JVBERi0xLjQK\n--XX--\n")
+    _write_mbox(tmp / "b9" / "Inbox", [])
+    (tmp / "b9" / "Inbox").write_bytes(("From jmoreno@i2m.net Mon Nov 17 15:39:00 2026\n" + raw + "\n").encode())
+    cfg.set("mail_enabled", True); cfg.set("mail_auto", False); cfg.set("mail_paths", [str(tmp / "b9")])
+    idx = M.MailIndex(cfg, tmp / "m9.sqlite"); idx.index_all()
+    ctx.mail = idx
+    mid = idx.search(sender="jmoreno")[0]["id"]
+    assert "mail_save_attachments" in ctx.names()
+    dest = docs / "Javier Moreno"
+    out = asyncio.run(ctx.run("mail_save_attachments", {"ids": [mid], "folder": str(dest)}))
+    assert (dest / "cedula 1.pdf").read_bytes() == b"%PDF-1.4\n" and "Guardados 1" in out
+    out = asyncio.run(ctx.run("mail_save_attachments", {"ids": [mid], "folder": str(dest)}))
+    assert (dest / "cedula 1 (2).pdf").exists()                                     # no se pisa lo que ya había
+    assert ctx.precheck("mail_save_attachments", {"ids": [mid], "folder": str(tmp / "fuera")})[0].startswith("Error")
+    # los resultados de búsqueda avisan de que el extracto no es el correo completo
+    assert "INCOMPLETOS" in asyncio.run(ctx.run("mail_search", {"sender": "jmoreno"}))
+
+
+def test_local_models_only_get_tools_relevant_to_the_conversation(env):
+    client, cfg, home, tmp = env
+    cfg.set("mail_enabled", True); cfg.set("github_token", "x")
+    ctx = _ctx(cfg)
+    ctx.mail = object(); ctx.subagent = lambda *a, **k: None
+    ctx.profile, ctx.compact_specs = "standard", True
+    ctx.focus = "hola, ¿qué tal? explícame qué es una hipoteca"
+    base = set(ctx.names())
+    assert not base & {"mail_search", "github", "compare_dirs", "system_info", "delegate"}       # charla: nada opcional
+    assert {"read_file", "edit_file", "request_folder_access"} <= base                            # lo básico, siempre
+    ctx.focus = "busca el último correo que me ha mandado jmoreno"
+    assert {"mail_search", "mail_read", "mail_save_attachments"} <= set(ctx.names()) and "github" not in ctx.names()
+    ctx.focus = "compara estas dos carpetas"
+    assert "compare_dirs" in ctx.names()
+    ctx.focus = "y ahora el siguiente"                                                           # si ya se usó, se mantiene
+    ctx.state["used_tools"] = {"mail_search"}
+    assert "mail_search" in ctx.names()
+    ctx.compact_specs = False                                                                     # APIs en la nube: todas
+    assert {"mail_search", "github", "compare_dirs", "system_info", "delegate"} <= set(ctx.names())

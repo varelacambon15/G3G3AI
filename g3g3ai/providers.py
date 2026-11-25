@@ -262,7 +262,8 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
     local = p["base_url"].startswith(("http://127.0.0.1", "http://localhost"))
     max_tokens = max(int(opts.get("max_tokens") or 0), OPENAI_MIN_TOKENS)
     if local and opts.get("n_ctx"):  # nunca pedir más salida de la que cabe: lo demás es contexto para la conversación
-        max_tokens = max(512, min(int(opts.get("max_tokens") or 2048), int(opts["n_ctx"]) // 2))
+        from .context import local_reply_tokens
+        max_tokens = local_reply_tokens(int(opts["n_ctx"]), int(opts.get("max_tokens") or 2048))
     continuations = nudges = verifies = empties = 0
     used_tools = False
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), trust_env=not local) as c:

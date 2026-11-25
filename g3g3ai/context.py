@@ -14,7 +14,12 @@ from typing import AsyncIterator
 from . import documents as D
 
 CHARS_PER_TOKEN = 3.5
-SYSTEM_OVERHEAD = 1800  # instrucciones del sistema + herramientas (estimación)
+SYSTEM_OVERHEAD = 1800
+
+
+def local_reply_tokens(n_ctx: int, max_tokens: int) -> int:
+    """Tokens de respuesta que se piden a un modelo local: como mucho 1/4 del contexto (el resto es la conversación)."""
+    return max(512, min(int(max_tokens or 2048), n_ctx // 4))  # instrucciones del sistema + herramientas (estimación)
 IMAGE_TOKENS = 1000
 MAX_LIVE_IMAGES = 6       # imágenes enviadas como imagen (las más recientes); el resto, como descripción
 KEEP_RECENT = 6           # mensajes recientes que nunca se resumen
@@ -243,8 +248,12 @@ class HistoryBuilder:
             if conv.get("summary"):
                 transcript = f"RESUMEN PREVIO:\n{conv['summary']}\n\n{transcript}"
             p = self.provider_for(pid)
+            if pid == "local":  # el resumen lo hace el propio modelo local: que quepa en su contexto y sea breve
+                max_chars, out_tokens = int(self.local_ctx() * 0.55 * CHARS_PER_TOKEN), 500
+            else:
+                max_chars, out_tokens = 400_000, 1500
             summary = await self.complete(p, model, [{"role": "system", "content": SUMMARY_PROMPT},
-                                                     {"role": "user", "content": transcript[-400_000:]}], 1500)
+                                                     {"role": "user", "content": transcript[-max_chars:]}], out_tokens)
             # Último id de mensaje cubierto por el resumen
             visible = [m for m in msgs if m["id"] > upto and m["role"] in ("user", "assistant")]
             new_upto = visible[len(old) - 1]["id"]
@@ -267,8 +276,13 @@ class HistoryBuilder:
         budget = self.budget(pid, max_tokens) + max_tokens if pid == "local" else self.budget(pid, max_tokens)
         return {"used": int(used), "budget": int(budget), "summarized": bool(conv.get("summary"))}
 
+    def local_ctx(self) -> int:
+        return int((self.llama.params or {}).get("ctx") or self.cfg["llama_ctx"] or 8192)
+
     def budget(self, pid: str, max_tokens: int) -> int:
         if pid == "local":
-            ctx = int((self.llama.params or {}).get("ctx") or self.cfg["llama_ctx"] or 8192)
-            return max(1024, int(ctx * 0.8) - max_tokens)
+            # Antes se restaba el «Máx. tokens» entero (8192): con contextos de 5–17k el presupuesto salía negativo y se
+            # resumía en cada turno. La respuesta local nunca pide más de 1/4 del contexto (ver providers).
+            ctx = self.local_ctx()
+            return max(1024, int(ctx * 0.9) - local_reply_tokens(ctx, max_tokens))
         return int(self.cfg["context_budget"] or 60000)

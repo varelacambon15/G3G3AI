@@ -623,6 +623,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             tc.mail = mail_index if cfg["mail_enabled"] else None
             tc.cloud = chosen_pid != LOCAL_PROVIDER
             tc.compact_specs = chosen_pid == LOCAL_PROVIDER
+            recent = [m["content"] or "" for m in (conv.get("messages") or []) if m["role"] == "user"][-3:]
+            tc.focus = " ".join(recent + [text or ""])[-4000:]
             tc.unattended = unattended
             tc.profile = profile_for(chosen_pid, (llama.status()["model"] or "") if chosen_pid == LOCAL_PROVIDER else chosen_model,
                                      chosen_pid == LOCAL_PROVIDER,

@@ -378,6 +378,15 @@ class MailIndex:
             rows = self.db.execute(sql, args).fetchall()
         return [dict(r) for r in rows]
 
+    def raw(self, mid: int) -> tuple[dict, bytes] | None:
+        with self.lock:
+            r = self.db.execute("SELECT * FROM msgs WHERE id=?", (mid,)).fetchone()
+        if not r:
+            return None
+        with Path(r["file"]).open("rb") as f:
+            f.seek(r["off"])
+            return dict(r), f.read(min(r["len"], MAX_RAW))
+
     def read(self, mid: int) -> dict | None:
         with self.lock:
             r = self.db.execute("SELECT * FROM msgs WHERE id=?", (mid,)).fetchone()
@@ -395,6 +404,26 @@ class MailIndex:
         return m
 
 
+def safe_filename(name: str) -> str:
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", (name or "adjunto").strip()).strip(". ") or "adjunto"
+    return name[:150]
+
+
+def attachments_of(raw: bytes) -> list[tuple[str, bytes]]:
+    """[(nombre, contenido)] de los adjuntos de un mensaje."""
+    out = []
+    try:
+        msg = email.message_from_bytes(raw, policy=email.policy.default)
+        for i, a in enumerate(msg.iter_attachments(), 1):
+            data = a.get_payload(decode=True)
+            if data is None:
+                continue
+            out.append((safe_filename(a.get_filename() or f"adjunto_{i}"), data))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def fmt_date(ts: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else "sin fecha"
 
@@ -410,7 +439,9 @@ def format_results(rows: list[dict], total_indexed: int, building: bool) -> str:
                      f"Asunto: {r['subject'] or '(sin asunto)'} · Carpeta: {r['folder']}" + (" · 📎" if r["att"] else "")
                      + (f"\n    {snippet}" if snippet else ""))
     note = "\n(Índice aún en construcción: puede haber más resultados.)" if building else ""
-    return f"{len(rows)} mensaje(s), del más reciente al más antiguo. Usa mail_read con el número para leer uno:\n" + "\n".join(lines) + note
+    return (f"{len(rows)} mensaje(s), del más reciente al más antiguo. Los extractos están INCOMPLETOS: para mostrar o "
+            "citar un correo, léelo antes con mail_read. Para guardar sus adjuntos usa mail_save_attachments.\n"
+            + "\n".join(lines) + note)
 
 
 def format_message(m: dict) -> str:
