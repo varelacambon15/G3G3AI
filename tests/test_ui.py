@@ -189,6 +189,18 @@ def test_ui_end_to_end(live):
         page.wait_for_selector("#chat-error >> text=upstream exploded", timeout=10000)
         assert page.is_visible("#chat-error >> text=Reintentar")
 
+        # 2g) Paleta de comandos Ctrl+K: buscar y saltar
+        page.keyboard.press("Control+k")
+        page.wait_for_selector("#palette input")
+        page.keyboard.type("ir a modelos")
+        page.keyboard.press("Enter")
+        page.wait_for_selector("#view-models.active")
+        page.keyboard.press("Control+k")
+        page.keyboard.type("segunda parte")
+        page.wait_for_selector("#palette >> text=En los mensajes")
+        page.keyboard.press("Escape")
+        page.click("[data-view=chat]")
+
         # 2b) Selector de modelos con buscador
         page.click("#model-btn")
         page.wait_for_selector("#model-picker .mp-row")

@@ -207,6 +207,20 @@ Idioma y motor, en Ajustes → Modelos locales.
 
 Cuando un modelo local tiene que leer mucho (un documento largo, una conversación larga), verás «Leyendo el contexto… 43 % · ~12 s» en vez de una espera sin señales. La siguiente pregunta reutiliza lo ya leído.
 
+### ⌨️ Atajos
+
+- **Ctrl+K**: buscador de todo (conversaciones, mensajes, acciones y ajustes).
+- **Ctrl+Mayús+M**: elegir modelo · **Ctrl+Mayús+Espacio**: dictar.
+- 🔊 bajo cada respuesta la lee en voz alta.
+
+### 🧠 IA local sin complicaciones
+
+- Escribe directamente: si el modelo local no está cargado, se carga solo (el último que usaste).
+- En **Modelos → Recomendados para tu equipo**, «Descargar y usar» baja el modelo adecuado y lo deja listo.
+- Con la búsqueda web activada, los modelos locales reciben los resultados sin tener que pedírselo.
+- Las fotos y capturas se leen con OCR aunque el modelo no vea imágenes.
+- Los ajustes se guardan solos.
+
 ### 📁 Proyectos
 
 Agrupa conversaciones con unas **instrucciones** y unos **documentos** (PDF, Word, Excel…) que la IA tiene siempre presentes. «Proyectos» en la barra lateral → Nuevo proyecto → Nueva conversación. Una conversación existente se mueve con el icono de carpeta de la barra lateral.

@@ -683,3 +683,8 @@ details.fold-card[open] > summary { margin-bottom: 12px; }
 .save-state { font-size: 13px; color: var(--muted); align-self: center; margin-left: auto; }
 .save-state[data-state=saved] { color: #2e7d4f; } .save-state[data-state=error] { color: #c0392b; }
 .msg .meta .act.speak.on { color: var(--accent); background: var(--hover); }
+
+/* Paleta de comandos (Ctrl+K) */
+.palette { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.18); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
+.palette-box { position: static; width: min(600px, calc(100vw - 24px)); max-height: 64vh; }
+.palette .mp-name small { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
