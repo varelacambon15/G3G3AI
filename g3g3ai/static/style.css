@@ -570,3 +570,9 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .export-opt:hover:not(:disabled) { border-color: var(--accent); background: var(--hover); }
 .export-opt b { font-weight: 600; } .export-opt small { color: var(--muted); }
 .export-dialog label.check { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--muted); }
+
+/* Progreso de lectura del contexto (modelos locales) */
+.read-progress { margin: 4px 0 10px; max-width: 420px; }
+.rp-text { font-size: 12.5px; color: var(--muted); margin-bottom: 5px; font-variant-numeric: tabular-nums; }
+.rp-bar { height: 4px; border-radius: 4px; background: var(--hover); overflow: hidden; }
+.rp-bar span { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .3s ease; }

@@ -166,6 +166,12 @@ class H(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"delta": {"content": "empiezo bien… "}}]})
             self.chunk({"error": {"message": "upstream exploded", "code": 502}})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "contexto enorme" in str(first_user):  # informa del progreso de lectura (llama.cpp con return_progress)
+            if req.get("return_progress"):
+                for done in (0, 2000, 4000, 6000, 8000):
+                    self.chunk({"choices": [], "prompt_progress": {"total": 8100, "cache": 100, "processed": 100 + done, "time_ms": done}})
+            self.chunk({"choices": [{"delta": {"content": "leído"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "con filtro" in str(first_user):
             self.chunk({"choices": [{"delta": {"content": "no puedo"}, "finish_reason": "content_filter"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return

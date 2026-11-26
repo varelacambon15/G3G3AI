@@ -1818,6 +1818,17 @@ def test_local_models_get_lean_requests(env):
     assert "temp=0.3" in info and "think=False" in info and "cache=True" in info and "np1" in info
 
 
+
+def test_local_reading_progress(env):
+    # llama.cpp informa de cuánto lleva leído de un prompt largo: se reenvía como «progress» (sin la parte en caché)
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "contexto enorme"}))
+    prog = [e for e in evs if e["type"] == "progress"]
+    assert [p["done"] for p in prog] == [0, 2000, 4000, 6000, 8000] and prog[0]["total"] == 8000
+    assert any(e["type"] == "content" and e["text"] == "leído" for e in evs)
+
 def test_selftest_reports_tool_support(env):
     client, cfg, home, tmp = env
     h = auth(cfg)

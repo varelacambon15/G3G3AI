@@ -1170,6 +1170,14 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   if (extra.compacted) frag.append(h("div", { class: "route" }, `Se resumieron ${extra.compacted} mensajes antiguos para que la conversación quepa en el contexto`));
   if (extra.liveOut && streaming) frag.append(h("pre", { class: "live-out" }, extra.liveOut.slice(-4000)));
   if (extra.status && streaming) frag.append(h("div", { class: "route" }, extra.status));
+  const pg = extra.progress;
+  if (pg && streaming && pg.done < pg.total) {
+    const pct = Math.round(100 * pg.done / pg.total);
+    const left = pg.ms && pg.done ? Math.round((pg.ms / pg.done) * (pg.total - pg.done) / 1000) : null;
+    frag.append(h("div", { class: "read-progress", title: "El modelo local lee la conversación y los documentos antes de responder. La próxima vez reutiliza lo ya leído." },
+      h("div", { class: "rp-text" }, `Leyendo el contexto… ${pct} % · ${fmtNum(pg.done)} de ${fmtNum(pg.total)} tokens` + (left != null && left > 2 ? ` · ~${left < 90 ? left + " s" : Math.round(left / 60) + " min"}` : "")),
+      h("div", { class: "rp-bar" }, h("span", { style: `width:${pct}%` }))));
+  }
   if (extra.route) frag.append(h("div", { class: "route" }, `Auto: ${extra.route.model}` + (extra.route.reason ? ` — ${extra.route.reason}` : "")));
   for (const f of extra.fallbacks || []) frag.append(h("div", { class: "route warn" }, "↪ falló " + f + ", probando el otro modelo…"));
   const { think, body, open } = splitThink(content || "");
@@ -1384,11 +1392,12 @@ async function send(text, attachments, isContinue = false) {
         if (!chunk.startsWith("data:")) continue;
         const ev = JSON.parse(chunk.slice(5));
         if (ev.type === "start") { if (!S.convId) { S.convId = ev.conversation_id; store.set("conv", S.convId); loadConversations(); } }
-        else if (ev.type === "content") { content += ev.text; extra.status = null; }
-        else if (ev.type === "reasoning") reasoning += ev.text;
+        else if (ev.type === "content") { content += ev.text; extra.status = null; extra.progress = null; }
+        else if (ev.type === "reasoning") { reasoning += ev.text; extra.progress = null; }
+        else if (ev.type === "progress") extra.progress = ev;
         else if (ev.type === "tool_output") { extra.liveOut = (extra.liveOut || "") + ev.text; if (S.code) { const t = $("#ctab-term"); if (t) renderCodePanel({ tools, todos: extra.todos, liveOut: extra.liveOut }); } }
         else if (ev.type === "tool_call" || ev.type === "tool_result") {
-          tools.push(ev);
+          tools.push(ev); extra.progress = null;
           if (ev.type === "tool_result") { extra.liveOut = ""; if (ev.name === "app_settings" || ev.name === "request_folder_access") S.settings = null; }
         }
         else if (ev.type === "approval") { tools.push(ev); notifyApproval(ev); }

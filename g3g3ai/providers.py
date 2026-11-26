@@ -278,6 +278,7 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
             body = {k: v for k, v in body.items() if v is not None}
             if local:
                 body["cache_prompt"] = True  # reutiliza el prefijo ya procesado: el turno siguiente no relee todo el prompt
+                body["return_progress"] = True  # llama.cpp informa de cuánto lleva leído del prompt (barra de progreso)
                 if not opts.get("thinking"):
                     body["chat_template_kwargs"] = {"enable_thinking": False}  # Qwen3 y similares: sin «pensar» (más rápido)
             if ctx:
@@ -288,7 +289,17 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                 try:
                     async with c.stream("POST", url, json=body, headers=headers) as r:
                         await _raise_for(r)
+                        last_pct = -5          # el 0 % también se muestra: la barra aparece en cuanto empieza a leer
                         async for j in _sse(r):
+                            pp = j.get("prompt_progress")
+                            if pp and local:
+                                todo = int(pp.get("total") or 0) - int(pp.get("cache") or 0)
+                                done = int(pp.get("processed") or 0) - int(pp.get("cache") or 0)
+                                pct = int(100 * done / todo) if todo > 0 else 100
+                                if todo >= 512 and (pct >= last_pct + 5 or pct >= 100):   # sólo si hay mucho que leer
+                                    last_pct = pct
+                                    yield {"type": "progress", "done": max(0, done), "total": todo,
+                                           "ms": pp.get("time_ms")}
                             if j.get("error"):  # error a mitad de la respuesta
                                 e = j["error"]
                                 raise ProviderError(hint_for(str(e.get("message") if isinstance(e, dict) else e)))
