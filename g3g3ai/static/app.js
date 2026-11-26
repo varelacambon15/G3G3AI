@@ -585,6 +585,44 @@ function renderActiveTools() {
     box.append(h("span", { title: "Pulsa para desactivar", onclick: () => { $("#" + id).checked = false; $("#" + id).dispatchEvent(new Event("change")); } }, label + " ✕"));
   }
   $("#tools-btn").classList.toggle("on", any || (mode !== "normal" && $("#tools-toggle").checked));
+  if ($("#tools-toggle").checked) box.append(permChip());
+}
+// --- Nivel de permisos en el propio chat: Manual / Semi-auto / Auto ----------------------------------
+const PERM_LEVELS = {
+  manual: { label: "Manual", icon: "🔒", desc: "Te pregunta antes de cada comando y de cada cambio en tus archivos.",
+            set: { ai_write: "ask", ai_commands: "ask", commands_trusted: false } },
+  semi: { label: "Semi-auto", icon: "🤝", desc: "Crea y edita en tus carpetas y ejecuta lo habitual (python, pruebas, git de lectura) sin preguntar; pregunta ante lo nuevo o arriesgado.",
+          set: { ai_write: "ask", ai_commands: "ask", commands_trusted: true } },
+  auto: { label: "Auto", icon: "⚡", desc: "Hace lo que haga falta sin preguntar (siempre dentro de tus carpetas; lo peligroso se sigue bloqueando).",
+          set: { ai_write: "auto", ai_commands: "auto", commands_trusted: true } },
+};
+function permLevel(st) {
+  if (!st) return null;
+  if (st.ai_write === "auto" && st.ai_commands === "auto") return "auto";
+  return st.commands_trusted ? "semi" : "manual";
+}
+function permChip() {
+  const lvl = permLevel(S.settings) || "manual", L = PERM_LEVELS[lvl];
+  const chip = h("span", { class: "perm-chip perm-" + lvl, title: "Permisos del agente: " + L.desc, onclick: (e) => { e.stopPropagation(); permMenu(chip); } }, L.icon + " " + L.label + " ▾");
+  if (!S.settings) api("/api/settings").then((st) => { S.settings = st; renderActiveTools(); }).catch(() => {});
+  return chip;
+}
+function permMenu(anchor) {
+  $("#perm-menu")?.remove();
+  const cur = permLevel(S.settings);
+  const menu = h("div", { id: "perm-menu", class: "file-menu perm-menu" },
+    h("div", { class: "pm-title" }, "¿Cuánta libertad tiene el agente?"),
+    Object.entries(PERM_LEVELS).map(([k, L]) => h("button", { class: k === cur ? "on" : "", onclick: async () => {
+      menu.remove();
+      try { S.settings = await api("/api/settings", { method: "PUT", body: L.set }); toast(`Permisos: ${L.label}`); }
+      catch (e) { toast(e.message, 6000); }
+      renderActiveTools();
+    } }, h("span", { class: "pm-ico" }, L.icon), h("span", { class: "pm-text" }, h("b", {}, L.label), h("small", {}, L.desc)))));
+  document.body.append(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(innerWidth - menu.offsetWidth - 8, r.left)) + "px";
+  menu.style.top = Math.max(8, r.top - menu.offsetHeight - 6) + "px";
+  setTimeout(() => document.addEventListener("mousedown", function off(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("mousedown", off); } }), 0);
 }
 ["auto-toggle", "web-toggle", "tools-toggle"].forEach((id) => $("#" + id).addEventListener("change", renderActiveTools));
 

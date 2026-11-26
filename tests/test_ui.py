@@ -208,6 +208,16 @@ def test_ui_end_to_end(live):
         page.evaluate("() => { S.attachments = []; renderAttachments(); }")
         page.fill("#input", "")
 
+        # 2i) Permisos desde el chat: Manual / Semi-auto / Auto
+        page.click(".perm-chip")
+        page.click('#perm-menu b >> text="Auto"')
+        page.wait_for_selector(".perm-chip.perm-auto")
+        st = page.evaluate("async () => (await (await fetch('/api/settings')).json())")
+        assert st["ai_commands"] == "auto" and st["ai_write"] == "auto"
+        page.click(".perm-chip")
+        page.click('#perm-menu b >> text="Manual"')
+        page.wait_for_selector(".perm-chip.perm-manual")
+
         # 2b) Selector de modelos con buscador
         page.click("#model-btn")
         page.wait_for_selector("#model-picker .mp-row")
