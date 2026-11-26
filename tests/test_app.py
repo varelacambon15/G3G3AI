@@ -2452,3 +2452,23 @@ def test_voice_dictation_local(env):
     r = client.post("/api/voice/transcribe", headers=h, content=buf.getvalue()).json()
     assert r == {"text": "hola desde whisper (es, 1.5 s)", "engine": "local"}          # sin «[BLANK_AUDIO]»
     assert client.post("/api/voice/setup", headers=h, json={"model": "otro.bin"}).status_code == 400
+
+
+def test_fetch_extras_searches_past_releases_without_binaries(monkeypatch):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "packaging"))
+    import json as _json
+    import fetch_extras as F
+    releases = [{"tag_name": "v1.0.0", "assets": [{"name": "nightly-tag.txt"}]},          # «latest» sin binarios
+                {"tag_name": "b12359", "assets": [{"name": "llama-b12359-bin-win-cpu-x64.zip"}]},
+                {"tag_name": "b12358", "assets": [{"name": "llama-b12358-bin-win-cpu-x64.zip"}]}]
+    monkeypatch.setattr(F, "_get", lambda url: _json.dumps(releases).encode())
+    src = dict((s[0], s[2]) for s in F.SOURCES["windows"])
+    assert F.find_asset("ggml-org/llama.cpp", src["llama-cpu"])["name"] == "llama-b12359-bin-win-cpu-x64.zip"
+    with pytest.raises(RuntimeError, match="nightly-tag.txt"):
+        F.find_asset("ggml-org/llama.cpp", src["llama-vulkan"])
+    sd = [{"name": n} for n in ["cudart-sd-bin-win-cu12-x64.zip", "sd-master-52491bd-bin-win-cpu-x64.zip",
+                                 "sd-master-52491bd-bin-win-vulkan-x64.zip", "sd-master-52491bd-bin-Linux-Ubuntu-26.04-x86_64-vulkan.zip",
+                                 "sd-master-52491bd-bin-Linux-Ubuntu-26.04-x86_64.zip", "sd-master-52491bd-bin-Linux-Ubuntu-24.04-x86_64-rocm-10.1.0.zip"]]
+    assert F.pick(sd, src["sd"])["name"] == "sd-master-52491bd-bin-win-cpu-x64.zip"
+    lin = dict((s[0], s[2]) for s in F.SOURCES["linux"])
+    assert F.pick(sd, lin["sd"])["name"] == "sd-master-52491bd-bin-Linux-Ubuntu-26.04-x86_64.zip"

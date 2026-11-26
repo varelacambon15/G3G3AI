@@ -24,7 +24,7 @@ SOURCES = {
     "windows": [
         ("llama-cpu", "ggml-org/llama.cpp", r"bin-win-cpu-x64\.zip$"),
         ("llama-vulkan", "ggml-org/llama.cpp", r"bin-win-vulkan-x64\.zip$"),
-        ("sd", "leejet/stable-diffusion.cpp", r"bin-win-avx2-x64\.zip$"),
+        ("sd", "leejet/stable-diffusion.cpp", r"bin-win-(cpu|avx2)-x64\.zip$"),
         ("whisper", "ggml-org/whisper.cpp", r"^whisper-bin-x64\.zip$"),
         ("python", "astral-sh/python-build-standalone", r"cpython-3\.12\.\d+\+\d+-x86_64-pc-windows-msvc-install_only\.tar\.gz$"),
         ("git", "git-for-windows/git", r"^MinGit-[\d.]+-64-bit\.zip$"),
@@ -32,7 +32,7 @@ SOURCES = {
     "linux": [
         ("llama-cpu", "ggml-org/llama.cpp", r"bin-ubuntu-x64\.(zip|tar\.gz)$"),
         ("llama-vulkan", "ggml-org/llama.cpp", r"bin-ubuntu-vulkan-x64\.(zip|tar\.gz)$"),
-        ("sd", "leejet/stable-diffusion.cpp", r"bin-Linux.*x86_64.*\.zip$"),
+        ("sd", "leejet/stable-diffusion.cpp", r"bin-Linux-[\w.-]*x86_64\.zip$"),
         ("python", "astral-sh/python-build-standalone", r"cpython-3\.12\.\d+\+\d+-x86_64-unknown-linux-gnu-install_only\.tar\.gz$"),
     ],
 }
@@ -53,8 +53,18 @@ def _get(url: str) -> bytes:
         return r.read()
 
 
-def latest_assets(repo: str) -> list[dict]:
-    return json.loads(_get(f"https://api.github.com/repos/{repo}/releases/latest")).get("assets", [])
+def find_asset(repo: str, pattern: str) -> dict | None:
+    """El archivo más reciente que encaje, buscando en las últimas publicaciones: la «latest» de un proyecto
+    no siempre trae binarios (llama.cpp los publica en cada compilación; whisper.cpp a veces sólo el código)."""
+    releases = json.loads(_get(f"https://api.github.com/repos/{repo}/releases?per_page=30"))
+    for rel in releases:
+        if rel.get("draft"):
+            continue
+        a = pick(rel.get("assets", []), pattern)
+        if a:
+            return a
+    names = sorted({a["name"] for r in releases[:3] for a in r.get("assets", [])})
+    raise RuntimeError(f"ningún archivo encaja con {pattern}; en las últimas hay: {', '.join(names[:40]) or 'nada'}")
 
 
 def extract(data: bytes, name: str, dest: Path) -> None:
@@ -80,9 +90,7 @@ def main(platform_name: str, out: str) -> int:
     failed = []
     for sub, repo, pattern in SOURCES[platform_name]:
         try:
-            a = pick(latest_assets(repo), pattern)
-            if not a:
-                raise RuntimeError(f"no hay ningún archivo que encaje con {pattern}")
+            a = find_asset(repo, pattern)
             print(f"· {sub}: {a['name']} ({a['size'] // 1_000_000} MB)", flush=True)
             extract(_get(a["browser_download_url"]), a["name"], dest / sub)
         except Exception as e:  # noqa: BLE001  (lo que falle se omite; el resto de la edición sigue valiendo)
