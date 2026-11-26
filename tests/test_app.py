@@ -2785,15 +2785,21 @@ def test_attach_file_and_open_from_this_pc(env):
     # Abrir con su programa: sólo desde este equipo y dentro de las carpetas visibles
     import g3g3ai.server as S
     opened = []
+    import os
     import subprocess
-    orig = subprocess.Popen
+    orig, orig_start = subprocess.Popen, getattr(os, "startfile", None)
     subprocess.Popen = lambda *a, **k: opened.append(a[0])
+    os.startfile = lambda p: opened.append(p)          # en Windows se abre con os.startfile
     try:
         r = client.post("/api/files/open", headers=h, json={"path": str(root / "original.pdf")})
         assert r.status_code == 200 and opened
         assert client.post("/api/files/open", headers=h, json={"path": "/etc/passwd"}).status_code in (400, 403)
     finally:
         subprocess.Popen = orig
+        if orig_start:
+            os.startfile = orig_start
+        else:
+            del os.startfile
 
 
 def test_ai_can_schedule_tasks_with_weekdays(env):
