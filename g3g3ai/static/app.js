@@ -1233,6 +1233,11 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   if (extra.compacted) frag.append(h("div", { class: "route" }, `Se resumieron ${extra.compacted} mensajes antiguos para que la conversación quepa en el contexto`));
   if (extra.liveOut && streaming) frag.append(h("pre", { class: "live-out" }, extra.liveOut.slice(-4000)));
   if (extra.status && streaming) frag.append(h("div", { class: "route" }, extra.status));
+  if (streaming && !content && !reasoning && !(tools || []).length && !extra.progress && extra.t0) {
+    const secs = Math.round((Date.now() - extra.t0) / 1000);
+    frag.append(h("div", { class: "waiting" }, h("span", { class: "dots" }, h("i"), h("i"), h("i")),
+      extra.status ? "" : (secs < 2 ? "Pensando…" : `Pensando… ${secs} s`)));
+  }
   const pg = extra.progress;
   if (pg && streaming && pg.done < pg.total) {
     const pct = Math.round(100 * pg.done / pg.total);
@@ -1637,7 +1642,19 @@ $("#send-btn").addEventListener("click", () => {
   send(outgoing, att);
 });
 
+// Un error no debe dejar la respuesta en blanco: queda en la conversación con su causa y un botón para reintentar
+function showChatError(msg) {
+  $("#chat-error")?.remove();
+  const card = h("div", { id: "chat-error", class: "chat-error" },
+    h("div", { class: "ce-text" }, h("b", {}, "No se pudo completar la respuesta"), h("span", {}, msg)),
+    h("div", { class: "row" },
+      h("button", { class: "ghost small", onclick: () => { card.remove(); if (!S.streaming) send("", [], true); } }, ico("retry"), "Reintentar"),
+      h("button", { class: "ghost small", onclick: () => { card.remove(); openModelPicker(); } }, "Cambiar de modelo"),
+      h("button", { class: "ghost small", onclick: () => { card.remove(); openDiagnostics(); } }, "Diagnosticar")));
+  $("#messages").append(card); card.scrollIntoView({ block: "nearest" });
+}
 async function send(text, attachments, isContinue = false) {
+  $("#chat-error")?.remove();
   const { provider, model } = currentModel();
   const box = $("#messages");
   if (!S.conv?.messages?.length) { box.innerHTML = ""; $("#view-chat").classList.remove("is-empty"); $("#welcome-ideas")?.remove(); }
@@ -1652,7 +1669,9 @@ async function send(text, attachments, isContinue = false) {
   const ctrl = new AbortController(); S.streaming = ctrl;
   setSending(true);
   let content = "", reasoning = "", tools = [], errorMsg = null, raf = 0;
-  const extra = { route: null, fallbacks: [], images: [], files: [], todos: [] };
+  const extra = { route: null, fallbacks: [], images: [], files: [], todos: [], t0: Date.now() };
+  // Mientras no llegue nada, «Pensando… N s» (y la fase: leyendo adjuntos, conectando…) para que nunca parezca colgado
+  const waitTick = setInterval(() => { if (!content && !reasoning && !tools.length && !extra.progress) paint(); }, 1000);
   const paint = () => {
     raf = 0;
     const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -1712,15 +1731,16 @@ async function send(text, attachments, isContinue = false) {
   } catch (e) {
     if (e.name !== "AbortError") errorMsg = e.message;
   } finally {
+    clearInterval(waitTick);
     S.streaming = null;
     setSending(false);
-    if (errorMsg) toast("Error: " + errorMsg, 7000);
     if (S.convId) {
       await new Promise((r) => setTimeout(r, 150)); const wd = S.workdir; await openConversation(S.convId).catch(() => {}); S.workdir = wd;
       const cards = $$("#messages .msg.assistant:last-child .art-card");   // la IA acaba de crear una página o diagrama: se muestra al lado
       if (cards.length && !isMobile()) openArtifactCard(cards[cards.length - 1]);
     }
     else el.remove();
+    if (errorMsg) showChatError(errorMsg);
     refreshContext();
     if (S.queued) { const q = S.queued; S.queued = null; setTimeout(() => send(q, []), 200); }
   }

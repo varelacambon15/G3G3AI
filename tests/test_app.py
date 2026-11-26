@@ -2576,3 +2576,68 @@ def test_branches_keep_edited_and_regenerated_versions(env):
     assert texts(conv)[2:] == ["pregunta B", "respuesta B"]
     conv = client.post(f"/api/conversations/{cid}/branch", headers=h, json={"position": 2, "step": 1}).json()  # no hay más
     assert texts(conv)[2:] == ["pregunta B", "respuesta B"]
+
+
+def test_scanned_pdf_is_read_by_ocr(tmp_path):
+    pytest.importorskip("rapidocr")
+    from PIL import Image, ImageDraw, ImageFont
+    from g3g3ai import documents as D
+    font = next((f for f in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "C:/Windows/Fonts/arial.ttf",
+                              "/System/Library/Fonts/Supplemental/Arial.ttf") if Path(f).exists()), None)
+    if not font:
+        pytest.skip("sin fuente TrueType para dibujar el escaneo")
+    img = Image.new("RGB", (1654, 1000), "white")
+    d = ImageDraw.Draw(img)
+    f = ImageFont.truetype(font, 28)
+    for r, row in enumerate([["Nombre", "Horas extras"], ["José Núñez", "12,5"], ["Benito Ruiz", "8"]]):
+        for x, t in zip((100, 900), row):
+            d.text((x, 150 + r * 80), t, font=f, fill="black")
+    pdf = tmp_path / "escaneo.pdf"
+    img.save(pdf, resolution=200)
+    text = D.extract_text(pdf)
+    assert "OCR" in text
+    assert "Benito Ruiz | 8" in text and "12,5" in text and "Núñez" in text
+
+
+def test_ocr_selftest_endpoint(env):
+    pytest.importorskip("rapidocr")
+    client, cfg, home, tmp = env
+    r = client.get("/api/ocr/selftest", headers=auth(cfg)).json()
+    assert r["ok"], r
+
+
+def test_opencode_session_header():
+    from g3g3ai import providers as P
+    go = {"base_url": "https://opencode.ai/zen/go/v1", "api_key": "k"}
+    h = P.auth_headers(go)
+    assert h["Authorization"] == "Bearer k" and h["x-opencode-session"].startswith("g3g3ai-")   # sin conversación
+    tok = P.SESSION.set("conv123")
+    try:
+        assert P.auth_headers(go)["x-opencode-session"] == "conv123"
+        assert "x-opencode-session" not in P.auth_headers({"base_url": "https://api.deepseek.com", "api_key": "k"})
+    finally:
+        P.SESSION.reset(tok)
+
+
+def test_reasoning_model_out_of_tokens_retries_with_more_room(env, monkeypatch):
+    from g3g3ai import providers as P
+    p = {"id": "x", "type": "openai", "base_url": "http://127.0.0.1:9/v1", "api_key": ""}
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    cfg.set("max_tokens", 8192)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "piensa demasiado"}))
+    text = "".join(e["text"] for e in evs if e["type"] == "content")
+    # En local el límite no puede crecer (lo marca el contexto): se avisa en vez de repetir «continúa» sin fin
+    assert text.startswith("⚠ El modelo agotó el límite") and "Máximo de tokens" in text
+    assert not any("cortó por longitud" in e.get("text", "") for e in evs if e["type"] == "status")
+
+
+def test_model_naming_a_tool_is_told_to_use_it(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "manda al usuario", "use_web": True, "use_tools": True}))
+    assert any("en vez de usarla" in e.get("text", "") for e in evs if e["type"] == "status")
+    conv = client.get(f"/api/conversations/{next(e['conversation_id'] for e in evs if e['type'] == 'start')}", headers=h).json()
+    assert conv["messages"][-1]["content"].strip() == "Ya lo he buscado yo."

@@ -39,6 +39,7 @@ from . import documents as D
 from . import devtools, extras, hardware, images, ollama, projects, web
 from .context import HistoryBuilder
 from .sync import INTERVAL as SYNC_INTERVAL, Sync, SyncError, new_key as new_sync_key
+from . import providers as providers_mod
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
 from .tools import ToolContext, resolve_approval
 
@@ -309,6 +310,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         return {
             "version": __version__,
             "extras": extras.summary(),
+            "ocr": ocr_ok(),
             "llama": llama.status(),
             "memory": meminfo(),
             "cpu_count": os.cpu_count(),
@@ -347,6 +349,30 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     async def put_settings(body: dict):
         cfg.update_public(body)
         return cfg.public()
+
+    _ocr = {}
+
+    def ocr_ok() -> bool:
+        if "ok" not in _ocr:
+            from . import ocr
+            _ocr["ok"] = ocr.available()
+        return _ocr["ok"]
+
+    @app.get("/api/ocr/selftest")
+    async def ocr_selftest():
+        """Dibuja un texto y lo lee con el OCR (comprueba que los modelos van dentro del ejecutable)."""
+        from PIL import Image, ImageDraw, ImageFont
+
+        from . import ocr
+        if not ocr.available():
+            return {"ok": False, "text": "", "error": "OCR no instalado"}
+        img = Image.new("RGB", (900, 200), "white")
+        ImageDraw.Draw(img).text((40, 60), "Horas extras 12,5 Núñez 2026", font=ImageFont.load_default(size=48), fill="black")
+        try:
+            text = await asyncio.to_thread(ocr.image_text, img)
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "text": "", "error": str(e)}
+        return {"ok": "2026" in text and "12,5" in text, "text": text}
 
     # --- Proveedores ---------------------------------------------------------------
     def provider_for(pid: str) -> dict:
@@ -1006,7 +1032,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         model = body.get("model") or "local"
         text = (body.get("message") or "").strip()
         attachments = body.get("attachments") or []
-        attach_text, attach_meta = expand_attachments(attachments)
+        attach_text, attach_meta = await asyncio.to_thread(expand_attachments, attachments)   # el OCR puede tardar
         if not text and not attach_text and not body.get("continue"):
             raise HTTPException(400, "Mensaje vacío")
         agent = bool(body.get("use_tools"))
@@ -1179,6 +1205,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             todos: list = []
             finish = None
             used_in = used_out = 0
+            providers_mod.SESSION.set(cid)      # cabecera de sesión de OpenCode Go (también en títulos y resúmenes)
             yield sse({"type": "start", "conversation_id": cid})
             if direct_image is not None:  # «/imagen …»: sin pasar por el modelo de texto
                 yield sse({"type": "status", "text": "🎨 Generando imagen…"})

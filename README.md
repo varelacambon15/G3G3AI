@@ -207,6 +207,26 @@ Idioma y motor, en Ajustes → Modelos locales.
 
 Cuando un modelo local tiene que leer mucho (un documento largo, una conversación larga), verás «Leyendo el contexto… 43 % · ~12 s» en vez de una espera sin señales. La siguiente pregunta reutiliza lo ya leído.
 
+### 📁 Proyectos
+
+Agrupa conversaciones con unas **instrucciones** y unos **documentos** (PDF, Word, Excel…) que la IA tiene siempre presentes. «Proyectos» en la barra lateral → Nuevo proyecto → Nueva conversación. Una conversación existente se mueve con el icono de carpeta de la barra lateral.
+
+### 🔎 Buscar dentro de las conversaciones
+
+El buscador de la barra lateral busca también en el texto de los mensajes (sin importar tildes ni mayúsculas) y abre la conversación en el mensaje encontrado, resaltado.
+
+### 🖼 Páginas, gráficos y diagramas al lado
+
+Cuando la IA crea una página web, un SVG o un diagrama (Mermaid), aparece como tarjeta y se abre en un panel junto al chat, funcionando. Si la vuelve a escribir, ‹ 1/2 › cambia entre versiones. Se puede copiar, descargar o abrir en una pestaña.
+
+### ✏️ Editar y regenerar sin perder nada
+
+Editar una pregunta o regenerar una respuesta guarda la versión anterior: las flechas ‹ 1/2 › bajo el mensaje cambian entre versiones.
+
+### 📄 PDF escaneados (OCR)
+
+Los PDF sin texto (escaneados) se leen con OCR en tu propio equipo, sin Internet, conservando las filas de las tablas. Sirve para partes de horas, nóminas o facturas escaneadas, con cualquier modelo.
+
 ### 📤 Exportar una conversación
 
 Botón de descarga arriba a la derecha, el icono de cada conversación en la barra lateral, o `/export`. Formatos: **Markdown**, **Word** y **PDF**, y opcionalmente con las herramientas que usó la IA.

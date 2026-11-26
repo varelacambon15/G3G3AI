@@ -17,6 +17,14 @@ for pkg in ("docx", "pptx", "fpdf", "oletools"):
         hidden += collect_submodules(pkg)
     except ImportError:
         pass
+for pkg in ("rapidocr", "onnxruntime"):  # OCR de PDF escaneados (modelos .onnx y config.yaml)
+    try:
+        __import__(pkg)
+        extra_datas += collect_data_files(pkg)
+        extra_bins += collect_dynamic_libs(pkg)
+        hidden += collect_submodules(pkg)
+    except ImportError:
+        pass
 for pkg in ("pypdfium2", "pypdfium2_raw"):  # PDF escaneados → imágenes (incluye la librería nativa pdfium)
     try:
         __import__(pkg)

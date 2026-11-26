@@ -236,11 +236,24 @@ def pdf_page_images(path: Path, pages: int = MAX_PDF_IMAGE_PAGES) -> list[tuple[
     return out
 
 
+OCR_NOTE = ("[PDF escaneado: texto obtenido por OCR. Las columnas de cada fila van separadas por « | ». "
+            "Puede haber errores en tildes o cifras sueltas: si un número importa, indícalo como «según el OCR».]")
+
+
 def extract_text(path: Path) -> str:
     """Texto de un documento de oficina o PDF. Cadena vacía si no tiene texto (escaneado)."""
     ext = path.suffix.lower()
     if ext == ".pdf":
-        return _pdf_text(path)[:TEXT_LIMIT]
+        text = _pdf_text(path)
+        if not text.strip():                       # PDF escaneado: leerlo por OCR en este equipo
+            from . import ocr
+            try:
+                t = ocr.pdf_text(path)
+            except Exception:  # noqa: BLE001  (si el OCR falla, se trata como escaneado sin texto)
+                t = ""
+            if t.strip():
+                text = (OCR_NOTE + "\n\n" + t)
+        return text[:TEXT_LIMIT]
     if ext == ".xls":
         text = _xls(path)[:TEXT_LIMIT]
     else:

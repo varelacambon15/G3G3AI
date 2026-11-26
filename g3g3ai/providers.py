@@ -9,8 +9,10 @@
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import re
+import uuid
 from typing import AsyncIterator
 
 import httpx
@@ -120,6 +122,20 @@ def verify_message(ctx) -> str | None:
         return None
     hint = ctx.verify_hint()
     return VERIFY_MSG.format(cmd=f"`{hint}`") if hint else None
+
+
+TOOL_TO_USER_MSG = ("No le pidas al usuario que use herramientas ni le expliques cuál usar: tú tienes «{tool}». "
+                    "Llámala ahora con los datos que ya tienes (deduce la búsqueda o el identificador de lo que te ha "
+                    "pedido) y después respóndele con el resultado.")
+
+
+def tool_left_to_user(text: str, names) -> str | None:
+    """Herramienta que el modelo menciona en su respuesta en vez de llamarla («usa mail_read con el ID…»)."""
+    low = (text or "").lower()
+    for n in names:
+        if len(n) > 4 and "_" in n and re.search(rf"(?<![\w`]){re.escape(n)}(?![\w])|`{re.escape(n)}`", low):
+            return n
+    return None
 
 
 def announces_action(text: str) -> bool:
@@ -239,6 +255,23 @@ async def _sse(r: httpx.Response) -> AsyncIterator[dict]:
             continue
 
 
+# --- Cabeceras ------------------------------------------------------------------
+# Conversación en curso: OpenCode Go rechaza (400 MissingSessionID) las peticiones sin «x-opencode-session»,
+# un identificador estable por conversación. También las auxiliares (títulos, resúmenes).
+SESSION: contextvars.ContextVar[str] = contextvars.ContextVar("g3g3ai_session", default="")
+_PROCESS_SESSION = "g3g3ai-" + uuid.uuid4().hex
+
+
+def auth_headers(p: dict) -> dict:
+    from . import __version__
+    h = {"User-Agent": f"G3G3AI/{__version__}"}
+    if p.get("api_key"):
+        h["Authorization"] = f"Bearer {p['api_key']}"
+    if "opencode.ai" in (p.get("base_url") or ""):
+        h["x-opencode-session"] = SESSION.get() or _PROCESS_SESSION
+    return h
+
+
 # --- Listado de modelos ---------------------------------------------------------
 async def list_models(p: dict) -> list[str]:
     async with httpx.AsyncClient(timeout=15) as c:
@@ -246,8 +279,7 @@ async def list_models(p: dict) -> list[str]:
             r = await c.get(p["base_url"].rstrip("/") + "/v1/models", params={"limit": 100},
                             headers={"x-api-key": p.get("api_key", ""), "anthropic-version": "2023-06-01"})
         else:
-            headers = {"Authorization": f"Bearer {p['api_key']}"} if p.get("api_key") else {}
-            r = await c.get(p["base_url"].rstrip("/") + "/models", headers=headers)
+            r = await c.get(p["base_url"].rstrip("/") + "/models", headers=auth_headers(p))
         if r.status_code >= 400:
             raise ProviderError(f"HTTP {r.status_code}: {r.text[:300]}")
         return sorted(m["id"] for m in r.json().get("data", []))
@@ -257,14 +289,15 @@ async def list_models(p: dict) -> list[str]:
 async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                        ctx: T.ToolContext | None) -> AsyncIterator[dict]:
     url = p["base_url"].rstrip("/") + "/chat/completions"
-    headers = {"Authorization": f"Bearer {p['api_key']}"} if p.get("api_key") else {}
+    headers = auth_headers(p)
     msgs = list(messages)
     local = p["base_url"].startswith(("http://127.0.0.1", "http://localhost"))
     max_tokens = max(int(opts.get("max_tokens") or 0), OPENAI_MIN_TOKENS)
     if local and opts.get("n_ctx"):  # nunca pedir más salida de la que cabe: lo demás es contexto para la conversación
         from .context import local_reply_tokens
         max_tokens = local_reply_tokens(int(opts["n_ctx"]), int(opts.get("max_tokens") or 2048))
-    continuations = nudges = verifies = empties = 0
+    continuations = nudges = verifies = empties = thinking_retries = 0
+    reasoning_seen = False
     used_tools = False
     tail, after_length = "", False   # último carácter mostrado y si el paso anterior se cortó por longitud
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), trust_env=not local) as c:
@@ -324,6 +357,7 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                             if delta.get("reasoning_details"):
                                 _merge_reasoning_details(details, delta["reasoning_details"])
                             if delta.get("reasoning_content") or delta.get("reasoning"):
+                                reasoning_seen = True
                                 yield {"type": "reasoning", "text": delta.get("reasoning_content") or delta.get("reasoning")}
                             if delta.get("content"):
                                 if sep_pending and not tail.isspace():
@@ -362,6 +396,19 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                     content = cleaned
                     calls = {i: {"id": "", "name": n, "args": a} for i, (n, a) in enumerate(found)}
                     finish = "tool_calls"
+            if finish == "length" and not content.strip() and not calls and reasoning_seen:
+                # Un modelo que razona agotó el límite pensando, sin escribir nada: pedir «continúa» lo haría
+                # empezar a pensar otra vez. Se reintenta con más margen.
+                bigger = min(max_tokens * 2, 32768 if not local else max_tokens)
+                if bigger > max_tokens and thinking_retries < 2:
+                    thinking_retries += 1
+                    max_tokens = bigger
+                    yield {"type": "status", "text": f"↪ El modelo gastó el límite pensando; reintento con más margen ({bigger} tokens)…"}
+                    continue
+                yield {"type": "content", "text": "⚠ El modelo agotó el límite de longitud razonando y no llegó a escribir "
+                                                  "la respuesta. Sube «Máximo de tokens por respuesta» en Ajustes, pide algo "
+                                                  "más concreto o usa un modelo sin razonamiento."}
+                return
             if finish == "length" and continuations < MAX_CONTINUATIONS:
                 # Cortada por longitud: las llamadas a medias no sirven; se pide que siga
                 continuations += 1
@@ -372,6 +419,14 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                 msgs.append({"role": "user", "content": CONTINUE_MSG})
                 continue
             if not calls:
+                left = tool_left_to_user(content, ctx.names()) if ctx else None
+                if left and nudges < MAX_NUDGES:
+                    nudges += 1
+                    yield {"type": "status", "text": f"↪ El modelo mencionó «{left}» en vez de usarla; se le pide que la use…"}
+                    yield {"type": "retract", "text": content}
+                    msgs.append({"role": "assistant", "content": content})
+                    msgs.append({"role": "user", "content": TOOL_TO_USER_MSG.format(tool=left)})
+                    continue
                 if ctx and used_tools and nudges < MAX_NUDGES and announces_action(content):
                     nudges += 1
                     yield {"type": "status", "text": "↪ El modelo anunció un paso sin hacerlo; se le pide que continúe…"}

@@ -177,6 +177,13 @@ def test_ui_end_to_end(live):
         assert "Fila 17" in page.eval_on_selector("#artifact-frame", "f => f.srcdoc")
         page.click("#artifact-close")
 
+        # 2f) Un error queda en la conversación con su causa (no sólo en un aviso que desaparece)
+        page.click("#new-chat")
+        page.fill("#input", "error a mitad")
+        page.click("#send-btn")
+        page.wait_for_selector("#chat-error >> text=upstream exploded", timeout=10000)
+        assert page.is_visible("#chat-error >> text=Reintentar")
+
         # 2b) Selector de modelos con buscador
         page.click("#model-btn")
         page.wait_for_selector("#model-picker .mp-row")

@@ -172,6 +172,19 @@ class H(BaseHTTPRequestHandler):
             text = f"Aquí la tienes:\n\n```html\n{page}\n```\n\nY el flujo:\n\n```mermaid\nflowchart TD\n  A[Inicio] --> B[Fin]\n```\n"
             self.chunk({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "piensa demasiado" in str(first_user):  # razona hasta agotar el límite salvo que se le dé mucho margen
+            if req.get("max_tokens", 0) >= 16384:
+                self.chunk({"choices": [{"delta": {"reasoning_content": "pienso…"}}]})
+                self.chunk({"choices": [{"delta": {"content": "respuesta tras pensar"}, "finish_reason": "stop"}]})
+            else:
+                self.chunk({"choices": [{"delta": {"reasoning_content": "pienso y pienso…"}, "finish_reason": "length"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if "manda al usuario" in str(first_user):  # nombra la herramienta en vez de llamarla
+            if "No le pidas al usuario" in str(last["content"]):
+                self.chunk({"choices": [{"delta": {"content": "Ya lo he buscado yo."}, "finish_reason": "stop"}]})
+            else:
+                self.chunk({"choices": [{"delta": {"content": "Dime qué quieres que busque usando `web_search`."}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "eco del sistema" in str(first_user):  # devuelve el mensaje del sistema tal cual
             self.chunk({"choices": [{"delta": {"content": "SISTEMA<<" + sysmsg0 + ">>"}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
