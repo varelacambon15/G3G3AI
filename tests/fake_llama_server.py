@@ -185,6 +185,9 @@ class H(BaseHTTPRequestHandler):
             else:
                 self.chunk({"choices": [{"delta": {"content": "Dime qué quieres que busque usando `web_search`."}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "eco del usuario" in str(first_user):  # devuelve el último mensaje del usuario tal cual le llega
+            self.chunk({"choices": [{"delta": {"content": "USUARIO<<" + str(last["content"]) + ">>"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "eco del sistema" in str(first_user):  # devuelve el mensaje del sistema tal cual
             self.chunk({"choices": [{"delta": {"content": "SISTEMA<<" + sysmsg0 + ">>"}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return

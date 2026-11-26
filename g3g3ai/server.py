@@ -41,7 +41,7 @@ from .context import HistoryBuilder
 from .sync import INTERVAL as SYNC_INTERVAL, Sync, SyncError, new_key as new_sync_key
 from . import providers as providers_mod
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
-from .tools import ToolContext, resolve_approval
+from .tools import ToolContext, resolve_approval, tool_events
 
 STATIC = Path(__file__).parent / "static"
 COOKIE = "g3g3ai_token"
@@ -1285,6 +1285,24 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                                 history = ev["messages"]
                             else:
                                 yield sse(ev)
+                        if (cpid == LOCAL_PROVIDER and use_web and ctx and "web_search" in ctx.names() and text
+                                and not body.get("continue") and len(text) > 10 and history and history[-1]["role"] == "user"):
+                            # Los modelos locales pequeños a menudo no buscan aunque la búsqueda esté activada (o piden
+                            # al usuario qué buscar): se busca ya con la pregunta y se les dan los resultados.
+                            sink: list[str] = []
+                            async for ev in tool_events(ctx, "web_search", {"query": text[:200]}, sink):
+                                if ev["type"] in ("tool_call", "tool_result"):
+                                    trace.append(ev)
+                                yield sse(ev)
+                            if sink and sink[0].strip():
+                                note = ("\n\n[Búsqueda web hecha automáticamente con esta pregunta. Respóndela con estos "
+                                        "resultados y cita las fuentes; si no bastan, busca otra cosa o abre una página con "
+                                        "fetch_url:\n" + sink[0][:6000] + "]")
+                                last = history[-1]
+                                if isinstance(last["content"], str):
+                                    last["content"] += note
+                                else:
+                                    last["content"] = list(last["content"]) + [{"type": "text", "text": note}]
                         msgs = ([{"role": "system", "content": system}] if system else []) + history
                         run_opts = opts
                         if cpid == LOCAL_PROVIDER:  # ajustes propios de los modelos locales

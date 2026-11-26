@@ -2675,3 +2675,19 @@ def test_engine_installer_finds_binaries_in_past_releases(monkeypatch):
     names = ["sd-master-52491bd-bin-win-cpu-x64.zip", "sd-master-52491bd-bin-win-vulkan-x64.zip", "cudart-sd-bin-win-cu12-x64.zip"]
     r = sd.pick([{"tag_name": "master-1133", "assets": [{"name": n, "browser_download_url": n} for n in names]}])
     assert {a["name"] for a in r["assets"]} == {names[0], names[1]}
+
+
+def test_local_model_gets_web_results_without_asking(env, monkeypatch):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    from g3g3ai import web
+    async def fake_search(cfg, q, n):
+        return [{"title": "Calendario", "url": "https://ejemplo.com/depor", "snippet": "Próximo partido: domingo PARTIDO-42"}]
+    monkeypatch.setattr(web, "search", fake_search)
+    load_model(client, h)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "eco del usuario: partido del deportivo", "use_web": True}))
+    assert any(e["type"] == "tool_call" and e["name"] == "web_search" for e in evs)
+    assert "PARTIDO-42" in "".join(e["text"] for e in evs if e["type"] == "content")      # el modelo recibió los resultados
+    cid = next(e["conversation_id"] for e in evs if e["type"] == "start")
+    conv = client.get(f"/api/conversations/{cid}", headers=h).json()
+    assert any(t["name"] == "web_search" for t in conv["messages"][-1]["meta"]["tools"])
