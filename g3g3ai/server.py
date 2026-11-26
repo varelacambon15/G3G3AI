@@ -935,6 +935,19 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         session_state.get(cid, {}).get("read", {}).clear()  # los archivos han cambiado: hay que releerlos
         return res
 
+    @app.post("/api/conversations/{cid}/fork")
+    async def fork_conversation(cid: str, body: dict):
+        """Editar o regenerar sin perder lo anterior: el final se guarda como rama alternativa."""
+        db.archive_from(cid, int(body["message_id"]))
+        session_state.pop(cid, None)
+        return db.get_conversation(cid)
+
+    @app.post("/api/conversations/{cid}/branch")
+    async def switch_conversation_branch(cid: str, body: dict):
+        db.switch_branch(cid, int(body["position"]), -1 if int(body.get("step", 1)) < 0 else 1)
+        session_state.pop(cid, None)
+        return db.get_conversation(cid)
+
     @app.delete("/api/conversations/{cid}/messages/{mid}")
     async def truncate_conversation(cid: str, mid: int):
         db.delete_messages_from(cid, mid)

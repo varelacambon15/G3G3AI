@@ -37,6 +37,14 @@ CREATE TABLE IF NOT EXISTS projects (
     created REAL NOT NULL,
     updated REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS branches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conv_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    born REAL NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_branches_conv ON branches(conv_id, position);
 CREATE TABLE IF NOT EXISTS tombstones (
     kind TEXT NOT NULL,
     uid TEXT NOT NULL,
@@ -142,7 +150,62 @@ class DB:
         conv["messages"] = [
             {**dict(m), "meta": json.loads(m["meta"]) if m["meta"] else None} for m in msgs
         ]
+        conv["branches"] = self.branch_info(cid, conv["messages"])
         return conv
+
+    # Ramas: al editar o regenerar, el final de la conversación se guarda como alternativa ----------
+    def branch_info(self, cid: str, messages: list[dict]) -> dict:
+        """{posición: {"n": total, "i": índice de la actual}} para cada punto con alternativas."""
+        rows = self._q("SELECT position, born FROM branches WHERE conv_id=?", (cid,)).fetchall()
+        out: dict[int, list[float]] = {}
+        for r in rows:
+            out.setdefault(r["position"], []).append(r["born"])
+        info = {}
+        for pos, borns in out.items():
+            if pos >= len(messages):
+                cur = None
+            else:
+                cur = messages[pos]["created"]
+            allb = sorted(borns + ([cur] if cur is not None else []))
+            info[str(pos)] = {"n": len(allb), "i": allb.index(cur) if cur is not None else -1}
+        return info
+
+    def archive_from(self, cid: str, message_id: int) -> int:
+        """Guarda como rama alternativa el mensaje `message_id` y los siguientes (con sus propias ramas) y los quita."""
+        pos = self._q("SELECT COUNT(*) FROM messages WHERE conv_id=? AND id<?", (cid, message_id)).fetchone()[0]
+        tail = self._q("SELECT uid, role, content, reasoning, meta, created FROM messages WHERE conv_id=? AND id>=? ORDER BY id",
+                       (cid, message_id)).fetchall()
+        if tail:
+            sub = self._q("SELECT position, born, data FROM branches WHERE conv_id=? AND position>?", (cid, pos)).fetchall()
+            data = {"messages": [dict(r) for r in tail], "sub": [dict(r) for r in sub]}
+            self._q("DELETE FROM branches WHERE conv_id=? AND position>?", (cid, pos))
+            self._q("INSERT INTO branches (conv_id, position, born, data) VALUES (?,?,?,?)",
+                    (cid, pos, tail[0]["created"], json.dumps(data, ensure_ascii=False)))
+        self.delete_messages_from(cid, message_id)
+        return pos
+
+    def switch_branch(self, cid: str, position: int, step: int) -> None:
+        """Cambia el final de la conversación desde `position` por la rama anterior (-1) o siguiente (+1)."""
+        msgs = self._q("SELECT id, created FROM messages WHERE conv_id=? ORDER BY id", (cid,)).fetchall()
+        rows = self._q("SELECT id, born FROM branches WHERE conv_id=? AND position=?", (cid, position)).fetchall()
+        cur = msgs[position]["created"] if position < len(msgs) else None
+        order = sorted([(r["born"], r["id"]) for r in rows] + ([(cur, None)] if cur is not None else []))
+        idx = next((i for i, (b, rid) in enumerate(order) if rid is None), -1)
+        target = idx + step if idx >= 0 else (len(order) - 1 if step < 0 else 0)
+        if not 0 <= target < len(order) or order[target][1] is None:
+            return
+        row = self._q("SELECT data FROM branches WHERE id=?", (order[target][1],)).fetchone()
+        if position < len(msgs):
+            self.archive_from(cid, msgs[position]["id"])
+        data = json.loads(row["data"])
+        self._q("DELETE FROM branches WHERE id=?", (order[target][1],))
+        for m in data["messages"]:
+            self._q("INSERT INTO messages (conv_id, uid, role, content, reasoning, meta, created) VALUES (?,?,?,?,?,?,?)",
+                    (cid, m["uid"] or uuid.uuid4().hex, m["role"], m["content"], m["reasoning"], m["meta"], m["created"]))
+        for b in data.get("sub", []):
+            self._q("INSERT INTO branches (conv_id, position, born, data) VALUES (?,?,?,?)",
+                    (cid, b["position"], b["born"], b["data"]))
+        self._q("UPDATE conversations SET summary=NULL, summary_upto=NULL, updated=? WHERE id=?", (time.time(), cid))
 
     def update_conversation(self, cid: str, **fields) -> None:
         keys = [k for k in ("title", "provider", "model", "system", "workdir", "project_id") if k in fields]
@@ -193,6 +256,7 @@ class DB:
 
     def delete_conversation(self, cid: str) -> None:
         self._q("DELETE FROM messages WHERE conv_id=?", (cid,))
+        self._q("DELETE FROM branches WHERE conv_id=?", (cid,))
         self._q("DELETE FROM conversations WHERE id=?", (cid,))
         self.tombstone("conversation", cid)
 

@@ -2543,3 +2543,36 @@ def test_projects_share_instructions_and_documents(env):
     client.patch(f"/api/conversations/{cid}", headers=h, json={"project_id": p["id"]})
     client.delete(f"/api/projects/{p['id']}", headers=h)
     assert client.get(f"/api/conversations/{cid}", headers=h).json()["project_id"] is None
+
+
+def test_branches_keep_edited_and_regenerated_versions(env):
+    import time as _t
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    db = client.app.state.db
+    c = db.create_conversation()
+    cid = c["id"]
+    add = lambda role, text: (_t.sleep(0.002), db.add_message(cid, role, text))[1]   # noqa: E731
+    add("user", "hola"); add("assistant", "¿qué tal?")
+    q1 = add("user", "pregunta A"); a1 = add("assistant", "respuesta A")
+    texts = lambda conv: [m["content"] for m in conv["messages"]]                     # noqa: E731
+    # Regenerar la respuesta A → rama en la posición 3
+    conv = client.post(f"/api/conversations/{cid}/fork", headers=h, json={"message_id": a1}).json()
+    assert texts(conv) == ["hola", "¿qué tal?", "pregunta A"] and conv["branches"] == {"3": {"n": 1, "i": -1}}
+    add("assistant", "respuesta A2")
+    assert client.get(f"/api/conversations/{cid}", headers=h).json()["branches"] == {"3": {"n": 2, "i": 1}}
+    # Editar la pregunta A → rama en la posición 2 (que se lleva dentro la rama de la posición 3)
+    client.post(f"/api/conversations/{cid}/fork", headers=h, json={"message_id": q1})
+    add("user", "pregunta B"); add("assistant", "respuesta B")
+    conv = client.get(f"/api/conversations/{cid}", headers=h).json()
+    assert texts(conv)[2:] == ["pregunta B", "respuesta B"] and conv["branches"] == {"2": {"n": 2, "i": 1}}
+    # Volver a la versión anterior: reaparece la pregunta A con su respuesta regenerada y su rama interna
+    conv = client.post(f"/api/conversations/{cid}/branch", headers=h, json={"position": 2, "step": -1}).json()
+    assert texts(conv)[2:] == ["pregunta A", "respuesta A2"]
+    assert conv["branches"] == {"2": {"n": 2, "i": 0}, "3": {"n": 2, "i": 1}}
+    conv = client.post(f"/api/conversations/{cid}/branch", headers=h, json={"position": 3, "step": -1}).json()
+    assert texts(conv)[2:] == ["pregunta A", "respuesta A"]
+    conv = client.post(f"/api/conversations/{cid}/branch", headers=h, json={"position": 2, "step": 1}).json()
+    assert texts(conv)[2:] == ["pregunta B", "respuesta B"]
+    conv = client.post(f"/api/conversations/{cid}/branch", headers=h, json={"position": 2, "step": 1}).json()  # no hay más
+    assert texts(conv)[2:] == ["pregunta B", "respuesta B"]

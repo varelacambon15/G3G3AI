@@ -1150,7 +1150,7 @@ function renderMessages() {
     return;
   }
   $("#view-chat").classList.remove("is-empty"); $("#welcome-ideas")?.remove();
-  for (const m of msgs) box.append(messageEl(m));
+  msgs.forEach((m, i) => box.append(messageEl(m, i)));
   box.scrollTop = box.scrollHeight;
 }
 function diffBlock(path, diff) {
@@ -1282,7 +1282,21 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
     h("a", { href: fileUrl(p), target: "_blank", title: p }, h("img", { src: fileUrl(p), alt: "imagen generada", loading: "lazy" })))));
   return frag;
 }
-function messageEl(m) {
+// ‹ 2/3 › para cambiar entre versiones (editar o regenerar guarda la anterior como rama)
+function branchNav(pos) {
+  const b = S.conv?.branches?.[String(pos)];
+  if (!b || b.n < 2 || b.i < 0) return null;
+  const go = async (step) => {
+    if (S.streaming) return;
+    S.conv = await api(`/api/conversations/${S.convId}/branch`, { method: "POST", body: { position: pos, step } });
+    renderMessages(); refreshContext();
+  };
+  return h("span", { class: "branch-nav", title: "Versiones de este mensaje" },
+    h("button", { class: "act", disabled: b.i === 0, title: "Versión anterior", onclick: () => go(-1) }, "‹"),
+    h("span", {}, `${b.i + 1}/${b.n}`),
+    h("button", { class: "act", disabled: b.i === b.n - 1, title: "Versión siguiente", onclick: () => go(1) }, "›"));
+}
+function messageEl(m, pos = -1) {
   const el = h("div", { class: `msg ${m.role}`, "data-id": m.id });
   if (m.role === "user") {
     el.append(h("div", { class: "bubble" }, m.content));
@@ -1293,14 +1307,16 @@ function messageEl(m) {
     el.append(h("div", { class: "meta" },
       att.filter((a) => !imgs.includes(a)).map((a) => h("span", { class: "chip" }, ico(a.kind === "document" || a.kind === "pdf_scan" ? "doc" : "clip"), a.name)),
       h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, ico("copy")),
-      h("button", { class: "act", title: "Editar", onclick: () => editFrom(m) }, ico("pencil")),
+      h("button", { class: "act", title: "Editar", onclick: () => editFrom(m, el) }, ico("pencil")),
+      branchNav(pos),
       (S.checkpoints || []).some((c) => c.id >= m.id) ? h("button", { class: "act", title: "Volver aquí: los archivos que la IA tocó desde este mensaje vuelven a como estaban antes", onclick: () => rewindTo(m) }, ico("rewind")) : null));
   } else {
     el.append(assistantInner(m.content, m.reasoning, m.meta?.tools, false, { images: m.meta?.images || [], files: m.meta?.files || [], todos: m.meta?.todos || [] }));
     const st = m.meta?.stats || {};
     el.append(h("div", { class: "meta" },
       h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, ico("copy")),
-      h("button", { class: "act", title: "Volver a generar", onclick: () => regenerate(m) }, ico("retry")),
+      h("button", { class: "act", title: "Volver a generar (la respuesta actual se conserva)", onclick: () => regenerate(m) }, ico("retry")),
+      branchNav(pos),
       m.meta?.finish ? h("button", { class: "act continue", title: "La respuesta quedó incompleta",
         onclick: () => { if (!S.streaming) send("Continúa exactamente donde lo dejaste.", []); } }, ico("play"), "Continuar") : null,
       h("span", { class: "meta-model", title: (m.meta?.provider === "local" ? "Modelo local" : "API") + (m.meta?.route ? " · " + m.meta.route : "") }, m.meta?.model || ""),
@@ -1417,17 +1433,31 @@ async function rewindTo(m) {
     await openConversation(S.convId);
   } catch (e) { toast(e.message); }
 }
-async function editFrom(m) {
-  if (S.streaming) return;
-  const t = prompt("Editar mensaje (se borrarán las respuestas posteriores):", m.content);
-  if (t == null) return;
-  S.conv = await api(`/api/conversations/${S.convId}/messages/${m.id}`, { method: "DELETE" });
-  renderMessages();
-  send(t, (m.meta?.attachments || []).map((a) => a.path));
+// Editar en el sitio, como en Claude: la versión anterior y sus respuestas se guardan como rama
+function editFrom(m, el) {
+  if (S.streaming || !el || el.querySelector(".edit-box")) return;
+  const bubble = el.querySelector(".bubble"), meta = el.querySelector(".meta");
+  const ta = h("textarea", { class: "edit-text", rows: 3 }, m.content);
+  const done = () => { box.remove(); bubble.classList.remove("hidden"); meta?.classList.remove("hidden"); };
+  const submit = async () => {
+    const t = ta.value.trim(); if (!t) return;
+    if (t === m.content.trim()) return done();
+    S.conv = await api(`/api/conversations/${S.convId}/fork`, { method: "POST", body: { message_id: m.id } });
+    renderMessages();
+    send(t, (m.meta?.attachments || []).map((a) => a.path));
+  };
+  const box = h("div", { class: "edit-box" }, ta, h("div", { class: "row end" },
+    h("button", { class: "ghost small", onclick: done }, "Cancelar"), h("button", { class: "primary small", onclick: submit }, "Enviar")));
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
+    else if (e.key === "Escape") { e.preventDefault(); done(); }
+  });
+  bubble.classList.add("hidden"); meta?.classList.add("hidden"); bubble.after(box);
+  ta.style.height = ta.scrollHeight + "px"; ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
 }
 async function regenerate(m) {
   if (S.streaming) return;
-  S.conv = await api(`/api/conversations/${S.convId}/messages/${m.id}`, { method: "DELETE" });
+  S.conv = await api(`/api/conversations/${S.convId}/fork`, { method: "POST", body: { message_id: m.id } });
   renderMessages();
   send("", [], true);
 }
