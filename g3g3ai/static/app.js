@@ -216,6 +216,7 @@ const ICON_PATHS = {
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
   arrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  mic: '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/>',
   stop: '<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/>',
   spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/>',
   brain: '<path d="M9 4.5A2.5 2.5 0 0 0 6.5 7v.3A3 3 0 0 0 4.5 10c0 .9.4 1.7 1 2.2A3 3 0 0 0 7 17.5 2.5 2.5 0 0 0 12 18V6.5A2 2 0 0 0 9 4.5ZM15 4.5A2.5 2.5 0 0 1 17.5 7v.3a3 3 0 0 1 2 2.7c0 .9-.4 1.7-1 2.2a3 3 0 0 1-1.5 5.3A2.5 2.5 0 0 1 12 18"/>',
@@ -1313,6 +1314,138 @@ function setSending(on) {
 }
 const input = $("#input");
 input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; });
+// --- Dictado por voz ------------------------------------------------------------------------
+// Graba en el navegador a WAV de 16 kHz (lo que usa Whisper, sin ffmpeg) y lo transcribe G3G3AI:
+// con whisper.cpp local, con Groq/OpenAI, o —si no hay ninguno— con el reconocimiento del navegador.
+const VOICE = { rec: null, timer: null };
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function insertDictation(text) {
+  text = (text || "").trim(); if (!text) { toast("No se entendió nada; prueba a hablar más cerca del micrófono"); return; }
+  const a = input.selectionStart ?? input.value.length, b = input.selectionEnd ?? a, before = input.value.slice(0, a);
+  const sep = before && !/\s$/.test(before) ? " " : "";
+  input.value = before + sep + text + input.value.slice(b);
+  const pos = (before + sep + text).length; input.setSelectionRange(pos, pos);
+  input.dispatchEvent(new Event("input")); input.focus();
+}
+function micState(state, label) {
+  const b = $("#mic-btn"); b.dataset.state = state || "";
+  b.title = { rec: "Detener y transcribir (Esc cancela)", busy: "Transcribiendo…" }[state] || "Dictar (Ctrl+Mayús+Espacio) · clic derecho: configurar";
+  let t = $("#mic-time");
+  if (state === "rec") { if (!t) { t = h("span", { id: "mic-time", class: "mic-time" }); b.before(t); } t.textContent = label || "0:00"; }
+  else if (state === "busy") { if (!t) { t = h("span", { id: "mic-time", class: "mic-time" }); b.before(t); } t.textContent = "Transcribiendo…"; }
+  else t?.remove();
+}
+function encodeWav(chunks, rate) {
+  const len = chunks.reduce((n, c) => n + c.length, 0), target = 16000, ratio = rate / target;
+  const out = new Int16Array(Math.floor(len / ratio));
+  const all = new Float32Array(len); let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
+  for (let i = 0; i < out.length; i++) {          // promedio de cada tramo: submuestreo sin aliasing grave
+    const s = Math.floor(i * ratio), e = Math.min(len, Math.floor((i + 1) * ratio)); let acc = 0;
+    for (let j = s; j < e; j++) acc += all[j];
+    const v = Math.max(-1, Math.min(1, acc / Math.max(1, e - s))); out[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+  }
+  const buf = new ArrayBuffer(44 + out.length * 2), dv = new DataView(buf);
+  const str = (p, s) => [...s].forEach((ch, i) => dv.setUint8(p + i, ch.charCodeAt(0)));
+  str(0, "RIFF"); dv.setUint32(4, 36 + out.length * 2, true); str(8, "WAVEfmt "); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, target, true); dv.setUint32(28, target * 2, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); str(36, "data"); dv.setUint32(40, out.length * 2, true);
+  new Int16Array(buf, 44).set(out);
+  return new Blob([buf], { type: "audio/wav" });
+}
+async function startRecording() {
+  if (!navigator.mediaDevices?.getUserMedia) { toast("El micrófono sólo funciona en este mismo equipo o con https.", 6000); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) { toast("No hay acceso al micrófono: " + (e.name === "NotAllowedError" ? "permiso denegado" : e.message), 6000); return; }
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const src = ac.createMediaStreamSource(stream), node = ac.createScriptProcessor(4096, 1, 1), chunks = [];
+  node.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  src.connect(node); node.connect(ac.destination);
+  const t0 = Date.now();
+  VOICE.rec = { stream, ac, node, src, chunks, rate: ac.sampleRate };
+  micState("rec");
+  VOICE.timer = setInterval(() => {
+    const s = Math.floor((Date.now() - t0) / 1000);
+    micState("rec", `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`);
+    if (s >= 300) stopRecording(true);           // tope de 5 minutos
+  }, 500);
+}
+async function stopRecording(send) {
+  const r = VOICE.rec; if (!r) return;
+  VOICE.rec = null; clearInterval(VOICE.timer);
+  r.node.disconnect(); r.src.disconnect(); r.stream.getTracks().forEach((t) => t.stop()); r.ac.close();
+  if (!send) { micState(""); return; }
+  micState("busy");
+  try {
+    const res = await fetch("/api/voice/transcribe", { method: "POST", headers: { "Content-Type": "audio/wav" }, body: encodeWav(r.chunks, r.rate) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.detail || res.statusText);
+    insertDictation(j.text);
+  } catch (e) { toast(e.message, 7000); }
+  finally { micState(""); }
+}
+function browserDictation() {
+  const r = new SR(); r.lang = navigator.language || "es-ES"; r.interimResults = false;
+  VOICE.sr = r; micState("rec", "Escuchando…");
+  r.onresult = (e) => insertDictation([...e.results].map((x) => x[0].transcript).join(" "));
+  r.onerror = (e) => {
+    if (e.error === "no-speech" || e.error === "aborted") return toast("No se oyó nada");
+    voiceSetupDialog();          // p. ej. la ventana de escritorio no trae reconocimiento: se ofrecen las otras opciones
+  };
+  r.onend = () => { VOICE.sr = null; micState(""); };
+  r.start();
+}
+async function toggleDictation() {
+  if (VOICE.rec) return stopRecording(true);
+  if (VOICE.sr) return VOICE.sr.stop();
+  if ($("#mic-btn").dataset.state === "busy") return;
+  let st; try { st = await api("/api/voice"); } catch { st = { use: null }; }
+  if (st.use === "local" || st.use === "cloud") return startRecording();
+  if (SR && (st.use === "browser" || st.engine === "auto")) return browserDictation();
+  voiceSetupDialog(st);
+}
+async function voiceSetupDialog(st) {
+  st = st || await api("/api/voice");
+  const body = h("div", { class: "voice-setup" });
+  const dlg = h("dialog", { class: "export-dialog" }, h("h3", {}, "Dictado por voz"), body,
+    h("div", { class: "row end" }, h("button", { class: "ghost", onclick: () => dlg.close() }, "Cerrar")));
+  dlg.addEventListener("close", () => dlg.remove());
+  const status = st.use === "local" ? `Listo: se transcribe en este equipo con ${st.model}.`
+    : st.use === "cloud" ? `Se transcribe con ${st.cloud} (el audio sale del equipo). Descarga un modelo para hacerlo en local.`
+    : "Aún no está configurado.";
+  body.append(h("p", {}, status));
+  if (st.binary) {
+    body.append(h("p", { class: "muted" }, "Modelo de voz para usar en local (privado, sin Internet):"));
+    for (const [name, desc] of Object.entries(st.models)) {
+      const btn = h("button", { class: "export-opt", onclick: async () => {
+        btn.disabled = true;
+        try {
+          const d = await api("/api/voice/setup", { method: "POST", body: { model: name } });
+          const tick = setInterval(async () => {
+            const all = await api("/api/hub/downloads"), x = all.find((y) => y.id === d.id);
+            if (!x) return;
+            btn.querySelector("small").textContent = x.status === "downloading" ? `Descargando… ${x.total ? Math.round(100 * x.done / x.total) : 0} %` : x.status === "done" ? "✔ Listo" : x.status === "error" ? "✕ " + x.error : "Preparando…";
+            if (["done", "error", "cancelled"].includes(x.status)) { clearInterval(tick); btn.disabled = false; if (x.status === "done") toast("Dictado listo: pulsa el micrófono y habla"); }
+          }, 800);
+        } catch (e) { toast(e.message, 6000); btn.disabled = false; }
+      } }, h("b", {}, name.replace(/^ggml-|\.bin$/g, "") + (name === st.model ? " ✔" : "")), h("small", {}, desc));
+      body.append(btn);
+    }
+  } else {
+    body.append(h("p", { class: "muted" }, "Para dictar en local hace falta whisper.cpp: viene incluido en la edición completa para Windows. " +
+      "En Linux instálalo (whisper-cli) o indica su ruta en Ajustes."),
+      h("p", { class: "muted" }, "También puedes usar Groq (tiene plan gratuito) u OpenAI: añade el proveedor y el dictado lo usará."),
+      h("button", { class: "primary", onclick: () => { dlg.close(); providerDialog("groq"); } }, "Añadir Groq"));
+  }
+  document.body.append(dlg); dlg.showModal();
+}
+$("#mic-btn").addEventListener("click", toggleDictation);
+$("#mic-btn").addEventListener("contextmenu", (e) => { e.preventDefault(); voiceSetupDialog(); });   // clic derecho: configurar
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "Space") { e.preventDefault(); toggleDictation(); }
+  else if (e.key === "Escape" && VOICE.rec) { e.preventDefault(); stopRecording(false); toast("Dictado cancelado"); }
+});
+
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !matchMedia("(pointer: coarse)").matches) {
     e.preventDefault();
@@ -1982,6 +2115,9 @@ const FIELDS = [
   ["web_provider", "Búsqueda web: proveedor", "webprov", "DuckDuckGo no necesita clave pero a veces bloquea. Brave y Tavily tienen plan gratuito y son más fiables."],
   ["web_api_key", "Búsqueda web: clave API", "password", "Sólo para Brave o Tavily."],
   ["hf_token", "Token de Hugging Face (opcional)", "password", "Sólo para modelos restringidos."],
+  ["voice_engine", "Dictado por voz", "voiceeng", "Automático: whisper.cpp en este equipo si tienes el modelo de voz; si no, Groq u OpenAI si los has añadido; si no, el del navegador. Pulsa el micrófono para configurarlo."],
+  ["voice_language", "Idioma del dictado", "text", "auto = detectarlo. O un código: es, en, ca, gl, eu, fr…"],
+  ["voice_binary", "Ruta de whisper-cli", "text", "Vacío = autodetectar (edición completa, ~/.local/share/g3g3ai/whisper o el PATH)."],
   ["github_token", "Token de GitHub (opcional)", "password", "Permite a la IA leer issues, PR y CI, y —pidiendo permiso— crear issues y pull requests. Crea uno en github.com/settings/tokens con acceso a los repos que quieras."],
   ["agent_temperature", "Modelos locales: temperatura con herramientas", "number", "Más baja = llamadas a herramientas más fiables. 0.2–0.4 suele ir bien."],
   ["local_thinking", "Modelos locales: dejarles «pensar»", "checkbox", "Qwen3 y similares razonan antes de responder: mejor en problemas difíciles pero mucho más lento. Desactivado = respuestas directas."],
@@ -2128,6 +2264,7 @@ async function loadSettings() {
     else if (type === "imgmode") inp = selectEl(key, v, [["auto", "Automático"], ["images", "/images/generations (OpenAI, Gemini…)"], ["chat", "Chat con imágenes (OpenRouter)"]]);
     else if (type === "imgsize") inp = selectEl(key, v, [["1024x1024", "Cuadrada 1024×1024"], ["1024x1536", "Vertical 1024×1536"], ["1536x1024", "Horizontal 1536×1024"], ["512x512", "Pequeña 512×512"]]);
     else if (type === "profile") inp = selectEl(key, v || "auto", [["auto", "Automático (según el modelo)"], ["small", "Modelo pequeño: pocas herramientas, un paso a la vez"], ["standard", "Mediano: método completo"], ["full", "Grande: método completo + trabajo en profundidad"]]);
+    else if (type === "voiceeng") inp = selectEl(key, v, [["auto", "Automático"], ["local", "Sólo en este equipo (whisper.cpp)"], ["cloud", "Sólo en la nube (Groq / OpenAI)"], ["browser", "El del navegador"]]);
     else if (type === "webprov") inp = selectEl(key, v, [["duckduckgo", "DuckDuckGo (sin clave)"], ["brave", "Brave Search (clave)"], ["tavily", "Tavily (clave)"]]);
     else if (type === "router") inp = selectEl(key, v, [["smart", "Inteligente (según la tarea)"], ["local_first", "Local primero"], ["api_first", "API primero"]]);
     else if (type === "model") {
@@ -2154,10 +2291,10 @@ async function loadSettings() {
 const ADVANCED_KEYS = new Set(("context_budget router_mode router_fast router_strong vision_fallback memory_api image_mode image_dir " +
   "sd_steps sd_cfg sd_max_side llama_server_path llama_extra_args llama_gpu_layers llama_threads models_dir agent_max_steps " +
   "agent_workdir ai_game_write blocked_paths command_sandbox agent_profile command_allow model_prices localhost_without_token " +
-  "port hf_token agent_temperature image_model web_api_key").split(" "));
+  "port hf_token agent_temperature image_model web_api_key voice_binary").split(" "));
 const SETTINGS_SECTION = {};
 for (const [sec, keys] of Object.entries({
-  local: "image_provider image_model image_mode image_size image_dir sd_steps sd_cfg sd_max_side models_dir llama_server_path llama_ctx llama_threads llama_gpu_layers llama_extra_args autoload_last_model hf_token agent_temperature local_thinking",
+  local: "image_provider image_model image_mode image_size image_dir sd_steps sd_cfg sd_max_side models_dir llama_server_path llama_ctx llama_threads llama_gpu_layers llama_extra_args autoload_last_model hf_token agent_temperature local_thinking voice_engine voice_language voice_binary",
   agent: "file_roots ai_write ai_commands agent_max_steps agent_workdir ai_game_write commands_trusted command_allow write_roots blocked_paths command_sandbox agent_profile github_token",
   mail: "mcp_servers mail_paths mcp_default_model", data: "monthly_budget_usd model_prices", access: "localhost_without_token port",
 })) for (const k of keys.split(" ")) SETTINGS_SECTION[k] = sec;
@@ -2456,7 +2593,7 @@ $("#save-settings").addEventListener("click", async () => {
   for (const [key, , type] of FIELDS) {
     const el = f.elements[key];
     if (type === "checkbox") out[key] = el.checked;
-    else if (["perm", "router", "model", "sandbox", "profile", "webprov", "imgprov", "imgmode", "imgsize"].includes(type)) out[key] = el.value;
+    else if (["perm", "router", "model", "sandbox", "profile", "webprov", "voiceeng", "imgprov", "imgmode", "imgsize"].includes(type)) out[key] = el.value;
     else if (type === "number") out[key] = el.value === "" ? 0 : Number(el.value);
     else if (type === "lines") out[key] = el.value.split("\n").map((s) => s.trim()).filter(Boolean);
     else out[key] = el.value;

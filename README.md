@@ -193,6 +193,20 @@ En el modo 🛠 Agente, la IA tiene dos herramientas:
 - **Gestionar modelos** abre una ventana para ocultar modelos, uno a uno o todos los de un proveedor (respetando los favoritos). Útil con OpenRouter, que lista cientos. Un modelo oculto sigue apareciendo si lo buscas.
 - Favoritos y ocultos se sincronizan entre tus equipos.
 
+### 🎙 Dictado por voz
+
+Pulsa el micrófono junto a enviar (o **Ctrl+Mayús+Espacio**), habla y vuelve a pulsarlo: el texto aparece en el cuadro, listo para revisar. **Esc** cancela.
+
+- **En local y privado** con whisper.cpp (incluido en la edición completa para Windows). La primera vez, clic derecho en el micrófono → descarga el modelo de voz (recomendado: 190 MB).
+- **En la nube** con Groq (plan gratuito) u OpenAI, si los tienes añadidos.
+- Si no hay ninguno, usa el reconocimiento del navegador (Chrome o Edge).
+
+Idioma y motor, en Ajustes → Modelos locales.
+
+### ⏳ Modelos locales: progreso de lectura
+
+Cuando un modelo local tiene que leer mucho (un documento largo, una conversación larga), verás «Leyendo el contexto… 43 % · ~12 s» en vez de una espera sin señales. La siguiente pregunta reutiliza lo ya leído.
+
 ### 📤 Exportar una conversación
 
 Botón de descarga arriba a la derecha, el icono de cada conversación en la barra lateral, o `/export`. Formatos: **Markdown**, **Word** y **PDF**, y opcionalmente con las herramientas que usó la IA.

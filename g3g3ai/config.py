@@ -116,6 +116,11 @@ DEFAULTS: dict = {
     # Búsqueda web
     "web_provider": "duckduckgo",  # duckduckgo | brave | tavily
     "web_api_key": "",
+    # Dictado por voz (ver voice.py)
+    "voice_engine": "auto",     # auto | local | cloud | browser
+    "voice_language": "auto",   # auto | es | en | …
+    "voice_model": "ggml-small-q5_1.bin",
+    "voice_binary": "",         # ruta a whisper-cli (vacío = autodetectar)
     # Permisos del modo agente: "off" | "ask" (pide confirmación) | "auto"
     "ai_write": "ask",
     "ai_commands": "ask",

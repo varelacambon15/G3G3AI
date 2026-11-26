@@ -5,6 +5,7 @@ Estructura (la crea packaging/fetch_extras.py al compilar):
       llama-cpu/      llama-server(.exe) y sus bibliotecas — sólo procesador
       llama-vulkan/   llama-server(.exe) — con gráfica (Vulkan)
       sd/             sd(.exe) — generación de imágenes (stable-diffusion.cpp)
+      whisper/        whisper-cli(.exe) — dictado por voz (whisper.cpp) — sólo Windows
       python/         Python portátil (python.exe / bin/python3) con pip y venv
       git/            Git portátil (cmd/git.exe) — sólo Windows
 Si no existe la carpeta, todo funciona como antes (se descarga o se usa lo instalado en el sistema).
@@ -58,6 +59,11 @@ def sd_binary() -> Path | None:
     return _first(d / "sd", "sd" + EXE, "sd-cli" + EXE) if d else None
 
 
+def whisper_binary() -> Path | None:
+    d = extras_dir()
+    return _first(d / "whisper", "whisper-cli" + EXE, "main" + EXE) if d else None
+
+
 def python_exe() -> Path | None:
     d = extras_dir()
     if not d:
@@ -97,5 +103,5 @@ def summary() -> dict:
     return {"dir": str(d) if d else None,
             "llama_cpu": bool(d and _first(d / "llama-cpu", "llama-server" + EXE)),
             "llama_vulkan": bool(d and _first(d / "llama-vulkan", "llama-server" + EXE)),
-            "sd": bool(sd_binary()), "python": bool(python_exe()),
+            "sd": bool(sd_binary()), "whisper": bool(whisper_binary()), "python": bool(python_exe()),
             "git": bool(d and WIN and _first(d / "git", "git.exe"))}

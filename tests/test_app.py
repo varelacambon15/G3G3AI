@@ -2425,3 +2425,30 @@ def test_fetch_extras_extracts_and_flattens(tmp_path):
         z.writestr("llama-server.exe", "x"); z.writestr("ggml.dll", "y")
     F.extract(zbuf.getvalue(), "llama.zip", tmp_path / "llama-cpu")
     assert sorted(p.name for p in (tmp_path / "llama-cpu").iterdir()) == ["ggml.dll", "llama-server.exe"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="el whisper-cli falso es un script de shell")
+def test_voice_dictation_local(env):
+    import io
+    import wave
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    from g3g3ai import voice
+    st = client.get("/api/voice", headers=h).json()
+    assert st["use"] is None and st["model_wanted"] == voice.DEFAULT_MODEL
+    assert client.post("/api/voice/transcribe", headers=h, content=b"x" * 2000).status_code == 409   # sin motor
+    fake = tmp / "whisper-cli"
+    fake.write_text(f"#!/bin/sh\nexec {sys.executable} {Path(__file__).parent / 'fake_whisper.py'} \"$@\"\n")
+    fake.chmod(0o755)
+    cfg.set("voice_binary", str(fake)); cfg.set("voice_language", "es")
+    assert client.get("/api/voice", headers=h).json()["use"] is None                 # falta el modelo de voz
+    assert "modelo de voz" in client.post("/api/voice/transcribe", headers=h, content=b"x" * 2000).json()["detail"]
+    m = voice.model_dir(cfg) / voice.DEFAULT_MODEL
+    m.parent.mkdir(parents=True); m.write_bytes(b"\0" * 1_100_000)
+    assert client.get("/api/voice", headers=h).json()["use"] == "local"
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(b"\0\0" * 24000)
+    r = client.post("/api/voice/transcribe", headers=h, content=buf.getvalue()).json()
+    assert r == {"text": "hola desde whisper (es, 1.5 s)", "engine": "local"}          # sin «[BLANK_AUDIO]»
+    assert client.post("/api/voice/setup", headers=h, json={"model": "otro.bin"}).status_code == 400

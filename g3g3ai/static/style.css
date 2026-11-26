@@ -576,3 +576,11 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .rp-text { font-size: 12.5px; color: var(--muted); margin-bottom: 5px; font-variant-numeric: tabular-nums; }
 .rp-bar { height: 4px; border-radius: 4px; background: var(--hover); overflow: hidden; }
 .rp-bar span { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .3s ease; }
+
+/* Dictado por voz */
+.mic-btn[data-state=rec] { color: #fff; background: #d0453a; animation: mic-pulse 1.4s ease-in-out infinite; }
+.mic-btn[data-state=busy] { opacity: .6; }
+@keyframes mic-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(208,69,58,.45); } 50% { box-shadow: 0 0 0 6px rgba(208,69,58,0); } }
+.mic-time { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 2px; align-self: center; }
+.voice-setup { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.voice-setup p { margin: 0; }

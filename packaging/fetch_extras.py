@@ -3,7 +3,7 @@
     python packaging/fetch_extras.py windows dist/G3G3AI-extras
     python packaging/fetch_extras.py linux   dist/G3G3AI-extras
 
-Incluye: llama.cpp (CPU y Vulkan), stable-diffusion.cpp, Python portátil (python-build-standalone) y, en Windows,
+Incluye: llama.cpp (CPU y Vulkan), stable-diffusion.cpp, whisper.cpp (Windows), Python portátil (python-build-standalone) y, en Windows,
 Git portátil (MinGit). Usa la última versión publicada de cada uno. GITHUB_TOKEN, si existe, evita el límite de la API.
 """
 from __future__ import annotations
@@ -25,6 +25,7 @@ SOURCES = {
         ("llama-cpu", "ggml-org/llama.cpp", r"bin-win-cpu-x64\.zip$"),
         ("llama-vulkan", "ggml-org/llama.cpp", r"bin-win-vulkan-x64\.zip$"),
         ("sd", "leejet/stable-diffusion.cpp", r"bin-win-avx2-x64\.zip$"),
+        ("whisper", "ggml-org/whisper.cpp", r"^whisper-bin-x64\.zip$"),
         ("python", "astral-sh/python-build-standalone", r"cpython-3\.12\.\d+\+\d+-x86_64-pc-windows-msvc-install_only\.tar\.gz$"),
         ("git", "git-for-windows/git", r"^MinGit-[\d.]+-64-bit\.zip$"),
     ],

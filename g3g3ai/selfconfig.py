@@ -41,12 +41,15 @@ SETTINGS: dict[str, tuple[str, bool]] = {
     "command_sandbox": ("Aislamiento de comandos en Linux: auto | off", True),
     "mail_enabled": ("La IA puede buscar en el correo (sí/no)", True),
     "mail_paths": ("Rutas extra de correo (lista)", True),
+    "voice_engine": ("Dictado por voz: auto | local | cloud | browser", False),
+    "voice_language": ("Idioma del dictado: auto o código (es, en…)", False),
     "mcp_servers": ("Servidores MCP: líneas «nombre = comando args»", True),
 }
 CHOICES = {
     "router_mode": {"smart", "local_first", "api_first"}, "web_provider": {"duckduckgo", "brave", "tavily"},
     "agent_profile": {"auto", "small", "standard", "full"}, "ai_write": {"off", "ask", "auto"},
     "ai_commands": {"off", "ask", "auto"}, "command_sandbox": {"auto", "off"},
+    "voice_engine": {"auto", "local", "cloud", "browser"},
 }
 TRUE = {"true", "1", "si", "sí", "yes", "on", "activado", "activar"}
 FALSE = {"false", "0", "no", "off", "desactivado", "desactivar"}

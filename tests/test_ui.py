@@ -61,13 +61,13 @@ def live(tmp_path, monkeypatch):
     t.join(timeout=10)
 
 
-def launch(p):
+def launch(p, **kw):
     try:
-        return p.chromium.launch()
+        return p.chromium.launch(**kw)
     except Exception:  # noqa: BLE001  (sin el navegador de esta versión de Playwright)
         exe = os.environ.get("G3G3AI_CHROMIUM") or "/opt/pw-browsers/chromium"
         if os.path.exists(exe):
-            return p.chromium.launch(executable_path=exe)
+            return p.chromium.launch(executable_path=exe, **kw)
         pytest.skip("No hay navegador de Playwright instalado")
 
 
@@ -248,3 +248,32 @@ def test_team_view(live):
         assert page.locator(".tnode.mem").count() == 1
         browser.close()
     assert errors == [], errors
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="el whisper-cli falso es un script de shell")
+def test_voice_dictation_with_fake_microphone(live, tmp_path):
+    url, cfg = live
+    from g3g3ai import voice
+    fake = tmp_path / "whisper-cli"
+    fake.write_text(f"#!/bin/sh\nexec {sys.executable} {Path(__file__).parent / 'fake_whisper.py'} \"$@\"\n")
+    fake.chmod(0o755)
+    cfg.set("voice_binary", str(fake))
+    m = voice.model_dir(cfg) / voice.DEFAULT_MODEL
+    m.parent.mkdir(parents=True, exist_ok=True); m.write_bytes(b"\0" * 1_100_000)
+    with playwright_sync.sync_playwright() as p:
+        browser = launch(p, args=["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"])
+        page = browser.new_context(viewport={"width": 1280, "height": 800}).new_page()
+        page.goto(url)
+        page.wait_for_selector("#model-select option", state="attached")
+        page.fill("#input", "Texto previo")
+        page.click("#mic-btn")
+        page.wait_for_selector("#mic-btn[data-state=rec]")
+        time.sleep(1.2)
+        page.click("#mic-btn")                                   # detener → WAV 16 kHz → whisper (falso)
+        page.wait_for_function("document.querySelector('#input').value.includes('hola desde whisper')", timeout=10000)
+        assert page.input_value("#input").startswith("Texto previo hola desde whisper (auto, ")
+        assert page.get_attribute("#mic-btn", "data-state") == ""
+        page.click("#mic-btn", button="right")                   # clic derecho: configuración
+        page.wait_for_selector("dialog >> text=Dictado por voz")
+        assert page.is_visible("text=Listo: se transcribe en este equipo")
+        browser.close()

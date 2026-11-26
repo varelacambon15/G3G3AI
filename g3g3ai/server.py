@@ -1499,6 +1499,35 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         except httpx.HTTPError as e:
             raise HTTPException(502, f"Error de Hugging Face: {e}") from e
 
+    # --- Dictado por voz ----------------------------------------------------------------
+    @app.get("/api/voice")
+    async def voice_status():
+        from . import voice
+        return await asyncio.to_thread(voice.status, cfg)
+
+    @app.post("/api/voice/setup")
+    async def voice_setup(body: dict | None = None):
+        """Descarga el modelo de voz elegido (o el recomendado) con el gestor de descargas de modelos."""
+        from . import voice
+        name = (body or {}).get("model") or cfg["voice_model"] or voice.DEFAULT_MODEL
+        if name not in voice.MODELS:
+            raise HTTPException(400, "Modelo de voz desconocido")
+        cfg.set("voice_model", name)
+        return hub.start(voice.WHISPER_REPO, [name])
+
+    @app.post("/api/voice/transcribe")
+    async def voice_transcribe(request: Request):
+        from . import voice
+        wav = await request.body()
+        if len(wav) > 50_000_000:
+            raise HTTPException(413, "Grabación demasiado larga")
+        try:
+            return await voice.transcribe(cfg, wav)
+        except voice.VoiceError as e:
+            raise HTTPException(409, str(e)) from e
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"No se pudo contactar con el servicio de transcripción: {e}") from e
+
     @app.post("/api/hub/download")
     async def hub_download(body: dict):
         return hub.start(body["repo"], body["files"])
