@@ -220,6 +220,19 @@ ALL_SPECS = {
     "write_file": ("Crea un archivo de texto nuevo o lo reescribe entero (sólo en las carpetas modificables). "
                    "Si el archivo ya existe, léelo antes con read_file; para cambios parciales usa edit_file.",
                    _schema({"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"])),
+    "scheduled_tasks": ("Tareas programadas de G3G3AI: a la hora indicada, la IA hace sola un encargo (p.ej. «cada lunes a "
+                        "las 8 busca en el correo las incidencias de México y hazme un Excel») y deja el resultado en una "
+                        "conversación. action=list (ver las que hay), create o delete (con id). Para create: name, prompt "
+                        "(el encargo completo y autosuficiente), y cuándo: time «HH:MM» con days (p.ej. [\"lunes\", "
+                        "\"viernes\"] o \"laborables\"; vacío = todos los días), o every_minutes, o at «AAAA-MM-DD HH:MM» "
+                        "para una sola vez; can_edit=true si debe poder crear o modificar archivos. Se ejecuta sin "
+                        "supervisión: lo que necesite permiso se deniega. También se gestionan en la sección «Tareas».",
+                        _schema({"action": {"type": "string", "enum": ["list", "create", "delete"]},
+                                 "name": {"type": "string"}, "prompt": {"type": "string"},
+                                 "time": {"type": "string", "description": "HH:MM"},
+                                 "days": {"description": "días de la semana o «laborables» / «fin de semana»"},
+                                 "every_minutes": {"type": "integer"}, "at": {"type": "string"},
+                                 "can_edit": {"type": "boolean"}, "id": {"type": "string"}}, ["action"])),
     "attach_file": ("Adjunta al chat un archivo que YA existe (p.ej. el PDF original de un correo que guardaste, o un Excel "
                     "de sus carpetas) para que el usuario lo abra o lo descargue con un clic. Úsalo cuando pida «pásamelo», "
                     "«adjúntamelo», «mándamelo por aquí» o «dame el archivo»; no regeneres el documento ni des sólo la ruta.",
@@ -358,6 +371,7 @@ class ToolContext:
         self.diagnostics: Callable[[], Awaitable[dict]] | None = None  # «Comprobar todo» (lo fija el servidor)
         self.subagent: Callable[..., Awaitable[str]] | None = None  # lo fija el servidor: (tarea, write=False)
         self.mail = None             # MailIndex (búsqueda en el correo), lo fija el servidor si está activada
+        self.tasks = None            # TaskStore (tareas programadas), lo fija el servidor
         self.cloud = False           # el modelo elegido es de una API en la nube
         self.mcp = None              # MCPManager (herramientas externas), lo fija el servidor
         self.unattended = False      # tarea en segundo plano: nadie puede aprobar nada, todo lo que pida permiso se deniega
@@ -397,6 +411,8 @@ class ToolContext:
         ({"system_info"}, r"equipo|hardware|\bram\b|memoria|procesador|\bcpu\b|gr[aá]fica|\bgpu\b|ordenador|port[aá]til|\bpc\b|"
                           r"modelo local|disco"),
         ({"delegate", "delegate_edit", "apply_patch"}, r"ayudante|deleg|en paralelo|reparte|subagente|propuesta"),
+        ({"scheduled_tasks"}, r"tarea|program|rutina|autom[aá]tic|cada (?:d[ií]a|ma[ñn]ana|tarde|noche|semana|mes|hora|lunes|"
+                              r"martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|\d)|todos los|a las \d|recordatorio"),
         ({"attach_file"}, r"p[aá]sa(?:me|lo|la)|adj[uú]nt|m[aá]nda|env[ií]a|dame|archivo|fichero|descarg|abr[ei]"),
         ({"create_document"}, r"excel|word|\bpdf|docx|xlsx|pptx|power ?point|documento|informe|hoja de c[aá]lculo|"
                               r"presentaci[oó]n|diapositiva|tabla|gr[aá]fico|exporta|descarg|archivo|fichero"),
@@ -538,6 +554,8 @@ class ToolContext:
             out.append("request_folder_access")
         if self.team and self.team.get("members") and self.team_runner and not self.auto_all:
             out.append("team_delegate")
+        if self.tasks is not None and not plan and not self.unattended and not self.auto_all:
+            out.append("scheduled_tasks")
         if not self.auto_all:
             out.append("app_settings")
             if self.diagnostics:
@@ -676,6 +694,34 @@ class ToolContext:
         return p
 
     # Comprobaciones previas a la aprobación ---------------------------------------------
+    DAY_NAMES = {"lunes": 0, "martes": 1, "miercoles": 2, "miércoles": 2, "jueves": 3, "viernes": 4, "sabado": 5,
+                 "sábado": 5, "domingo": 6, "lun": 0, "mar": 1, "mie": 2, "mié": 2, "jue": 3, "vie": 4, "sab": 5, "sáb": 5, "dom": 6}
+
+    def _task_schedule(self, a: dict) -> dict:
+        """Programación a partir de lo que pide el modelo: time+days, every_minutes o at."""
+        if a.get("every_minutes"):
+            return {"kind": "interval", "minutes": a.get("every_minutes")}
+        if a.get("at"):
+            try:
+                at = time.mktime(time.strptime(str(a["at"]).strip()[:16], "%Y-%m-%d %H:%M"))
+            except ValueError:
+                from .tasks import TaskError
+                raise TaskError("«at» debe ser AAAA-MM-DD HH:MM")
+            return {"kind": "once", "at": at}
+        days = a.get("days") or []
+        if isinstance(days, str):
+            low = days.lower()
+            days = ([0, 1, 2, 3, 4] if "laborable" in low or "lunes a viernes" in low
+                    else [5, 6] if "fin de semana" in low or "fines de semana" in low
+                    else [x.strip() for x in re.split(r"[,y ]+", low) if x.strip()])
+        out = []
+        for d in days:
+            if isinstance(d, int) or str(d).isdigit():
+                out.append(int(d))
+            elif str(d).strip().lower() in self.DAY_NAMES:
+                out.append(self.DAY_NAMES[str(d).strip().lower()])
+        return {"kind": "daily", "time": str(a.get("time") or ""), "days": out}
+
     DOCS_DIR = "G3G3AI-documentos"
 
     def _doc_path(self, path) -> Path:
@@ -726,6 +772,20 @@ class ToolContext:
                     return "Error: " + ("; ".join(errors) if errors else "esos ajustes ya tienen ese valor."), [], []
                 lines = ["cambia ajustes: " + " · ".join(diffs)] + [f"se ignora: {e}" for e in errors]
                 return (None, lines, []) if security else (None, [], lines)
+            if name == "scheduled_tasks":
+                act = args.get("action")
+                if act == "create":
+                    from . import tasks as TK
+                    sch = TK.validate_schedule(self._task_schedule(args))
+                    what = (f"programa la tarea «{args.get('name') or 'sin nombre'}» ({TK.describe(sch)}"
+                            + (", podrá editar archivos" if args.get("can_edit") else ", sólo lectura") + f"): {args.get('prompt', '')[:300]}")
+                    return None, [what], []
+                if act == "delete":
+                    t = self.tasks.get(str(args.get("id") or ""))
+                    if not t:
+                        return "Error: no existe esa tarea; usa action=list para ver los id.", [], []
+                    return None, [f"borra la tarea programada «{t['name']}»"], []
+                return None, [], []
             if name == "mail_save_attachments":
                 self.files.resolve(args.get("folder"), "ai_write")   # lanza FileAccessError con el motivo si no se puede
                 ids = args.get("ids") or []
@@ -782,6 +842,10 @@ class ToolContext:
                 return None, reasons, soft
         except FileAccessError as e:
             return f"Error: {e}", [], []
+        except Exception as e:  # noqa: BLE001  (p.ej. TaskError: programación no válida → se explica al modelo)
+            if type(e).__name__ == "TaskError":
+                return f"Error: {e}", [], []
+            raise
         return None, [], []
 
     # Estado de lectura y vista previa ------------------------------------------------------
@@ -1000,6 +1064,28 @@ class ToolContext:
             self._mark_read(p)
             self.files_out.append(str(p))
             return f"Guardado {p} ({n} bytes)"
+        if name == "scheduled_tasks":
+            from . import tasks as TK
+            act = a.get("action")
+            if act == "list":
+                ts = self.tasks.list()
+                if not ts:
+                    return "No hay tareas programadas."
+                return "\n".join(f"- {t['id']} · {t['name']} · {TK.describe(t['schedule'])} · "
+                                 f"{'activa' if t['enabled'] else 'pausada'}" for t in ts)
+            if act == "create":
+                try:
+                    t = self.tasks.create(str(a.get("name") or "Tarea"), str(a.get("prompt") or ""), self._task_schedule(a),
+                                          None, None, None, "edits" if a.get("can_edit") else "plan")
+                except TK.TaskError as e:
+                    return f"Error: {e}"
+                when = time.strftime("%d/%m/%Y %H:%M", time.localtime(t["next_run"])) if t.get("next_run") else "—"
+                return (f"Tarea creada: «{t['name']}» ({TK.describe(t['schedule'])}); próxima ejecución {when}. "
+                        "El usuario la ve y puede cambiarla en la sección Tareas.")
+            if act == "delete":
+                self.tasks.delete(str(a.get("id")))
+                return "Tarea borrada."
+            return "Error: action debe ser list, create o delete"
         if name == "attach_file":
             paths = a.get("paths") or ([a["path"]] if a.get("path") else [])
             done, bad = [], []

@@ -50,7 +50,18 @@ def validate_schedule(s) -> dict:
         m = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", str(s.get("time", "")))
         if not m:
             raise TaskError("La hora debe ser HH:MM")
-        return {"kind": "daily", "time": f"{int(m.group(1)):02d}:{m.group(2)}"}
+        out = {"kind": "daily", "time": f"{int(m.group(1)):02d}:{m.group(2)}"}
+        days = s.get("days")
+        if days:                                   # días de la semana: 0 = lunes … 6 = domingo
+            try:
+                d = sorted({int(x) for x in days})
+            except (TypeError, ValueError):
+                raise TaskError("Días de la semana no válidos")
+            if not d or any(x < 0 or x > 6 for x in d):
+                raise TaskError("Días de la semana no válidos")
+            if len(d) < 7:
+                out["days"] = d
+        return out
     if kind == "once":
         try:
             at = float(s.get("at"))
@@ -68,17 +79,25 @@ def next_run(s: dict, after: float) -> float | None:
         return s["at"] if s["at"] > after else None
     hh, mm = (int(x) for x in s["time"].split(":"))
     t = time.localtime(after)
-    cand = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, hh, mm, 0, 0, 0, -1))
-    if cand <= after:
-        cand = time.mktime((t.tm_year, t.tm_mon, t.tm_mday + 1, hh, mm, 0, 0, 0, -1))
-    return cand
+    days = set(s.get("days") or range(7))
+    for add in range(0, 8):
+        cand = time.mktime((t.tm_year, t.tm_mon, t.tm_mday + add, hh, mm, 0, 0, 0, -1))
+        if cand > after and time.localtime(cand).tm_wday in days:
+            return cand
+    return None
 
 
 def describe(s: dict) -> str:
     if s["kind"] == "interval":
         return f"cada {s['minutes']} min"
     if s["kind"] == "daily":
-        return f"cada día a las {s['time']}"
+        d = s.get("days")
+        if not d:
+            return f"cada día a las {s['time']}"
+        names = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        which = "de lunes a viernes" if d == [0, 1, 2, 3, 4] else "los fines de semana" if d == [5, 6] else \
+            "los " + ", ".join(names[x] for x in d)
+        return f"{which} a las {s['time']}"
     return "una vez, " + time.strftime("%d/%m/%Y %H:%M", time.localtime(s["at"]))
 
 

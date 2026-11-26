@@ -250,6 +250,12 @@ def test_ui_end_to_end(live):
         page.click("#task-form button.primary")
         page.wait_for_selector("#task-list >> text=Prueba UI", timeout=5000)
         page.wait_for_selector("#task-list >> text=cada 30 min", timeout=5000)
+        page.fill("#task-form [name=name]", "Laborables")
+        page.fill("#task-form [name=prompt]", "Revisa el correo")
+        page.select_option("#task-form [name=kind]", "daily")
+        page.click(".day-chip[title=sábado]"); page.click(".day-chip[title=domingo]")
+        page.click("#task-form button.primary")
+        page.wait_for_selector("#task-list >> text=de lunes a viernes", timeout=5000)
 
         # 5) La app sigue viva
         page.click("[data-view=chat]")

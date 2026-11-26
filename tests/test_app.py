@@ -2794,3 +2794,24 @@ def test_attach_file_and_open_from_this_pc(env):
         assert client.post("/api/files/open", headers=h, json={"path": "/etc/passwd"}).status_code in (400, 403)
     finally:
         subprocess.Popen = orig
+
+
+def test_ai_can_schedule_tasks_with_weekdays(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    ctx = ToolContext(Files(cfg), cfg, agent=False)
+    ctx.tasks = client.app.state.task_store
+    assert "scheduled_tasks" in ctx.names()
+    args = {"action": "create", "name": "Incidencias MX", "prompt": "Busca en el correo las incidencias y haz un Excel",
+            "time": "08:00", "days": "laborables"}
+    err, strong, _ = ctx.precheck("scheduled_tasks", args)
+    assert err is None and "de lunes a viernes a las 08:00" in strong[0]          # siempre pide permiso
+    assert ctx.precheck("scheduled_tasks", {**args, "time": "25:00"})[0].startswith("Error")
+    out = asyncio.run(ctx.run("scheduled_tasks", args))
+    assert "Tarea creada" in out
+    out = asyncio.run(ctx.run("scheduled_tasks", {"action": "list"}))
+    assert "Incidencias MX" in out and "de lunes a viernes" in out
+    out = asyncio.run(ctx.run("scheduled_tasks", {"action": "create", "name": "x", "prompt": "y", "time": "09:30", "days": ["lunes", "jueves"]}))
+    assert "los lunes, jueves a las 09:30" in out

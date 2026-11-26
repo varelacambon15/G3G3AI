@@ -708,3 +708,7 @@ details.fold-card[open] > summary { margin-bottom: 12px; }
 .file-menu .ico { width: 16px; height: 16px; color: var(--muted); }
 .path-link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
 code.path-link:hover { background: var(--hover); }
+.task-days { display: inline-flex; gap: 4px; margin-left: 10px; flex-wrap: wrap; }
+.day-chip { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 50%; cursor: pointer; font-size: 13px; user-select: none; }
+.day-chip input { display: none; }
+.day-chip:has(input:checked) { background: var(--accent); border-color: var(--accent); color: #fff; }

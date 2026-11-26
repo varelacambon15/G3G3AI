@@ -642,12 +642,21 @@ function taskWhenInput() {
   const inp = h("input", { name: "when", type: kind === "daily" ? "time" : kind === "once" ? "datetime-local" : "number", required: true });
   if (kind === "daily") inp.value = "03:00"; if (kind === "interval") { inp.value = 60; inp.min = 5; }
   w.append(label + " ", inp);
+  if (kind === "daily") {   // días de la semana (todos marcados = cada día)
+    const days = h("span", { class: "task-days" }, ["L", "M", "X", "J", "V", "S", "D"].map((d, i) =>
+      h("label", { class: "day-chip", title: ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"][i] },
+        h("input", { type: "checkbox", name: "day", value: i, checked: true }), d)));
+    w.append(days);
+  }
 }
+taskWhenInput();
 $("#task-form").elements.kind.addEventListener("change", taskWhenInput);
 $("#task-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target, kind = f.elements.kind.value, when = f.elements.when.value;
-  const schedule = kind === "daily" ? { kind, time: when } : kind === "interval" ? { kind, minutes: +when } : { kind, at: new Date(when).getTime() / 1000 };
+  const days = [...f.querySelectorAll("input[name=day]:checked")].map((x) => +x.value);
+  if (kind === "daily" && !days.length) { toast("Marca al menos un día"); return; }
+  const schedule = kind === "daily" ? { kind, time: when, days: days.length === 7 ? undefined : days } : kind === "interval" ? { kind, minutes: +when } : { kind, at: new Date(when).getTime() / 1000 };
   const { provider, model } = currentModel();
   try {
     await api("/api/tasks", { method: "POST", body: { name: f.elements.name.value, prompt: f.elements.prompt.value, schedule,

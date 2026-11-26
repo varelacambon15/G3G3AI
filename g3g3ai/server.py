@@ -108,6 +108,16 @@ ARTIFACT_NOTE = (
     "Si te piden una página web, una visualización, un gráfico o un diagrama, entrégalo en un único bloque de código "
     "completo y autocontenido (```html con CSS y JS dentro, ```svg o ```mermaid): el usuario lo ve funcionando en un panel "
     "al lado del chat. Para cambiarlo, vuelve a escribir el bloque entero.")
+APP_FEATURES = (
+    "## Qué ofrece G3G3AI (si te preguntan si algo existe o cómo se hace, contesta con esto; nunca digas que no existe "
+    "una función de esta lista)\n"
+    "- Tareas programadas: sección «Tareas» (hora, días de la semana, encargo); tú también puedes crearlas con scheduled_tasks.\n"
+    "- Permisos en el propio chat: el selector Manual / Semi-auto / Auto junto al cuadro de texto.\n"
+    "- Archivos en el chat: con attach_file adjuntas cualquier archivo existente (abrir / mostrar en la carpeta / descargar); "
+    "create_document crea Word, Excel, PowerPoint o PDF.\n"
+    "- Proyectos (instrucciones y documentos compartidos), Code, Equipo de IAs, Modelos locales, búsqueda en las "
+    "conversaciones, exportar una conversación (Markdown/Word/PDF), dictado por voz, Ctrl+K, copia cifrada en OneDrive/Google Drive.\n"
+    "- Los PDF escaneados y las imágenes se leen con OCR en el propio equipo.")
 NO_AGENT_NOTE = (
     "## Herramientas del equipo desactivadas\n"
     "El modo Agente está desactivado en este chat: no puedes leer archivos, ejecutar comandos ni ver el hardware del "
@@ -266,6 +276,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     app = FastAPI(title="G3G3AI", version=__version__, lifespan=lifespan)
     app.state.mcp = mcp_mgr
     app.state.cfg, app.state.db, app.state.llama, app.state.hub = cfg, db, llama, hub
+    app.state.task_store = task_store
 
     # --- Autenticación --------------------------------------------------------------
     def authorized(request: Request) -> bool:
@@ -1161,7 +1172,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             mem = memory if (memory_for(chosen_pid) and cfg["memory_auto"]) else None
             img = image_gen if cfg["image_provider"] else None
             docs = (cfg["ai_write"] or "off") != "off" and bool(files.write_roots)   # crear Word/Excel/PDF siempre
-            if not (agent or use_web or mem or img or docs):
+            if not (agent or use_web or mem or img or docs or not unattended):
                 return None
             delegate = local_complete if (agent and chosen_pid != LOCAL_PROVIDER and llama.ready) else None
             tc = ToolContext(files, cfg, delegate, agent=agent, web=use_web,
@@ -1170,6 +1181,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                              workdir=conv.get("workdir") or None, checkpoint=turn_mid or last_user_id)
             tc.mcp = mcp_mgr if (agent and mcp_mgr.map) else None
             tc.mail = mail_index if cfg["mail_enabled"] else None
+            tc.tasks = task_store
             tc.cloud = chosen_pid != LOCAL_PROVIDER
             tc.compact_specs = chosen_pid == LOCAL_PROVIDER
             recent = [m["content"] or "" for m in (conv.get("messages") or []) if m["role"] == "user"][-3:]
@@ -1312,7 +1324,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                         n_ctx = int((llama.params or {}).get("ctx") or 8192)
                         budget = int(n_ctx * 0.3 * 3) if cpid == LOCAL_PROVIDER else 80_000
                         proj_text = await asyncio.to_thread(projects.context, project, files, budget)
-                    system = "\n\n".join(x for x in (base_system, ARTIFACT_NOTE, proj_text, mem_text, ctx.system_hint() if ctx else "", no_agent) if x)
+                    system = "\n\n".join(x for x in (base_system, ARTIFACT_NOTE, APP_FEATURES, proj_text, mem_text, ctx.system_hint() if ctx else "", no_agent) if x)
                     try:
                         history = []
                         async for ev in builder.build(conv, cpid, cmodel, system, opts["max_tokens"] or 2048):
