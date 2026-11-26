@@ -206,6 +206,9 @@ Con un **token de GitHub** (Ajustes → «Token de GitHub», o la variable `GITH
 - **Git** con `run_command`: crea ramas, commits y `git push` (el push siempre pide confirmación; los push forzados avisan como peligrosos). Usa el remoto `origin` de la carpeta del proyecto.
 Flujo típico: «arregla el issue #12» → lee el issue, crea una rama, edita, ejecuta los tests, hace commit, te pide permiso para el push, abre el PR y comprueba el CI.
 
+### 🛠 Compilar en tu propio PC (sin GitHub Actions)
+Descarga el código (botón **Code → Download ZIP** en GitHub), descomprímelo y haz **doble clic en `packaging\compilar-windows.bat`**. El script instala Python si falta (con winget, solo para tu usuario), prepara un entorno aislado, compila `G3G3AI.exe` y monta la edición completa (`G3G3AI-windows-completo.zip`) en la carpeta `dist`, que se abre al terminar. Tarda unos minutos y necesita internet. Con `-SinCompleta` solo hace el `.exe` ligero.
+
 ### 📦 Edición completa (sin instalar nada más)
 Además del `G3G3AI.exe` ligero, cada compilación genera **`G3G3AI-windows-completo.zip`** (y `G3G3AI-linux-x64-completo.tar.gz`): el programa con una carpeta `G3G3AI-extras` al lado que incluye
 - **llama.cpp** en dos versiones (solo procesador y con gráfica/Vulkan): modelos locales sin descargar el motor;

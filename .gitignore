@@ -5,3 +5,7 @@ venv/
 .pytest_cache/
 *.gguf
 *.part
+
+.build-venv/
+dist/
+build/
