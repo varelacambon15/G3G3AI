@@ -2307,6 +2307,8 @@ def test_ai_diagnoses_problems_and_points_to_settings(env, monkeypatch):
     async def broken(*a, **k):
         raise web.WebError("bloqueado")
     monkeypatch.setattr(web, "search", broken)
+    from g3g3ai import sandbox
+    monkeypatch.setattr(sandbox, "available", lambda cfg: False)            # igual con o sin bubblewrap instalado
     cfg.set("ai_commands", "ask"); cfg.set("commands_trusted", False)
     ctx = _ctx(cfg)
     assert "diagnose" not in ctx.names()                                    # sin servidor no hay diagnóstico
