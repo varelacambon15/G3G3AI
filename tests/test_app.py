@@ -2498,3 +2498,20 @@ def test_fetch_extras_retries_transient_errors(monkeypatch):
         urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)))
     with pytest.raises(urllib.error.HTTPError):                       # un 404 no se reintenta
         F._get("https://example.com/x")
+
+
+def test_search_inside_conversations(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    db = client.app.state.db
+    a = db.create_conversation(title="Nóminas de marzo")
+    db.add_message(a["id"], "user", "Compara las nóminas")
+    target = db.add_message(a["id"], "assistant", "Faltan los recibos de JOSÉ García y de Ana en la carpeta.")
+    b = db.create_conversation(title="Receta")
+    db.add_message(b["id"], "user", "una receta de tortilla")
+    r = client.get("/api/search", headers=h, params={"q": "jose garcia"}).json()        # sin tildes ni mayúsculas
+    assert [x["id"] for x in r] == [a["id"]] and r[0]["message_id"] == target
+    assert "JOSÉ García" in r[0]["snippet"]
+    assert [x["id"] for x in client.get("/api/search", headers=h, params={"q": "nominas"}).json()] == [a["id"]]  # título
+    assert client.get("/api/search", headers=h, params={"q": "tortilla jose"}).json() == []   # todas las palabras
+    assert client.get("/api/search", headers=h, params={"q": "  "}).json() == []

@@ -584,3 +584,12 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .mic-time { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 2px; align-self: center; }
 .voice-setup { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .voice-setup p { margin: 0; }
+
+/* Búsqueda dentro de las conversaciones */
+.conv-item.search-hit { flex-wrap: wrap; row-gap: 2px; height: auto; padding-top: 7px; padding-bottom: 7px; }
+.conv-item.search-hit .t { flex: 1 1 100%; }
+.conv-item .snip { flex: 1 1 100%; font-size: 12px; color: var(--muted); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; }
+.conv-item .hits { font-size: 11px; color: var(--muted); opacity: .8; }
+mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+.msg.flash { animation: msg-flash 2.4s ease-out; }
+@keyframes msg-flash { 0%, 30% { background: color-mix(in srgb, var(--accent) 12%, transparent); } 100% { background: transparent; } }

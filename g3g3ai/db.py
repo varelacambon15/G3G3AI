@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import unicodedata
 import time
 import uuid
 from pathlib import Path
@@ -37,11 +38,29 @@ CREATE TABLE IF NOT EXISTS tombstones (
 """
 
 
+def norm(s: str | None) -> str:
+    s = unicodedata.normalize("NFD", (s or "").lower())
+    return "".join(c for c in s if unicodedata.category(c) != "Mn")
+
+
+def snippet(text: str, words: list[str], width: int = 160) -> str:
+    """Fragmento alrededor de la primera coincidencia (la posición se calcula sobre el texto normalizado,
+    que tiene la misma longitud que el original salvo en casos raros de Unicode)."""
+    n = norm(text)
+    pos = min((n.find(w) for w in words if n.find(w) >= 0), default=0)
+    if len(n) != len(text):
+        pos = 0
+    start = max(0, pos - width // 3)
+    frag = " ".join(text[start:start + width].split())
+    return ("…" if start else "") + frag + ("…" if start + width < len(text) else "")
+
+
 class DB:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self.conn.create_function("norm", 1, norm, deterministic=True)   # búsqueda sin tildes ni mayúsculas
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
@@ -69,6 +88,29 @@ class DB:
             "SELECT id, title, provider, model, updated FROM conversations ORDER BY updated DESC"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def search(self, query: str, limit: int = 30) -> list[dict]:
+        """Conversaciones cuyo título o mensajes contienen todas las palabras (sin tildes ni mayúsculas)."""
+        words = [w for w in norm(query).split() if w][:8]
+        if not words:
+            return []
+        like = [f"%{w.replace('%', '').replace('_', '')}%" for w in words]
+        where = " AND ".join("norm(m.content) LIKE ?" for _ in words)
+        rows = self._q(
+            f"SELECT m.id, m.conv_id, m.role, m.content, c.title, c.updated FROM messages m "
+            f"JOIN conversations c ON c.id = m.conv_id WHERE m.role IN ('user','assistant') AND {where} "
+            f"ORDER BY c.updated DESC, m.id LIMIT 400", like).fetchall()
+        out: dict[str, dict] = {}
+        for r in rows:
+            o = out.setdefault(r["conv_id"], {"id": r["conv_id"], "title": r["title"], "updated": r["updated"],
+                                              "hits": 0, "message_id": r["id"], "role": r["role"],
+                                              "snippet": snippet(r["content"], words)})
+            o["hits"] += 1
+        twhere = " AND ".join("norm(title) LIKE ?" for _ in words)
+        for r in self._q(f"SELECT id, title, updated FROM conversations WHERE {twhere} ORDER BY updated DESC LIMIT 50", like):
+            out.setdefault(r["id"], {"id": r["id"], "title": r["title"], "updated": r["updated"], "hits": 0,
+                                     "message_id": None, "role": None, "snippet": ""})
+        return sorted(out.values(), key=lambda o: -o["updated"])[:limit]
 
     def create_conversation(self, title="Nueva conversación", provider=None, model=None, system=None) -> dict:
         cid = uuid.uuid4().hex[:12]

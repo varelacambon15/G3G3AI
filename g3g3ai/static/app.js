@@ -979,7 +979,50 @@ function dateGroup(ts) {
   return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 }
 let convCache = [];
-$("#conv-search").addEventListener("input", () => renderConvList());
+// Búsqueda: títulos al instante y, al dejar de escribir, también dentro de los mensajes (en el servidor)
+const CS = { ticket: 0, res: null, timer: null };
+$("#conv-search").addEventListener("input", () => {
+  const q = $("#conv-search").value.trim();
+  renderConvList(); clearTimeout(CS.timer);
+  if (q.length < 2) { CS.res = null; return; }
+  const t = ++CS.ticket;
+  CS.timer = setTimeout(async () => {
+    try { const items = await api("/api/search?" + qs({ q })); if (t === CS.ticket) { CS.res = { q, items }; renderConvList(); } } catch { /* */ }
+  }, 220);
+});
+$("#conv-search").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.target.value = ""; CS.res = null; renderConvList(); }
+  else if (e.key === "Enter") $("#conv-list .conv-item")?.click();
+});
+// Resalta las palabras buscadas (sin tener en cuenta tildes ni mayúsculas)
+function highlight(text, q) {
+  const words = norm(q).split(/\s+/).filter(Boolean), frag = document.createDocumentFragment();
+  if (!words.length || norm(text).length !== text.length) { frag.append(text); return frag; }
+  const n = norm(text), marks = new Array(text.length).fill(false);
+  for (const w of words) for (let i = n.indexOf(w); i >= 0; i = n.indexOf(w, i + 1)) marks.fill(true, i, i + w.length);
+  let i = 0;
+  while (i < text.length) {
+    let j = i; while (j < text.length && marks[j] === marks[i]) j++;
+    frag.append(marks[i] ? h("mark", {}, text.slice(i, j)) : text.slice(i, j)); i = j;
+  }
+  return frag;
+}
+function markIn(root, q) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  const words = norm(q).split(/\s+/).filter(Boolean);
+  for (const t of nodes) if (words.some((w) => norm(t.nodeValue).includes(w))) t.replaceWith(highlight(t.nodeValue, q));
+}
+function renderSearchResults(ul, q, items) {
+  if (!items.length) { ul.append(h("div", { class: "conv-group" }, "Sin resultados")); return; }
+  ul.append(h("div", { class: "conv-group" }, `${items.length} conversación${items.length > 1 ? "es" : ""}`));
+  for (const c of items) {
+    ul.append(h("div", { class: "conv-item search-hit" + (c.id === S.convId ? " active" : ""), onclick: () => { setView("chat"); openConversation(c.id, c.message_id, q); } },
+      h("span", { class: "t", title: c.title }, highlight(c.title, q)),
+      c.snippet ? h("span", { class: "snip" }, highlight(c.snippet, q)) : null,
+      c.hits > 1 ? h("span", { class: "hits" }, `${c.hits} mensajes`) : null));
+  }
+}
 async function loadConversations() {
   convCache = await api("/api/conversations");
   renderConvList();
@@ -1018,7 +1061,8 @@ function renderConvList() {
   const ul = $("#conv-list"), q = $("#conv-search").value.trim().toLowerCase();
   ul.innerHTML = "";
   let group = null;
-  const list = convCache.filter((c) => !q || c.title.toLowerCase().includes(q));
+  if (q && CS.res && CS.res.q.toLowerCase() === q) { renderSearchResults(ul, CS.res.q, CS.res.items); return; }
+  const list = convCache.filter((c) => !q || norm(c.title).includes(norm(q)));
   if (!list.length) ul.append(h("div", { class: "conv-group" }, q ? "Sin resultados" : "Aún no hay conversaciones"));
   for (const c of list) {
     const g = dateGroup(c.updated);
@@ -1041,7 +1085,7 @@ function renderConvList() {
     ul.append(li);
   }
 }
-async function openConversation(id) {
+async function openConversation(id, focusMsg, q) {
   S.conv = await api(`/api/conversations/${id}`);
   S.convId = id; S.system = undefined; store.set("conv", id);
   if (S.conv.provider) {
@@ -1050,6 +1094,11 @@ async function openConversation(id) {
   }
   S.workdir = undefined;
   renderMessages(); loadConversations(); refreshChanges(); refreshContext();
+  if (focusMsg) requestAnimationFrame(() => {      // desde la búsqueda: ir al mensaje y resaltarlo
+    const el = $(`#messages .msg[data-id="${focusMsg}"]`); if (!el) return;
+    el.scrollIntoView({ block: "center" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2400);
+    if (q) for (const b of el.querySelectorAll(".bubble, .md")) markIn(b, q);
+  });
   if (S.code) { S.workdir = S.conv.workdir || undefined; renderCodePanel(); }
   if (S.view === "chat" || S.view === "code") $("#top-title").textContent = S.conv.title;
   closeSide();

@@ -448,6 +448,10 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             raise HTTPException(404, "No existe")
         return c
 
+    @app.get("/api/search")
+    async def search_conversations(q: str = ""):
+        return await asyncio.to_thread(db.search, q)
+
     @app.get("/api/conversations/{cid}/export")
     async def export_conversation(cid: str, fmt: str = "md", tools: bool = False):
         from urllib.parse import quote

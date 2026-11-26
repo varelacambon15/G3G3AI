@@ -137,6 +137,15 @@ def test_ui_end_to_end(live):
         assert dl.value.suggested_filename.endswith(".md")
         assert "## Tú" in Path(dl.value.path()).read_text(encoding="utf-8")
 
+        # 2c) Buscar dentro de las conversaciones: encuentra texto de la respuesta y abre el mensaje resaltado
+        page.click("#new-chat")
+        page.fill("#conv-search", "segunda parte")
+        page.wait_for_selector("#conv-list .search-hit mark")
+        page.click("#conv-list .search-hit")
+        page.wait_for_selector("#messages .msg.assistant mark")
+        page.fill("#conv-search", "")
+        page.dispatch_event("#conv-search", "input")
+
         # 2b) Selector de modelos con buscador
         page.click("#model-btn")
         page.wait_for_selector("#model-picker .mp-row")
