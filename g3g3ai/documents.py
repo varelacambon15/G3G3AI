@@ -196,7 +196,46 @@ def _odf(z: zipfile.ZipFile) -> str:
     return _xml_text(z.read("content.xml"), para_tags=("p", "h", "table-row"))
 
 
+def _md_table(rows: list[list]) -> str:
+    rows = [[" ".join(str(c or "").split()) for c in r] for r in rows if r and any(str(c or "").strip() for c in r)]
+    if not rows:
+        return ""
+    w = max(len(r) for r in rows)
+    rows = [r + [""] * (w - len(r)) for r in rows]
+    out = ["| " + " | ".join(rows[0]) + " |", "|" + "---|" * w]
+    out += ["| " + " | ".join(r) + " |" for r in rows[1:]]
+    return "\n".join(out)
+
+
+def _pdf_tables(path: Path) -> str:
+    """Texto con las tablas reconstruidas (filas y columnas) gracias a pdfplumber; '' si no hay tablas o no está."""
+    try:
+        import pdfplumber
+    except ImportError:
+        return ""
+    parts, found = [], False
+    try:
+        with pdfplumber.open(str(path)) as pdf:
+            for i, page in enumerate(pdf.pages, 1):
+                tables = [t for t in (page.extract_tables() or []) if t and len(t) > 1]
+                text = (page.extract_text() or "").strip()
+                if tables:
+                    found = True
+                    md = "\n\n".join(_md_table(t) for t in tables)
+                    parts.append(f"--- Página {i} ---\n{text}\n\n[Tablas de la página {i}, fila a fila:]\n{md}")
+                elif text:
+                    parts.append(f"--- Página {i} ---\n{text}")
+                if sum(len(p) for p in parts) > TEXT_LIMIT:
+                    break
+    except Exception:  # noqa: BLE001  (si pdfplumber falla, se usa el lector sencillo)
+        return ""
+    return "\n\n".join(parts) if found else ""
+
+
 def _pdf_text(path: Path) -> str:
+    tables = _pdf_tables(path)          # PDF con tablas (nóminas, partes, facturas): columnas bien separadas
+    if tables.strip():
+        return tables
     try:
         from pypdf import PdfReader
     except ImportError as e:

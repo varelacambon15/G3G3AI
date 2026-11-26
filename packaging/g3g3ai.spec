@@ -10,7 +10,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 hidden = collect_submodules("uvicorn") + ["multipart", "python_multipart"]
 extra_datas, extra_bins = [], []
 # Plantillas de Word/PowerPoint y datos de fpdf2/oletools
-for pkg in ("docx", "pptx", "fpdf", "oletools"):
+for pkg in ("docx", "pptx", "fpdf", "oletools", "pdfminer", "pdfplumber"):
     try:
         __import__(pkg)
         extra_datas += collect_data_files(pkg)

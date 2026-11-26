@@ -2829,3 +2829,23 @@ def test_runaway_output_is_cut_and_retried(env):
     evs = sse(client.post("/api/chat", headers=h, json={"message": "imita el registro"}))
     cid = next(e["conversation_id"] for e in evs if e["type"] == "start")
     assert client.get(f"/api/conversations/{cid}", headers=h).json()["messages"][-1]["content"] == "Hecho."
+
+
+def test_pdf_tables_keep_rows_and_columns(tmp_path):
+    from fpdf import FPDF
+    from g3g3ai import documents as D
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=10)
+    pdf.cell(0, 10, "INCIDENCIAS SEGUNDA QUINCENA", new_x="LMARGIN", new_y="NEXT")
+    with pdf.table() as t:
+        for row in [["Operario", "Dias", "Extras", "Observaciones"], ["Alejandro Noguera", "15,00", "-", "DESCONTAR 2 DECIMOS"],
+                    ["Roberto Solano", "0,00", "5,00", "HORAS EXTRA POR VIDEO"]]:
+            r = t.row()
+            for c in row:
+                r.cell(c)
+    p = tmp_path / "incidencias.pdf"
+    pdf.output(str(p))
+    text = D.extract_text(p)
+    assert "| Roberto Solano | 0,00 | 5,00 | HORAS EXTRA POR VIDEO |" in text
+    assert "| Operario | Dias | Extras | Observaciones |" in text

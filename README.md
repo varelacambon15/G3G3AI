@@ -207,6 +207,20 @@ Idioma y motor, en Ajustes → Modelos locales.
 
 Cuando un modelo local tiene que leer mucho (un documento largo, una conversación larga), verás «Leyendo el contexto… 43 % · ~12 s» en vez de una espera sin señales. La siguiente pregunta reutiliza lo ya leído.
 
+### 📎 Archivos en el chat
+
+- Los archivos que crea la IA (Word, Excel, PowerPoint, PDF) y los que te «pasa» (p. ej. el PDF original de un correo) salen como tarjeta: **Abrir** con su programa y la flecha **▾** con *Mostrar en la carpeta*, *Descargar*, *Copiar ruta* y *Vista previa*.
+- Las rutas que escribe la IA también se pueden pulsar.
+- Pedir «hazme un Excel» funciona siempre, incluso sin modo Agente (se guarda en `G3G3AI-documentos`).
+
+### 🔐 Permisos desde el chat
+
+Con el Agente activo, el botón junto al cuadro elige: **Manual** (pregunta todo), **Semi-auto** (lo habitual en tus carpetas sin preguntar) o **Auto**.
+
+### 🕒 Tareas programadas
+
+Sección **Tareas** o pidiéndoselo a la IA («cada lunes a las 8 busca las incidencias de México y hazme un Excel»). Se puede elegir la hora y los días de la semana.
+
 ### ☁️ Tus datos en la nube (OneDrive o Google Drive)
 
 Ajustes → Datos y uso → **Tus datos en la nube**: elige tu carpeta de OneDrive o Google Drive y una contraseña. G3G3AI guarda allí (en `G3G3AI/g3g3ai-nube.g3bak`) tus claves API, ajustes, proyectos, recuerdos y, si quieres, conversaciones, **cifrados con tu contraseña**, y los pone al día solo cada pocos minutos. En otro equipo eliges la misma carpeta y contraseña y se junta todo. Microsoft y Google sólo ven un archivo ilegible.
