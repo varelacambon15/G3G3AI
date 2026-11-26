@@ -1304,13 +1304,20 @@ function branchNav(pos) {
 function messageEl(m, pos = -1) {
   const el = h("div", { class: `msg ${m.role}`, "data-id": m.id });
   if (m.role === "user") {
-    el.append(h("div", { class: "bubble" }, m.content));
+    // Adjuntos siempre visibles, encima del mensaje (como en Claude): imágenes en miniatura y tarjetas de archivo
     const att = m.meta?.attachments || [];
     const imgs = att.filter((a) => a.kind === "image" || (!a.kind && isImage(a.name)));
+    const docs = att.filter((a) => !imgs.includes(a));
     if (imgs.length) el.append(h("div", { class: "msg-images" }, imgs.map((a) =>
       h("img", { src: fileUrl(a.path), alt: a.name, loading: "lazy", onclick: () => previewFile(a.path) }))));
+    if (docs.length) el.append(h("div", { class: "msg-files" }, docs.map((a) => {
+      const ext = (a.name.split(".").pop() || "").toUpperCase().slice(0, 4);
+      return h("button", { class: "att-card", title: a.path, onclick: () => previewFile(a.path) },
+        h("span", { class: "att-ext", "data-ext": ext }, ext),
+        h("span", { class: "att-name" }, a.name));
+    })));
+    if (m.content) el.append(h("div", { class: "bubble" }, m.content));
     el.append(h("div", { class: "meta" },
-      att.filter((a) => !imgs.includes(a)).map((a) => h("span", { class: "chip" }, ico(a.kind === "document" || a.kind === "pdf_scan" ? "doc" : "clip"), a.name)),
       h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, ico("copy")),
       h("button", { class: "act", title: "Editar", onclick: () => editFrom(m, el) }, ico("pencil")),
       branchNav(pos),

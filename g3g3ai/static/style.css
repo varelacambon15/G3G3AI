@@ -653,3 +653,14 @@ mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: in
 .chat-error { margin: 8px 0 16px; padding: 12px 14px; border: 1px solid color-mix(in srgb, #c0392b 45%, var(--border)); background: color-mix(in srgb, #c0392b 6%, var(--panel)); border-radius: 12px; display: flex; flex-direction: column; gap: 8px; }
 .ce-text { display: flex; flex-direction: column; gap: 2px; font-size: 14px; } .ce-text span { color: var(--muted); white-space: pre-wrap; }
 .chat-error .row { gap: 6px; flex-wrap: wrap; } .chat-error button { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Adjuntos de un mensaje: siempre visibles, como tarjetas encima del texto */
+.msg-files { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-bottom: 6px; max-width: min(100%, 640px); }
+.att-card { display: inline-flex; align-items: center; gap: 9px; max-width: 300px; padding: 6px 12px 6px 6px; border: 1px solid var(--border); border-radius: 11px; background: var(--panel); color: var(--text); font-size: 13px; cursor: pointer; text-align: left; }
+.att-card:hover { background: var(--hover); }
+.att-ext { flex-shrink: 0; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; font-size: 9.5px; font-weight: 700; letter-spacing: .02em; color: #fff; background: #8a8a8a; }
+.att-ext[data-ext="PDF"] { background: #d0453a; }
+.att-ext[data-ext="DOCX"], .att-ext[data-ext="DOC"] { background: #2f6fd1; }
+.att-ext[data-ext="XLSX"], .att-ext[data-ext="XLS"], .att-ext[data-ext="XLSM"], .att-ext[data-ext="CSV"] { background: #1f8a4c; }
+.att-ext[data-ext="PPTX"] { background: #d86a2b; }
+.att-name { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3; word-break: break-word; }
