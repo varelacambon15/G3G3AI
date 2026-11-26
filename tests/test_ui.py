@@ -208,6 +208,10 @@ def test_ui_end_to_end(live):
         page.click("[data-view=code]")
         page.fill("#code-dir", str(Path(cfg["write_roots"][0]) / "proyecto"))
         page.click("#code-dir-set")
+        page.click("#code-dir-pick")                                   # elegir carpeta navegando
+        page.wait_for_selector("#picker-use-dir:visible")
+        page.click("#picker-use-dir")
+        assert page.input_value("#code-dir") != ""
         page.fill("#input", "/help")
         page.click("#send-btn")
         page.wait_for_selector("#toast >> text=/compact", timeout=3000)

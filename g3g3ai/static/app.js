@@ -1896,11 +1896,21 @@ async function moveToProject(c) {
       } }, "Mover")));
   dlg.addEventListener("close", () => dlg.remove()); document.body.append(dlg); dlg.showModal();
 }
-function openPicker(title, handler) {
-  S.pickHandler = handler; $("#picker-title").textContent = title;
+function openPicker(title, handler, folder = false) {
+  S.pickHandler = handler; S.pickFolder = folder; $("#picker-title").textContent = title;
+  $("#picker-use-dir").classList.toggle("hidden", !folder);
+  $("#picker-upload").closest("label").classList.toggle("hidden", folder);
   $("#picker").showModal(); loadPicker(S.pickerPath);
 }
-$("#picker").addEventListener("close", () => { S.pickHandler = null; $("#picker-title").textContent = "Adjuntar archivo"; });
+// Elegir una carpeta navegando (en vez de escribir la ruta a mano)
+function pickFolder(title, onPick) { openPicker(title, onPick, true); }
+$("#picker-use-dir").addEventListener("click", () => { const p = S.pickerPath; const fn = S.pickHandler; $("#picker").close(); if (p && fn) fn(p); });
+$("#picker").addEventListener("close", () => {
+  S.pickHandler = null; S.pickFolder = false; $("#picker-title").textContent = "Adjuntar archivo";
+  $("#picker-use-dir").classList.add("hidden"); $("#picker-upload").closest("label").classList.remove("hidden");
+});
+$("#code-dir-pick").addEventListener("click", () => pickFolder("Carpeta del proyecto", (p) => { $("#code-dir").value = p; $("#code-dir-set").click(); }));
+$("#project-dir-pick").addEventListener("click", () => pickFolder("Carpeta del proyecto", (p) => { $("#project-dir").value = p; }));
 const pickFile = (path) => (S.pickHandler ? S.pickHandler(path) : addAttachment(path));
 
 async function loadPicker(path) {
@@ -1909,8 +1919,8 @@ async function loadPicker(path) {
     S.pickerPath = d.path; $("#picker-path").textContent = d.path;
     $("#picker-up").disabled = !d.parent; $("#picker-up").onclick = () => loadPicker(d.parent);
     const ul = $("#picker-list"); ul.innerHTML = "";
-    for (const e of d.entries) ul.append(h("li", { onclick: () => {
-      if (e.is_dir) loadPicker(e.path); else { pickFile(e.path); $("#picker").close(); }
+    for (const e of d.entries.filter((x) => !S.pickFolder || x.is_dir)) ul.append(h("li", { onclick: () => {
+      if (e.is_dir) loadPicker(e.path); else if (!S.pickFolder) { pickFile(e.path); $("#picker").close(); }
     } }, h("span", { class: "name" }, (e.is_dir ? "📁 " : "📄 ") + e.name), e.is_dir ? null : h("span", { class: "sub" }, fmtSize(e.size))));
   } catch (e) { toast(e.message); }
 }
