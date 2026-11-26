@@ -201,6 +201,13 @@ def test_ui_end_to_end(live):
         page.keyboard.press("Escape")
         page.click("[data-view=chat]")
 
+        # 2h) «Compartir con G3G3AI» desde Android: texto y archivos al cuadro, sin enviar
+        page.evaluate("""() => window.g3Share({text: 'Mira esto', files: [{name: 'nota.txt', mime: 'text/plain', data: btoa('hola')}]})""")
+        page.wait_for_selector("#attachments >> text=nota.txt", timeout=5000)
+        assert page.input_value("#input") == "Mira esto"
+        page.evaluate("() => { S.attachments = []; renderAttachments(); }")
+        page.fill("#input", "")
+
         # 2b) Selector de modelos con buscador
         page.click("#model-btn")
         page.wait_for_selector("#model-picker .mp-row")

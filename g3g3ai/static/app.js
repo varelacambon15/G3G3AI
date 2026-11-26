@@ -1771,19 +1771,44 @@ async function send(text, attachments, isContinue = false) {
     }
     else el.remove();
     if (errorMsg) showChatError(errorMsg);
+    if (document.hidden) systemNotify(errorMsg ? "G3G3AI: no se pudo responder" : "G3G3AI ha respondido",
+      errorMsg || plainForSpeech(content).slice(0, 180) || "La respuesta está lista");
     refreshContext();
     if (S.queued) { const q = S.queued; S.queued = null; setTimeout(() => send(q, []), 200); }
   }
 }
 
+// Avisos cuando estás en otra ventana o app: en Android, notificación del sistema (puente G3Notify);
+// en el navegador, la API de notificaciones.
+function systemNotify(title, body) {
+  if (window.G3Notify) { try { window.G3Notify.notify(title, body); } catch { /* */ } return; }
+  if ("Notification" in window && Notification.permission === "granted") new Notification(title, { body });
+}
 function notifyApproval(ev) {
-  if (document.hidden && "Notification" in window && Notification.permission === "granted") {
-    new Notification("G3G3AI necesita tu permiso", { body: ev.name + ": " + (ev.args?.command || ev.args?.path || "") });
+  if (document.hidden) systemNotify("G3G3AI necesita tu permiso", ev.name + ": " + (ev.args?.command || ev.args?.path || ""));
+}
+document.addEventListener("click", () => {
+  if (window.G3Notify) { try { window.G3Notify.requestPermission(); } catch { /* */ } }
+  else if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
+}, { once: true });
+
+// «Compartir con G3G3AI» (Android): llega texto y/o archivos; se dejan en el cuadro sin enviar
+window.g3Share = async ({ text = "", files = [] } = {}) => {
+  setView("chat"); newChat();
+  if (text) { input.value = text; input.dispatchEvent(new Event("input")); }
+  if (files.length) {
+    toast(`Subiendo ${files.length} archivo${files.length > 1 ? "s" : ""}…`);
+    const list = files.map((f) => {
+      const bin = atob(f.data), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new File([bytes], f.name, { type: f.mime });
+    });
+    const res = await uploadFiles(list, await uploadsDir());
+    res.forEach((r) => addAttachment(r.path));
+    if (!text) { input.value = res.length > 1 ? "Revisa estos archivos" : "Revisa este archivo"; input.dispatchEvent(new Event("input")); }
   }
-}
-if ("Notification" in window && Notification.permission === "default") {
-  document.addEventListener("click", () => Notification.requestPermission().catch(() => {}), { once: true });
-}
+  input.focus();
+};
 
 // --- Adjuntos --------------------------------------------------------------------------
 const isImage = (name) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(name || "");

@@ -102,6 +102,7 @@ public class WebActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 CookieManager.getInstance().flush();
+                deliverShare();
             }
         });
 
@@ -117,6 +118,9 @@ public class WebActivity extends Activity {
 
         web.setDownloadListener((url, userAgent, contentDisposition, mimeType, length) -> download(url, userAgent, contentDisposition, mimeType));
 
+        // Avisos del sistema (sólo muestra notificaciones: seguro también para la interfaz del PC)
+        web.addJavascriptInterface(new Notifier(this), "G3Notify");
+
         if (direct) {
             // El puente con las claves API sólo existe para la página local, nunca para un servidor
             bridge = new NativeBridge(this, web);
@@ -129,6 +133,16 @@ public class WebActivity extends Activity {
             if (token != null && !token.isEmpty()) first += "?token=" + Uri.encode(token);
             web.loadUrl(first);
         }
+    }
+
+    // --- «Compartir con G3G3AI»: entrega lo compartido a la página cuando ya está cargada -------------
+    private void deliverShare() {
+        String json = ShareActivity.pending;
+        if (json == null) return;
+        ShareActivity.pending = null;
+        // La página puede tardar un poco en definir g3Share: se reintenta durante unos segundos
+        String js = "(function t(n){if(window.g3Share){window.g3Share(" + json + ");}else if(n<60){setTimeout(function(){t(n+1)},250);}})(0)";
+        web.evaluateJavascript(js, null);
     }
 
     // --- Selector de archivos / cámara ------------------------------------------------------

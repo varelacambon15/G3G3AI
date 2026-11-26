@@ -411,6 +411,9 @@ async function stream(p, model) {
   } finally {
     S.streaming = null;
     setSendIcon(false);
+    if (document.hidden && window.G3Notify) {     // estabas en otra app: aviso del sistema
+      try { window.G3Notify.notify(msg.error ? "G3G3AI: no se pudo responder" : "G3G3AI ha respondido", (msg.error || msg.content || "").slice(0, 200)); } catch { /* */ }
+    }
     if (msg.content || msg.reasoning || msg.error) conv.messages.push(msg);
     saveConvs();
     if (S.current === conv) renderMessages();
@@ -515,3 +518,18 @@ $("#settings-save").addEventListener("click", async () => {
 
 // --- Arranque ---------------------------------------------------------------------------
 renderConvs(); renderMessages(); renderModels();
+
+// «Compartir con G3G3AI»: texto al cuadro; fotos como adjuntos. Los documentos necesitan el PC (allí se leen y se hace OCR).
+window.g3Share = async ({ text = "", files = [] } = {}) => {
+  if (window.G3Notify) { try { window.G3Notify.requestPermission(); } catch { /* */ } }
+  const imgs = files.filter((f) => /^image\//.test(f.mime)), others = files.length - imgs.length;
+  for (const f of imgs) {
+    const bin = atob(f.data), bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    try { S.attachments.push(await shrink(new File([bytes], f.name, { type: f.mime }))); } catch { /* imagen no válida */ }
+  }
+  renderChips();
+  if (text) { input.value = text; input.dispatchEvent(new Event("input")); }
+  if (others) toast(`${others} documento(s) no se pueden leer en el chat directo: conéctate a tu PC para analizarlos.`, 6000);
+  input.focus();
+};
