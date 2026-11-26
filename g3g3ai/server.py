@@ -1790,6 +1790,32 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             raise HTTPException(404, "No es un archivo")
         return FileResponse(p, filename=p.name, content_disposition_type="inline" if inline else "attachment")
 
+    @app.post("/api/files/open")
+    async def file_open(request: Request, body: dict):
+        """Abre un archivo con su programa (Excel, Word, visor de PDF…) o muestra su carpeta. Sólo desde este mismo
+        equipo: desde el móvil no tendría sentido abrir algo en la pantalla del PC."""
+        host = request.client.host if request.client else ""
+        if host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+            raise HTTPException(403, "Sólo se puede abrir desde el propio equipo; desde aquí, descárgalo.")
+        p = fa(files.resolve, body.get("path"))
+        if not p.exists():
+            raise HTTPException(404, "Ese archivo ya no existe")
+        reveal = bool(body.get("reveal"))
+        import subprocess
+        try:
+            if sys.platform == "win32":
+                if reveal:
+                    subprocess.Popen(["explorer", "/select,", str(p)])
+                else:
+                    os.startfile(str(p))  # noqa: S606  (abre con el programa asociado)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", str(p)] if reveal else ["open", str(p)])
+            else:
+                subprocess.Popen(["xdg-open", str(p.parent if reveal else p)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            raise HTTPException(500, f"No se pudo abrir: {e}") from e
+        return {"ok": True}
+
     @app.post("/api/files/upload")
     async def file_upload(dir: str = Form(""), file: UploadFile = File(...)):
         target = fa(files.safe_child, dir, file.filename or "archivo")

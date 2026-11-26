@@ -64,6 +64,44 @@ const qs = (o) => new URLSearchParams(o).toString();
 
 // --- Markdown mínimo y seguro --------------------------------------------------------------
 const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// --- Archivos en el chat: tarjeta con «Abrir» y una flecha con más opciones ---------------------------
+const IS_LOCAL = ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
+const downloadUrl = (p) => "/api/files/download?" + qs({ path: p });
+async function openPath(p, reveal = false) {
+  if (!IS_LOCAL) { location.href = downloadUrl(p); return; }       // desde el móvil: se descarga
+  try { await api("/api/files/open", { method: "POST", body: { path: p, reveal } }); toast(reveal ? "Abriendo la carpeta…" : "Abriendo " + baseName(p) + "…", 2500); }
+  catch (e) { toast(e.message, 6000); }
+}
+function fileMenu(p, anchor) {
+  $("#file-menu")?.remove();
+  const item = (icon, label, fn) => h("button", { onclick: () => { menu.remove(); fn(); } }, ico(icon), label);
+  const menu = h("div", { id: "file-menu", class: "file-menu" },
+    IS_LOCAL ? item("file", "Abrir", () => openPath(p)) : null,
+    IS_LOCAL ? item("folder", "Mostrar en la carpeta", () => openPath(p, true)) : null,
+    item("download", "Descargar", () => { location.href = downloadUrl(p); }),
+    item("copy", "Copiar ruta", () => copyText(p, "Ruta copiada")),
+    item("search", "Vista previa", () => previewFile(p)));
+  document.body.append(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = Math.min(innerHeight - menu.offsetHeight - 8, r.bottom + 4) + "px";
+  menu.style.left = Math.max(8, Math.min(innerWidth - menu.offsetWidth - 8, r.right - menu.offsetWidth)) + "px";
+  setTimeout(() => document.addEventListener("mousedown", function off(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("mousedown", off); } }), 0);
+}
+function fileCard(p) {
+  const ext = (String(p).split(".").pop() || "").toUpperCase().slice(0, 4);
+  return h("div", { class: "file-card", title: p },
+    h("button", { class: "fc-main", onclick: () => openPath(p) },
+      h("span", { class: "att-ext", "data-ext": ext }, ext),
+      h("span", { class: "fn" }, baseName(p), h("small", {}, IS_LOCAL ? "Abrir" : "Descargar"))),
+    h("button", { class: "fc-more", title: "Más opciones", onclick: (e) => fileMenu(p, e.currentTarget) }, "▾"));
+}
+// Rutas que escribe la IA (`C:\…\informe.xlsx` o enlaces file:///…): clicables, con el mismo menú
+const PATH_RX = /^(?:[A-Za-z]:[\\/]|\/(?:home|Users|mnt|tmp|root)\/|~[\\/])[^<>"|?*\n]*\.[A-Za-z0-9]{1,5}$/;
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("[data-path]");
+  if (!a || !e.target.closest("#messages")) return;
+  e.preventDefault(); fileMenu(a.dataset.path, a);
+});
 function inlineMd(s) {
   const codes = [];
   s = s.replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
@@ -71,8 +109,15 @@ function inlineMd(s) {
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, "$1<em>$2</em>")
     .replace(/~~(.+?)~~/g, "<del>$1</del>")
+    .replace(/\[([^\]]+)\]\(file:\/\/\/?([^)]+)\)/g, (_, t, p) => {
+      const path = decodeURIComponent(p).replace(/^\/(?=[A-Za-z]:)/, "");
+      return `<a href="#" class="path-link" data-path="${esc(path)}">📄 ${t}</a>`;
+    })
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${esc(codes[+i])}</code>`);
+  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => {
+    const c = codes[+i].trim();
+    return PATH_RX.test(c) ? `<code class="path-link" data-path="${esc(c)}" title="Abrir / descargar">${esc(codes[+i])}</code>` : `<code>${esc(codes[+i])}</code>`;
+  });
 }
 function md(src) {
   const lines = src.replace(/\r/g, "").split("\n");
@@ -1280,9 +1325,7 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   frag.append(b);
   const fileIcon = (p) => ({ docx: "📘", doc: "📘", xlsx: "📗", xlsm: "📗", csv: "📗", pptx: "📙", pdf: "📕", exe: "⚙️", py: "🐍" }[String(p).split(".").pop().toLowerCase()] || "📄");
   const outs = [...new Set(extra.files || [])];
-  if (outs.length) frag.append(h("div", { class: "file-cards" }, outs.map((p) =>
-    h("a", { class: "file-card", href: "/api/files/download?" + qs({ path: p }), title: p },
-      h("span", { class: "fi" }, ico("file"), h("small", {}, String(p).split(".").pop().toUpperCase().slice(0, 4))), h("span", { class: "fn" }, baseName(p), h("small", {}, "Descargar")))))); 
+  if (outs.length) frag.append(h("div", { class: "file-cards" }, outs.map(fileCard)));
   const imgs = extra.images || [];
   if (imgs.length) frag.append(h("div", { class: "gen-images" }, imgs.map((p) =>
     h("a", { href: fileUrl(p), target: "_blank", title: p }, h("img", { src: fileUrl(p), alt: "imagen generada", loading: "lazy" })))));

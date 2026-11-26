@@ -2768,3 +2768,29 @@ def test_excel_without_agent_mode(env):
     root = Path(cfg["write_roots"][0]) / "G3G3AI-documentos"
     assert sorted(p.name for p in root.iterdir()) == ["nomina (2).xlsx", "nomina.xlsx"]
     assert not any(e["type"] == "approval" for e in evs)                  # no pide permiso para un documento nuevo
+
+
+def test_attach_file_and_open_from_this_pc(env):
+    import asyncio
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    root = Path(cfg["write_roots"][0])
+    (root / "original.pdf").write_bytes(b"%PDF-1.4 x")
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    ctx = ToolContext(Files(cfg), cfg, agent=True)
+    assert "attach_file" in ctx.names()
+    out = asyncio.run(ctx.run("attach_file", {"paths": [str(root / "original.pdf"), "/etc/shadow"]}))
+    assert "original.pdf" in out and "No se pudieron" in out and ctx.files_out == [str(root / "original.pdf")]
+    # Abrir con su programa: sólo desde este equipo y dentro de las carpetas visibles
+    import g3g3ai.server as S
+    opened = []
+    import subprocess
+    orig = subprocess.Popen
+    subprocess.Popen = lambda *a, **k: opened.append(a[0])
+    try:
+        r = client.post("/api/files/open", headers=h, json={"path": str(root / "original.pdf")})
+        assert r.status_code == 200 and opened
+        assert client.post("/api/files/open", headers=h, json={"path": "/etc/passwd"}).status_code in (400, 403)
+    finally:
+        subprocess.Popen = orig

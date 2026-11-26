@@ -220,6 +220,11 @@ ALL_SPECS = {
     "write_file": ("Crea un archivo de texto nuevo o lo reescribe entero (sólo en las carpetas modificables). "
                    "Si el archivo ya existe, léelo antes con read_file; para cambios parciales usa edit_file.",
                    _schema({"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"])),
+    "attach_file": ("Adjunta al chat un archivo que YA existe (p.ej. el PDF original de un correo que guardaste, o un Excel "
+                    "de sus carpetas) para que el usuario lo abra o lo descargue con un clic. Úsalo cuando pida «pásamelo», "
+                    "«adjúntamelo», «mándamelo por aquí» o «dame el archivo»; no regeneres el documento ni des sólo la ruta.",
+                    _schema({"paths": {"type": "array", "items": {"type": "string"}, "description": "Rutas de los archivos"}},
+                            ["paths"])),
     "create_document": ("Crea un documento Word (.docx), Excel (.xlsx), PowerPoint (.pptx) o PDF (.pdf); el formato sale "
                         "de la extensión de path. Para .docx y .pdf, content es Markdown (títulos #, listas, tablas |, "
                         "**negrita**). Para .xlsx, content es JSON {\"sheets\": [{\"name\": \"Hoja1\", \"rows\": "
@@ -392,6 +397,7 @@ class ToolContext:
         ({"system_info"}, r"equipo|hardware|\bram\b|memoria|procesador|\bcpu\b|gr[aá]fica|\bgpu\b|ordenador|port[aá]til|\bpc\b|"
                           r"modelo local|disco"),
         ({"delegate", "delegate_edit", "apply_patch"}, r"ayudante|deleg|en paralelo|reparte|subagente|propuesta"),
+        ({"attach_file"}, r"p[aá]sa(?:me|lo|la)|adj[uú]nt|m[aá]nda|env[ií]a|dame|archivo|fichero|descarg|abr[ei]"),
         ({"create_document"}, r"excel|word|\bpdf|docx|xlsx|pptx|power ?point|documento|informe|hoja de c[aá]lculo|"
                               r"presentaci[oó]n|diapositiva|tabla|gr[aá]fico|exporta|descarg|archivo|fichero"),
     ]
@@ -506,7 +512,7 @@ class ToolContext:
         out = []
         plan = self.perm_mode == "plan"  # modo Plan: sólo lectura
         if self.agent:
-            out += ["list_dir", "read_file", "search_files", "grep_files", "compare_dirs", "todo_write", "system_info"]
+            out += ["list_dir", "read_file", "search_files", "grep_files", "compare_dirs", "todo_write", "system_info", "attach_file"]
             if not plan and self.mode("write_file") != "off" and self.files.write_roots:
                 out += ["write_file", "edit_file", "create_document"]
             if not plan and self.mode("run_command") != "off" and (not self.auto_all or self.sandboxed):
@@ -994,6 +1000,22 @@ class ToolContext:
             self._mark_read(p)
             self.files_out.append(str(p))
             return f"Guardado {p} ({n} bytes)"
+        if name == "attach_file":
+            paths = a.get("paths") or ([a["path"]] if a.get("path") else [])
+            done, bad = [], []
+            for raw in paths[:20]:
+                try:
+                    p = f.resolve(str(raw))
+                except FileAccessError as e:
+                    bad.append(f"{raw}: {e}")
+                    continue
+                if not p.is_file():
+                    bad.append(f"{raw}: no existe")
+                    continue
+                self.files_out.append(str(p))
+                done.append(p.name)
+            out = (f"Adjuntado(s) al chat: {', '.join(done)}. El usuario ya puede abrirlos o descargarlos." if done else "")
+            return (out + ("\nNo se pudieron adjuntar: " + "; ".join(bad) if bad else "")).strip() or "Error: no indicaste archivos"
         if name == "create_document":
             from . import office
             p = self._doc_path(a.get("path"))
@@ -1118,6 +1140,7 @@ class ToolContext:
                     n += 1
                 self._before_write(target)
                 target.write_bytes(data)
+                self.files_out.append(str(target))          # aparece en el chat como tarjeta (abrir / descargar)
                 saved.append(f"{target.name} ({len(data) // 1024} KB, correo #{mid})")
         out = [f"Guardados {len(saved)} adjunto(s) en {dest}:"] + ["  " + s for s in saved]
         if empty:
@@ -1442,6 +1465,11 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
             if name == "run_command" and not strong and (ctx.command_allowed(args.get("command"))
                                                          or ctx.trusted_command(args.get("command"), args.get("cwd"))):
                 must_ask = False  # regla «permitir siempre» del usuario o comando de desarrollo de confianza
+            if must_ask and not strong and name == "create_document" and mode != "off":
+                try:   # un documento NUEVO no estropea nada: sólo se pregunta si va a sobrescribir uno que ya existe
+                    must_ask = ctx._doc_path(args.get("path")).exists()
+                except FileAccessError:
+                    pass
             if must_ask and not strong and name in ctx.session_allow:
                 must_ask = False
             if must_ask and ctx.auto_all:

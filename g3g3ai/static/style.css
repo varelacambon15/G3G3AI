@@ -695,3 +695,16 @@ details.fold-card[open] > summary { margin-bottom: 12px; }
 .cloud-opt small { flex: 1 1 100%; overflow-wrap: anywhere; }
 .cloud-opt.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .ok-text { color: #2e7d4f; } .err-text { color: #c0392b; }
+
+/* Archivos en el chat: tarjeta con «Abrir» y flecha de opciones */
+.file-card { padding: 0; gap: 0; overflow: hidden; }
+.file-card .fc-main { display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 8px; background: none; border: 0; color: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.file-card .fc-main:hover, .file-card .fc-more:hover { background: var(--hover); }
+.file-card .fc-more { align-self: stretch; border: 0; border-left: 1px solid var(--border); background: none; padding: 0 12px; color: var(--muted); cursor: pointer; font-size: 13px; }
+.file-card .fn { min-width: 0; } .file-card .fn small { color: var(--accent); }
+.file-menu { position: fixed; z-index: 70; min-width: 200px; padding: 6px; background: var(--panel); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: var(--shadow); }
+.file-menu button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 8px 10px; border: 0; background: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
+.file-menu button:hover { background: var(--hover); }
+.file-menu .ico { width: 16px; height: 16px; color: var(--muted); }
+.path-link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+code.path-link:hover { background: var(--hover); }
