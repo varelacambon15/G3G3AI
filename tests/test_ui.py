@@ -110,6 +110,11 @@ def test_ui_end_to_end(live):
         assert page.is_visible("#settings-noresults")
         page.press("#settings-search", "Escape")
         assert page.input_value("#settings-search") == "" and page.is_visible("#settings-form [name=temperature]")
+        # Los ajustes se guardan solos al cambiarlos
+        page.fill("#settings-form [name=temperature]", "0.42")
+        page.dispatch_event("#settings-form [name=temperature]", "change")
+        page.wait_for_selector("#save-state[data-state=saved]", timeout=5000)
+        assert page.evaluate("async () => (await (await fetch('/api/settings')).json()).temperature") == 0.42
 
         # 2) Cargar el modelo falso y mantener una conversación (con corte por longitud y continuación automática)
         page.evaluate("""async () => {

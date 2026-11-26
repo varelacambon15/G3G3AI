@@ -680,3 +680,5 @@ details.fold-card > summary h2 { margin: 0; display: flex; align-items: center; 
 details.fold-card > summary h2::after { content: "▸"; font-size: 13px; color: var(--muted); }
 details.fold-card[open] > summary h2::after { content: "▾"; }
 details.fold-card[open] > summary { margin-bottom: 12px; }
+.save-state { font-size: 13px; color: var(--muted); align-self: center; margin-left: auto; }
+.save-state[data-state=saved] { color: #2e7d4f; } .save-state[data-state=error] { color: #c0392b; }

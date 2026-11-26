@@ -2441,7 +2441,7 @@ const FIELDS = [
   ["ai_game_write", "🎮 La IA puede trabajar con los juegos de Steam", "checkbox", "Lee y, pidiendo permiso cada vez, modifica las carpetas de los juegos y sus prefijos de Proton. Antes de cambiar un archivo guarda una copia «.g3g3ai-original»."],
   ["monthly_budget_usd", "Límite de gasto mensual estimado ($)", "number", "Te avisa al llegar al 80% y al 100%. 0 = sin aviso."],
   ["model_prices", "Precios por modelo ($ por millón de tokens, uno por línea)", "lines", "Formato: «modelo = entrada, salida», p.ej. «deepseek-chat = 0.27, 1.10». Sobrescribe los precios orientativos."],
-  ["mcp_servers", "Servidores MCP (uno por línea)", "lines", "Formato: nombre = [VAR=valor] comando args. Se guardan al pulsar «Guardar ajustes»; luego usa «Probar servidores»."],
+  ["mcp_servers", "Servidores MCP (uno por línea)", "lines", "Formato: nombre = [VAR=valor] comando args. Se guardan solos al salir del cuadro; luego usa «Probar servidores»."],
   ["mcp_default_model", "Modelo para Claude (MCP)", "model", "El que usa Claude Code al delegar en G3G3AI sin indicar uno. Vacío = el modelo local cargado."],
   ["mail_paths", "Correo: rutas extra (una por línea)", "lines", "Carpetas con buzones mbox o archivos .eml, además del perfil de Thunderbird detectado."],
   ["commands_trusted", "Confiar en mis carpetas (menos permisos)", "checkbox", "Sin preguntar: crear y editar archivos en tus carpetas modificables (deshacible), python/pytest sobre scripts de esas carpetas, git de solo lectura (status, diff, log…), npm test/build, dir/ls de carpetas visibles y filtros como «| more» o «2>&1». Nunca: pip install, git push, python -c, comandos encadenados (; & |) ni nada fuera de tus carpetas. Un script de Python puede hacer cualquier cosa que tú puedas, así que actívalo solo si confías en lo que escribe la IA."],
@@ -2826,7 +2826,7 @@ function providerBox(p, idx) {
   return h("div", { class: "provider-box" },
     h("div", { class: "row" },
       h("label", { class: "toggle grow" }, h("input", { type: "checkbox", checked: !!p.enabled, onchange: set("enabled") }), h("b", {}, p.name), h("span", { class: "badge" }, p.type)),
-      h("button", { class: "ghost small", onclick: () => { S.settings.providers.splice(idx, 1); loadSettingsProvidersOnly(); } }, "Quitar")),
+      h("button", { class: "ghost small", onclick: () => { S.settings.providers.splice(idx, 1); loadSettingsProvidersOnly(); autosaveSettings(); } }, "Quitar")),
     h("details", { open: !!p.enabled }, h("summary", { class: "muted" }, p.api_key ? "Configurado ✔" : "Configurar"),
       h("div", { class: "form-grid" },
         h("label", {}, "Nombre"), h("input", { value: p.name, oninput: set("name") }),
@@ -2923,9 +2923,26 @@ $("#add-provider-legacy")?.addEventListener("click", () => {
   }
   S.settings.providers.push({ id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 24) + "-" + Date.now().toString(36).slice(-4),
     name, type: "openai", base_url: url, api_key: key, enabled: true });
-  loadSettingsProvidersOnly(); toast("Añadido. Pulsa «Guardar ajustes».");
+  loadSettingsProvidersOnly(); autosaveSettings(); toast("Añadido");
 });
-$("#save-settings").addEventListener("click", async () => {
+// Los ajustes se guardan solos al cambiar algo (como en cualquier app moderna): nada se pierde por olvidar un botón
+function setSaveState(st, msg) {
+  const el = $("#save-state"); if (!el) return;
+  el.dataset.state = st;
+  el.textContent = { saving: "Guardando…", saved: "✓ Guardado", error: "No se pudo guardar: " + (msg || ""), idle: "Los cambios se guardan solos" }[st];
+}
+let autosaveTimer = null;
+function autosaveSettings() {
+  if (!S.settings) return;
+  setSaveState("saving"); clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => saveSettings(true), 350);
+}
+$("#view-settings").addEventListener("change", (e) => {
+  if (e.target.id === "settings-search" || e.target.id?.startsWith("bk-") || e.target.closest("dialog, .no-autosave")) return;
+  autosaveSettings();
+});
+$("#save-settings")?.addEventListener("click", () => saveSettings(false));
+async function saveSettings(quiet = false) {
   const f = $("#settings-form"), out = { providers: S.settings.providers };
   for (const [key, , type] of FIELDS) {
     const el = f.elements[key];
@@ -2937,9 +2954,11 @@ $("#save-settings").addEventListener("click", async () => {
   }
   try {
     S.settings = await api("/api/settings", { method: "PUT", body: out });
-    S.models = {}; await refreshStatus(); await loadProviders(); toast("Ajustes guardados ✔"); loadSettings();
-  } catch (e) { toast(e.message); }
-});
+    setSaveState("saved");
+    S.models = {}; refreshStatus(); loadProviders();
+    if (!quiet) loadSettings();
+  } catch (e) { setSaveState("error", e.message); toast(e.message, 6000); }
+}
 $("#logout").addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); location.href = "/"; });
 
 // --- Arranque --------------------------------------------------------------------------
