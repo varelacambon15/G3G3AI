@@ -56,6 +56,9 @@ def find_sd(cfg) -> str | None:
         if base.is_dir():
             for n in SD_NAMES:
                 cands += [str(p) for p in base.rglob(n + exe)]
+    from . import extras
+    bundled = extras.sd_binary()                       # edición completa
+    cands.append(str(bundled) if bundled else "")
     cands += [shutil.which(n) or "" for n in SD_NAMES]
     for c in cands:
         if c and Path(c).is_file():

@@ -54,6 +54,33 @@ jobs:
         with:
           name: G3G3AI-windows
           path: dist/G3G3AI.exe
+      # Edición completa: el .exe con llama.cpp (CPU y Vulkan), stable-diffusion.cpp, Python y Git portátiles al lado
+      - name: Preparar la edición completa
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: |
+          python packaging/fetch_extras.py windows dist/full/G3G3AI-extras
+          copy dist\G3G3AI.exe dist\full\G3G3AI.exe
+      - name: Comprobar que la edición completa encuentra lo incluido
+        shell: pwsh
+        run: |
+          $env:G3G3AI_CONFIG_DIR = "$env:RUNNER_TEMP\g3cfg2"
+          $env:G3G3AI_DATA_DIR = "$env:RUNNER_TEMP\g3data2"
+          $p = Start-Process -FilePath dist\full\G3G3AI.exe -ArgumentList "--headless","--port","8878" -PassThru
+          $st = $null
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 1
+            try { $st = Invoke-RestMethod http://127.0.0.1:8878/api/status; break } catch {}
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if (-not $st) { throw "La edición completa no arrancó" }
+          $st.extras | Format-List
+          if (-not $st.extras.llama_cpu) { throw "No encuentra el motor incluido" }
+      - name: Comprimir la edición completa
+        run: Compress-Archive -Path dist\full\* -DestinationPath dist\G3G3AI-windows-completo.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: G3G3AI-windows-completo
+          path: dist/G3G3AI-windows-completo.zip
 
   linux:
     needs: tests
@@ -69,6 +96,17 @@ jobs:
         with:
           name: G3G3AI-linux-x64
           path: dist/G3G3AI-linux-x64
+      - name: Edición completa para Linux
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: |
+          mkdir -p dist/full
+          python packaging/fetch_extras.py linux dist/full/G3G3AI-extras
+          cp dist/G3G3AI-linux-x64 dist/full/G3G3AI
+          tar -C dist/full -czf dist/G3G3AI-linux-x64-completo.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: G3G3AI-linux-x64-completo
+          path: dist/G3G3AI-linux-x64-completo.tar.gz
 
   android:
     runs-on: ubuntu-latest

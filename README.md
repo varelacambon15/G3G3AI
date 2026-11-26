@@ -206,6 +206,14 @@ Con un **token de GitHub** (Ajustes → «Token de GitHub», o la variable `GITH
 - **Git** con `run_command`: crea ramas, commits y `git push` (el push siempre pide confirmación; los push forzados avisan como peligrosos). Usa el remoto `origin` de la carpeta del proyecto.
 Flujo típico: «arregla el issue #12» → lee el issue, crea una rama, edita, ejecuta los tests, hace commit, te pide permiso para el push, abre el PR y comprueba el CI.
 
+### 📦 Edición completa (sin instalar nada más)
+Además del `G3G3AI.exe` ligero, cada compilación genera **`G3G3AI-windows-completo.zip`** (y `G3G3AI-linux-x64-completo.tar.gz`): el programa con una carpeta `G3G3AI-extras` al lado que incluye
+- **llama.cpp** en dos versiones (solo procesador y con gráfica/Vulkan): modelos locales sin descargar el motor;
+- **stable-diffusion.cpp**: generar imágenes en local;
+- **Python portátil** con pip: el agente puede ejecutar scripts y crear `.exe` aunque no tengas Python instalado;
+- **Git portátil** (Windows): para trabajar con repositorios.
+Descomprime y abre `G3G3AI.exe`: la app los usa sola (los verás en «Comprobar todo»). Lo instalado por tu cuenta tiene prioridad. Cada programa conserva su licencia (MIT, PSF; GPL en el caso de Git).
+
 ### 🚀 Primer arranque y «Comprobar todo»
 - **Asistente inicial:** la primera vez (o desde Ajustes → «Asistente inicial») te guía en cuatro pasos: elegir IA (proveedor en la nube con el catálogo, o modelo en tu equipo con la recomendación para tu hardware), elegir la carpeta de trabajo, activar el correo si tienes Thunderbird y una comprobación final.
 - **Comprobar todo** (Ajustes, arriba): prueba de verdad el modelo local, cada proveedor, la búsqueda web, los servidores MCP, la conexión con Claude Code, las carpetas, los permisos, el correo y el disco, y te dice en claro qué falla, cómo arreglarlo y con un botón que te lleva al sitio.

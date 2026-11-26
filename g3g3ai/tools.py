@@ -1273,7 +1273,8 @@ class ToolContext:
     def _run_command(self, a: dict) -> str:
         cwd = self.files.resolve(a["cwd"]) if a.get("cwd") else self.workdir()
         timeout = min(int(a.get("timeout") or 120), 1800)
-        kw = dict(cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
+        from . import extras
+        kw = dict(cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", env=extras.command_env(),
                   creationflags=NO_WINDOW, stdin=subprocess.DEVNULL, bufsize=1)
         if sys.platform != "win32":
             kw["start_new_session"] = True  # para poder matar el comando y sus hijos

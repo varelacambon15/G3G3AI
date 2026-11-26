@@ -36,7 +36,7 @@ from .profiles import profile_for
 from .undo import UndoJournal
 from .engine import EngineInstaller
 from . import documents as D
-from . import devtools, hardware, images, ollama, web
+from . import devtools, extras, hardware, images, ollama, web
 from .context import HistoryBuilder
 from .sync import INTERVAL as SYNC_INTERVAL, Sync, SyncError, new_key as new_sync_key
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
@@ -304,6 +304,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         port = cfg["port"]
         return {
             "version": __version__,
+            "extras": extras.summary(),
             "llama": llama.status(),
             "memory": meminfo(),
             "cpu_count": os.cpu_count(),
@@ -663,7 +664,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                     add("local", "Modelo local", "ok", f"{llama.status()['model']} responde ({time.time() - t0:.1f} s)",
                         "En Modelos, «Probar con el agente» comprueba además si sabe usar herramientas.", "models", 1)
             elif not binary:
-                add("local", "Modelo local", "warn", "No está instalado el motor de modelos locales (llama.cpp).",
+                add("local", "Modelo local", "warn", "No está instalado el motor de modelos locales (llama.cpp). "
+                    "La edición completa de G3G3AI ya lo incluye.",
                     "Modelos → instalar el motor. O usa solo proveedores en la nube.", "models", 1)
             elif llama.status().get("error"):
                 add("local", "Modelo local", "error", "El último modelo no pudo cargarse: " + str(llama.status()["error"])[:200],
@@ -769,6 +771,11 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             else:
                 add("mail", "Correo", "ok", f"{st['messages']} mensajes indexados", order=5)
 
+        ex = extras.summary()
+        if ex["dir"]:
+            have = [n for k, n in (("llama_cpu", "motor local (CPU)"), ("llama_vulkan", "motor local (gráfica)"), ("sd", "imágenes"),
+                                   ("python", "Python"), ("git", "Git")) if ex[k]]
+            add("extras", "Edición completa", "ok", "Incluye: " + ", ".join(have), order=9)
         # --- Disco y equipo
         try:
             free = shutil.disk_usage(DATA_DIR if DATA_DIR.exists() else Path.home()).free / 1024 ** 3

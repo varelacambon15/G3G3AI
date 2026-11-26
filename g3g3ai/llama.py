@@ -21,11 +21,14 @@ EXE = "llama-server.exe" if sys.platform == "win32" else "llama-server"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-def find_llama_server(configured: str = "") -> str | None:
+def find_llama_server(configured: str = "", prefer_gpu: bool = False) -> str | None:
+    from . import extras
     candidates = [configured, str(DATA_DIR / "llama.cpp" / "build" / "bin" / EXE)]
     engine = DATA_DIR / "engine"
     if engine.is_dir():
         candidates += [str(p) for p in sorted(engine.rglob(EXE))]
+    bundled = extras.llama_server(prefer_gpu)          # edición completa: motor incluido, sin descargar nada
+    candidates.append(str(bundled) if bundled else "")
     candidates.append(shutil.which("llama-server") or "")
     for c in candidates:
         if c and Path(c).is_file() and (sys.platform == "win32" or os.access(c, os.X_OK)):
@@ -91,7 +94,7 @@ class LlamaManager:
                    gpu_layers: int | None = None, extra_args: str | None = None) -> dict:
         async with self._lock:
             await self._stop_locked()
-            binary = find_llama_server(self.cfg["llama_server_path"])
+            binary = find_llama_server(self.cfg["llama_server_path"], prefer_gpu=int((gpu_layers if gpu_layers is not None else self.cfg["llama_gpu_layers"]) or 0) > 0)
             if not binary:
                 self.state, self.error = "error", (
                     "No se encuentra llama-server. Instálalo desde Modelos → Motor llama.cpp "

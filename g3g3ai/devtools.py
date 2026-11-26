@@ -61,7 +61,9 @@ def system_python() -> list[str] | None:
         code, out = _run(c + ["--version"])
         if code == 0 and "Python 3" in out:
             return c
-    return None
+    from . import extras
+    py = extras.python_exe()                           # edición completa: Python portátil incluido
+    return [str(py)] if py else None
 
 
 def devenv_python(cfg=None) -> Path | None:

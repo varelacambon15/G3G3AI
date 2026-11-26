@@ -2343,3 +2343,72 @@ def test_team_director_delegates_to_members(env):
     import asyncio
     from g3g3ai import team as TM
     assert TM.find(saved, "el programador")["name"] == "Programador" and TM.find(saved, "nadie") is None
+
+
+def test_bundled_extras_are_found_and_used(env, monkeypatch, tmp_path):
+    """Edición completa: motores, Python y Git incluidos junto al ejecutable se usan sin instalar nada."""
+    import asyncio
+    from g3g3ai import extras, llama, images, devtools
+    client, cfg, home, tmp = env
+    ex = tmp_path / "G3G3AI-extras"
+    exe = ".exe" if sys.platform == "win32" else ""
+    for sub, name in (("llama-cpu/bin", "llama-server"), ("llama-vulkan", "llama-server"), ("sd", "sd")):
+        p = ex / sub / (name + exe); p.parent.mkdir(parents=True); p.write_text("x"); p.chmod(0o755)
+    py = ex / "python" / ("python.exe" if sys.platform == "win32" else "bin/python3")
+    py.parent.mkdir(parents=True); py.write_text("x"); py.chmod(0o755)
+    monkeypatch.setenv("G3G3AI_EXTRAS", str(ex))
+    monkeypatch.setattr(llama.shutil, "which", lambda *a, **k: None)
+    assert extras.llama_server(prefer_gpu=False).parent.name == "bin"            # CPU por defecto
+    assert extras.llama_server(prefer_gpu=True).parent.name == "llama-vulkan"   # gráfica si hay capas en GPU
+    assert llama.find_llama_server("") == str(extras.llama_server(False))
+    cfg.set("sd_path", "")
+    monkeypatch.setattr(images.shutil, "which", lambda *a, **k: None)
+    assert images.find_sd(cfg) == str(ex / "sd" / ("sd" + exe))
+    monkeypatch.setattr(devtools.shutil, "which", lambda *a, **k: None)
+    assert devtools.system_python() == [str(py)]
+    env_ = extras.command_env()
+    assert env_["PATH"].split(os.pathsep)[0] == str(py.parent)                    # «python» en los comandos
+    s = extras.summary()
+    assert s["llama_cpu"] and s["llama_vulkan"] and s["sd"] and s["python"]
+    h = auth(cfg)
+    assert client.get("/api/status", headers=h).json()["extras"]["python"] is True
+    d = {c["id"]: c for c in client.get("/api/diagnostics", headers=h).json()["checks"]}
+    assert d["extras"]["status"] == "ok" and "Python" in d["extras"]["detail"]
+    monkeypatch.delenv("G3G3AI_EXTRAS")
+    assert extras.extras_dir() is None or extras.extras_dir().name == "G3G3AI-extras"
+
+
+def test_fetch_extras_picks_the_right_files():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "packaging"))
+    import fetch_extras as F
+    assets = [{"name": n} for n in [
+        "llama-b7000-bin-win-cpu-x64.zip", "llama-b7000-bin-win-vulkan-x64.zip", "llama-b7000-bin-win-cuda-12.4-x64.zip",
+        "llama-b7000-bin-ubuntu-x64.zip", "llama-b7000-bin-ubuntu-vulkan-x64.zip", "llama-b7000-bin-win-cpu-arm64.zip",
+        "cpython-3.12.12+20261101-x86_64-pc-windows-msvc-install_only.tar.gz",
+        "cpython-3.12.12+20261101-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+        "cpython-3.13.9+20261101-x86_64-pc-windows-msvc-install_only.tar.gz",
+        "MinGit-2.52.0-64-bit.zip", "MinGit-2.52.0-busybox-64-bit.zip", "Git-2.52.0-64-bit.exe"]]
+    src = dict((s[0], s[2]) for s in F.SOURCES["windows"])
+    assert F.pick(assets, src["llama-cpu"])["name"] == "llama-b7000-bin-win-cpu-x64.zip"
+    assert F.pick(assets, src["llama-vulkan"])["name"] == "llama-b7000-bin-win-vulkan-x64.zip"
+    assert F.pick(assets, src["python"])["name"] == "cpython-3.12.12+20261101-x86_64-pc-windows-msvc-install_only.tar.gz"
+    assert F.pick(assets, src["git"])["name"] == "MinGit-2.52.0-64-bit.zip"
+    lin = dict((s[0], s[2]) for s in F.SOURCES["linux"])
+    assert F.pick(assets, lin["llama-cpu"])["name"] == "llama-b7000-bin-ubuntu-x64.zip"
+
+
+def test_fetch_extras_extracts_and_flattens(tmp_path):
+    import io, tarfile, zipfile
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "packaging"))
+    import fetch_extras as F
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:          # como python-build-standalone: todo dentro de «python/»
+        data = b"exe"
+        info = tarfile.TarInfo("python/python.exe"); info.size = len(data); t.addfile(info, io.BytesIO(data))
+    F.extract(buf.getvalue(), "cpython.tar.gz", tmp_path / "python")
+    assert (tmp_path / "python" / "python.exe").read_bytes() == b"exe"
+    zbuf = io.BytesIO()
+    with zipfile.ZipFile(zbuf, "w") as z:                       # como llama.cpp: archivos sueltos
+        z.writestr("llama-server.exe", "x"); z.writestr("ggml.dll", "y")
+    F.extract(zbuf.getvalue(), "llama.zip", tmp_path / "llama-cpu")
+    assert sorted(p.name for p in (tmp_path / "llama-cpu").iterdir()) == ["ggml.dll", "llama-server.exe"]
