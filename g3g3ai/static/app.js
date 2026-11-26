@@ -1968,6 +1968,7 @@ function renderLlamaStatus() {
   const mem = S.status.memory;
   box.append(h("div", { class: "row" },
     h("span", { class: "grow" }, h("b", {}, { ready: "Listo", loading: "Cargando…", error: "Error", stopped: "Ningún modelo cargado" }[l.state]),
+      l.state === "stopped" ? h("span", { class: "sub muted" }, " — se carga solo cuando escribes en el chat") : null,
       l.model ? ` — ${l.model}` : "", l.params?.ctx ? h("span", { class: "sub muted" }, ` (ctx ${l.params.ctx}, ${l.params.threads} hilos)`) : null),
     l.state === "ready" ? h("button", { class: "ghost", title: "Comprueba si el modelo sabe usar herramientas y a qué velocidad va", onclick: async (ev) => {
       const b = ev.target; b.disabled = true; b.textContent = "Probando…";
@@ -1979,7 +1980,7 @@ function renderLlamaStatus() {
       } catch (e) { alert("❌ " + e.message); }
       b.disabled = false; b.textContent = "🧪 Probar con el agente";
     } }, "🧪 Probar con el agente") : null,
-    l.state === "ready" || l.state === "loading" ? h("button", { class: "danger", onclick: async () => { await api("/api/llama/unload", { method: "POST" }); refreshStatus(); refreshModels(); loadProviders(); } }, "Descargar de memoria") : null));
+    l.state === "ready" || l.state === "loading" ? h("button", { class: "ghost", title: "Cierra el modelo y libera la memoria que ocupa (no lo borra del disco)", onclick: async () => { await api("/api/llama/unload", { method: "POST" }); refreshStatus(); refreshModels(); loadProviders(); } }, "Liberar memoria") : null));
   if (l.error) box.append(h("pre", { class: "logs error" }, l.error));
   if (!l.binary) box.append(engineBox());
   if (mem?.total) box.append(h("p", { class: "muted" }, `RAM disponible: ${fmtSize(mem.available)} de ${fmtSize(mem.total)}`));
@@ -1994,22 +1995,64 @@ async function renderHardware(refresh = false) {
   const r = d.recommendation, sm = r.summary;
   const where = { gpu: "entero en la gráfica (rápido)", cpu: "en el procesador", mixto: "repartido entre gráfica y procesador" }[r.main.where];
   box.innerHTML = "";
-  box.append(h("p", { class: "muted" }, `${sm.cpu} · ${sm.cores} núcleos · ${sm.ram_gb} GB de RAM · gráfica: ${sm.gpu}` + (sm.vram_gb ? ` (${sm.vram_gb} GB)` : "")));
-  box.append(h("p", {}, "Modelo ideal: ", h("b", {}, r.main.tier), ` en ${r.quant}, ${where}. Motor: `, h("b", {}, r.engine === "vulkan" ? "Vulkan (gráfica)" : "CPU"), "."));
-  const st = r.settings;
-  box.append(h("p", { class: "muted" }, `Ajustes: contexto ${st.llama_ctx} · hilos ${st.llama_threads} · capas GPU ${st.llama_gpu_layers}` + (st.llama_extra_args ? ` · ${st.llama_extra_args}` : "")));
+  box.append(h("p", { class: "muted" }, `Tu equipo: ${sm.ram_gb} GB de RAM · ` + (sm.vram_gb ? `gráfica ${sm.gpu} (${sm.vram_gb} GB)` : "sin gráfica dedicada")
+    + ` → modelos de hasta ${r.main.tier}.`));
+  // Modelos concretos, con un clic: descargar (si hace falta) y cargar
+  const list = h("div", { class: "picks" });
+  (r.picks || []).forEach((pk, i) => {
+    const btn = h("button", { class: i === 0 ? "primary small" : "ghost small" }, pk.path ? "Usar" : "Descargar y usar");
+    btn.onclick = () => quickModel(pk, btn);
+    list.append(h("div", { class: "pick" + (i === 0 ? " best" : "") },
+      h("div", { class: "pick-info" }, h("b", {}, pk.name, i === 0 ? h("span", { class: "badge ok" }, "Recomendado") : null),
+        h("span", { class: "muted" }, pk.why), h("small", { class: "muted" }, pk.path ? "✔ Descargado" : `~${pk.gb} GB`)),
+      btn));
+  });
+  box.append(list);
   if (r.notes.length) box.append(h("ul", { class: "warnings-list" }, r.notes.map((n) => h("li", {}, n))));
-  if (r.images) box.append(h("p", { class: "muted" }, "🎨 " + r.images));
+  // Lo técnico, plegado
+  const st = r.settings;
   const searchBtn = (q, label) => h("button", { class: "ghost small", onclick: () => { $("#hub-q").value = q; hubSearch(q); $("#hub-q").scrollIntoView({ behavior: "smooth", block: "center" }); } }, label);
-  box.append(h("div", { class: "row" },
-    h("button", { class: "primary small", onclick: async () => {
-      await api("/api/hardware/apply", { method: "POST" }); S.settings = null;
-      $("#p-ctx").value = st.llama_ctx; $("#p-threads").value = st.llama_threads; $("#p-ngl").value = st.llama_gpu_layers;
-      toast("Ajustes aplicados ✔ (se usan al cargar el próximo modelo)");
-    } }, "Aplicar ajustes"),
-    r.main.searches.map((q) => searchBtn(q, "🔎 " + q)),
-    searchBtn(r.vision_search, "👁 con visión"),
-    h("button", { class: "ghost small", onclick: () => renderHardware(true) }, "Volver a analizar")));
+  box.append(h("details", { class: "tech" }, h("summary", {}, "Detalles técnicos"),
+    h("p", { class: "muted" }, `${sm.cpu} · ${sm.cores} núcleos · ${sm.ram_gb} GB de RAM · gráfica: ${sm.gpu}` + (sm.vram_gb ? ` (${sm.vram_gb} GB)` : "")),
+    h("p", {}, "Tamaño ideal: ", h("b", {}, r.main.tier), ` en ${r.quant}, ${where}. Motor: `, h("b", {}, r.engine === "vulkan" ? "Vulkan (gráfica)" : "CPU"), "."),
+    h("p", { class: "muted" }, `Ajustes sugeridos: contexto ${st.llama_ctx} · hilos ${st.llama_threads} · capas GPU ${st.llama_gpu_layers}` + (st.llama_extra_args ? ` · ${st.llama_extra_args}` : "")),
+    r.images ? h("p", { class: "muted" }, "🎨 " + r.images) : null,
+    h("div", { class: "row" },
+      h("button", { class: "ghost small", onclick: async () => {
+        await api("/api/hardware/apply", { method: "POST" }); S.settings = null;
+        $("#p-ctx").value = st.llama_ctx; $("#p-threads").value = st.llama_threads; $("#p-ngl").value = st.llama_gpu_layers;
+        toast("Ajustes aplicados ✔ (se usan al cargar el próximo modelo)");
+      } }, "Aplicar ajustes sugeridos"),
+      r.main.searches.map((q) => searchBtn(q, "🔎 " + q)),
+      h("button", { class: "ghost small", onclick: () => renderHardware(true) }, "Volver a analizar"))));
+}
+// «Descargar y usar»: descarga el archivo adecuado (con su visión si la tiene), lo carga y lleva al chat
+async function quickModel(pk, btn) {
+  const label = btn.textContent; btn.disabled = true;
+  const load = async (path) => {
+    btn.textContent = "Cargando…";
+    await api("/api/llama/load", { method: "POST", body: { path } });
+    S.ms = null; await loadProviders(); refreshStatus(); refreshModels();
+    const sel = $("#model-select"); if ([...sel.options].some((o) => o.value === "local::local")) { sel.value = "local::local"; sel.dispatchEvent(new Event("change")); }
+    toast(`${pk.name} se está cargando. Ya puedes escribir en el chat.`, 5000);
+    btn.textContent = "✔ En uso"; renderHardware(true);
+  };
+  try {
+    if (pk.path) return await load(pk.path);
+    btn.textContent = "Preparando…";
+    const d = await api("/api/models/quick", { method: "POST", body: { repo: pk.repo, vision: pk.vision } });
+    if (!d.id) return await load(d.dest);
+    const tick = setInterval(async () => {
+      const x = (await api("/api/hub/downloads")).find((y) => y.id === d.id);
+      if (!x) return;
+      if (x.status === "downloading") btn.textContent = `Descargando ${x.total ? Math.round(100 * x.done / x.total) : 0} %`;
+      if (["done", "error", "cancelled"].includes(x.status)) {
+        clearInterval(tick);
+        if (x.status === "done") await load(d.dest);
+        else { toast("No se pudo descargar: " + (x.error || x.status), 7000); btn.disabled = false; btn.textContent = label; }
+      }
+    }, 1000);
+  } catch (e) { toast(e.message, 7000); btn.disabled = false; btn.textContent = label; }
 }
 // --- Ollama -----------------------------------------------------------------------------------
 let ollamaTimer = null;

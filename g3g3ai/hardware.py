@@ -263,6 +263,32 @@ TIERS = [
 ]
 
 
+# Modelos concretos que se ofrecen con un clic según lo que cabe (repos oficiales o de unsloth, Q4_K_M).
+# (nombre, repositorio, GB aproximados en Q4_K_M, ve imágenes, para qué)
+PICKS = {
+    "qwen3-4b": ("Qwen3 4B", "Qwen/Qwen3-4B-GGUF", 2.5, False, "Rápido. Chat, resúmenes y correo."),
+    "qwen3-8b": ("Qwen3 8B", "Qwen/Qwen3-8B-GGUF", 5.0, False, "Equilibrado. Usa bien las herramientas del agente."),
+    "qwen3-14b": ("Qwen3 14B", "Qwen/Qwen3-14B-GGUF", 9.0, False, "El más capaz que va fluido aquí. Recomendado para el agente."),
+    "qwen3-30b": ("Qwen3 30B-A3B", "Qwen/Qwen3-30B-A3B-GGUF", 18.6, False, "Muy capaz y rápido para su tamaño (MoE)."),
+    "qwen3-32b": ("Qwen3 32B", "Qwen/Qwen3-32B-GGUF", 19.8, False, "Máxima calidad en local."),
+    "gemma3-4b": ("Gemma 3 4B · ve imágenes", "unsloth/gemma-3-4b-it-GGUF", 3.3, True, "Entiende fotos y capturas."),
+    "gemma3-12b": ("Gemma 3 12B · ve imágenes", "unsloth/gemma-3-12b-it-GGUF", 8.1, True, "Entiende fotos, capturas y documentos."),
+    "gemma3-27b": ("Gemma 3 27B · ve imágenes", "unsloth/gemma-3-27b-it-GGUF", 17.3, True, "Visión de máxima calidad."),
+}
+TIER_PICKS = {
+    "4b": ["qwen3-4b", "gemma3-4b"],
+    "8b": ["qwen3-8b", "qwen3-4b", "gemma3-4b"],
+    "14b": ["qwen3-14b", "qwen3-8b", "gemma3-12b"],
+    "moe": ["qwen3-30b", "qwen3-14b", "gemma3-12b"],
+    "32b": ["qwen3-32b", "qwen3-30b", "gemma3-27b"],
+}
+
+
+def picks_for(tier_key: str) -> list[dict]:
+    return [{"id": k, "name": PICKS[k][0], "repo": PICKS[k][1], "gb": PICKS[k][2], "vision": PICKS[k][3], "why": PICKS[k][4]}
+            for k in TIER_PICKS.get(tier_key, TIER_PICKS["4b"])]
+
+
 def _gb(n: int) -> float:
     return round(n / GB, 1)
 
@@ -358,6 +384,7 @@ def recommend(hw: dict) -> dict:
         "settings": {"llama_ctx": ctx, "llama_threads": threads, "llama_gpu_layers": gpu_layers, "llama_extra_args": extra},
         "quant": "Q4_K_M",
         "vision_search": vision,
+        "picks": picks_for(main[0]),
         "images": images,
         "notes": notes,
     }

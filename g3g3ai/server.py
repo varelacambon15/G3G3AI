@@ -1025,8 +1025,32 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
 
     builder = HistoryBuilder(db, cfg, llama, provider_for, provider_available, complete_messages)
 
+    IMAGE_GGUF = re.compile(r"(^|[-_.])(sd|sdxl|flux|stable-diffusion|z-image|qwen-image|wan)([-_.\d]|$)", re.I)
+
+    def pick_local_model() -> str | None:
+        """Modelo local a cargar sin preguntar: el último usado o, si no, el descargado más reciente (no de imágenes)."""
+        last = cfg["last_model"]
+        if last and Path(last).is_file():
+            return last
+        cands = [m for m in hub.local_models() if not m["mmproj"] and not IMAGE_GGUF.search(m["name"])]
+        cands.sort(key=lambda m: Path(m["path"]).stat().st_mtime, reverse=True)
+        return cands[0]["path"] if cands else None
+
+    async def ensure_local_loaded(path: str | None):
+        """Carga el modelo local (si hace falta) informando del avance; devuelve un error o None."""
+        if not llama.ready and llama.state != "loading" and path:
+            await llama.load(path)
+        name = Path(llama.model_path or path or "").name.removesuffix(".gguf") or "el modelo local"
+        t0 = time.time()
+        while llama.state == "loading":
+            yield {"type": "status", "text": f"⏳ Cargando {name}… {int(time.time() - t0)} s (sólo la primera vez)"}
+            await asyncio.sleep(1)
+        if not llama.ready:
+            yield {"type": "error", "message": f"No se pudo cargar {name}: {(llama.error or 'error desconocido')[:400]}"}
+
     @app.post("/api/chat")
     async def chat(body: dict):
+        autoload = None
         cid = body.get("conversation_id")
         pid = body.get("provider") or LOCAL_PROVIDER
         model = body.get("model") or "local"
@@ -1059,8 +1083,11 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                                          "o configura un proveedor API (Ajustes → Modo Auto).")
         else:
             provider_for(pid)
-            if pid == LOCAL_PROVIDER and not llama.ready:
-                raise HTTPException(409, "No hay ningún modelo local cargado. Cárgalo en la pestaña Modelos.")
+            if pid == LOCAL_PROVIDER and not llama.ready and llama.state != "loading":
+                autoload = pick_local_model()
+                if not autoload:
+                    raise HTTPException(409, "No tienes ningún modelo local descargado. En «Modelos» puedes descargar "
+                                             "el recomendado para tu equipo con un clic, o elige un modelo por API.")
             candidates = [(pid, model, None)]
 
         turn_mid = None
@@ -1207,6 +1234,14 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             used_in = used_out = 0
             providers_mod.SESSION.set(cid)      # cabecera de sesión de OpenCode Go (también en títulos y resúmenes)
             yield sse({"type": "start", "conversation_id": cid})
+            if pid == LOCAL_PROVIDER and not llama.ready:   # se escribió sin modelo cargado: se carga solo
+                failed = False
+                async for ev in ensure_local_loaded(autoload):
+                    failed = failed or ev["type"] == "error"
+                    yield sse(ev)
+                if failed:
+                    yield sse({"type": "done"})
+                    return
             if direct_image is not None:  # «/imagen …»: sin pasar por el modelo de texto
                 yield sse({"type": "status", "text": "🎨 Generando imagen…"})
                 try:
@@ -1391,7 +1426,10 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         try:
             return await engine_of(kind).assets()
         except httpx.HTTPError as e:
-            raise HTTPException(502, f"No se pudo consultar GitHub: {e}") from e
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            why = ("GitHub ha limitado las consultas desde tu conexión; vuelve a intentarlo en unos minutos"
+                   if code in (403, 429) else "no hay conexión con GitHub")
+            raise HTTPException(502, f"No se pudo comprobar qué versión descargar: {why}.") from e
 
     @app.post("/api/engine/install")
     async def engine_install(body: dict):
@@ -1409,7 +1447,39 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         if refresh or "hw" not in hw_cache:
             hw_cache["hw"] = await asyncio.to_thread(hardware.detect)
         hw = hw_cache["hw"]
-        return {"hardware": hw, "recommendation": hardware.recommend(hw)}
+        rec = hardware.recommend(hw)
+        local = [m for m in hub.local_models() if not m["mmproj"]]
+        for pk in rec.get("picks", []):      # ¿ya está descargado?
+            pk["path"] = next((m["path"] for m in local if m["repo"] == pk["repo"]), None)
+        return {"hardware": hw, "recommendation": rec}
+
+    QUANT_PREF = ["Q4_K_M", "Q4_K_S", "IQ4_XS", "Q4_0", "Q5_K_M", "Q3_K_M"]
+
+    @app.post("/api/models/quick")
+    async def models_quick(body: dict):
+        """«Descargar y usar»: elige el archivo Q4_K_M (y el proyector de visión si hace falta) y lo descarga."""
+        repo = body.get("repo", "")
+        if repo not in {p[1] for p in hardware.PICKS.values()} and not body.get("any"):
+            raise HTTPException(400, "Modelo no reconocido")
+        try:
+            groups = await hub.files(repo)
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"No se pudo consultar Hugging Face: {e}") from e
+        models = [g for g in groups if not g["mmproj"]]
+        main = next((g for q in QUANT_PREF for g in models if (g["quant"] or "").upper() == q), None) or (models[0] if models else None)
+        if not main:
+            raise HTTPException(404, "Ese repositorio no tiene modelos GGUF")
+        files = list(main["files"])
+        if body.get("vision"):
+            proj = sorted([g for g in groups if g["mmproj"]], key=lambda g: ("f16" not in g["name"].lower(), g["size"]))
+            if proj:
+                files += proj[0]["files"]
+        dest = hub.models_dir / repo.replace("/", "__") / Path(main["files"][0]).name
+        if all((hub.models_dir / repo.replace("/", "__") / Path(f).name).exists() for f in files):
+            return {"id": None, "status": "done", "dest": str(dest)}
+        d = hub.start(repo, files)
+        d["dest"] = str(dest)
+        return d
 
     @app.post("/api/hardware/apply")
     async def hardware_apply():

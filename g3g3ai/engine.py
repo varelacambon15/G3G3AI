@@ -19,8 +19,10 @@ import httpx
 from .config import DATA_DIR
 from .llama import EXE
 
-RELEASES = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
-SD_RELEASES = "https://api.github.com/repos/leejet/stable-diffusion.cpp/releases/latest"
+# Se miran las últimas publicaciones, no sólo «latest»: llama.cpp publica los binarios en cada compilación (bNNNN)
+# y su «latest» puede ser una versión sin ellos.
+RELEASES = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30"
+SD_RELEASES = "https://api.github.com/repos/leejet/stable-diffusion.cpp/releases?per_page=30"
 
 
 def sd_rules() -> list[tuple[str, re.Pattern, str]]:
@@ -30,12 +32,13 @@ def sd_rules() -> list[tuple[str, re.Pattern, str]]:
     if sys.platform == "win32":
         return [
             ("vulkan", re.compile(r"bin-win-vulkan-x64\.zip$", re.I), "GPU (Vulkan) — recomendado si tienes gráfica."),
-            ("cpu", re.compile(r"bin-win-avx2-x64\.zip$", re.I), "Sólo procesador (lento)."),
+            ("cpu", re.compile(r"bin-win-(cpu|avx2)-x64\.zip$", re.I), "Sólo procesador (lento)."),
         ]
     if sys.platform == "darwin":
         return [("metal", re.compile(r"bin-Darwin.*" + ("arm64" if arm else "x86_64") + r".*\.zip$", re.I), "Mac")]
     a = "(aarch64|arm64)" if arm else "x86_64"
-    return [("cpu", re.compile(r"bin-Linux.*" + a + r".*\.zip$", re.I), "Linux")]
+    return [("vulkan", re.compile(r"bin-Linux-[\w.-]*" + a + r"-vulkan\.zip$", re.I), "GPU (Vulkan)"),
+            ("cpu", re.compile(r"bin-Linux-[\w.-]*" + a + r"\.zip$", re.I), "Sólo procesador")]
 
 
 def platform_rules() -> list[tuple[str, re.Pattern, str]]:
@@ -78,14 +81,20 @@ class EngineInstaller:
                                      headers={"Accept": "application/vnd.github+json"}) as c:
             r = await c.get(self.releases)
             r.raise_for_status()
-        rel = r.json()
-        out = []
+        releases = [x for x in r.json() if not x.get("draft")]
+        return self.pick(releases)
+
+    def pick(self, releases: list[dict]) -> dict:
+        out, tag = [], None
         for variant, pat, desc in self.rules():
-            for a in rel.get("assets", []):
-                if pat.search(a["name"]):
+            for rel in releases:                      # la más reciente que tenga ese binario
+                a = next((a for a in rel.get("assets", []) if pat.search(a["name"])), None)
+                if a:
                     out.append({"variant": variant, "name": a["name"], "url": a["browser_download_url"],
                                 "size": a.get("size", 0), "description": desc})
+                    tag = tag or rel.get("tag_name")
                     break
+        rel = {"tag_name": tag}
         note = None
         if not out:
             note = ("No hay binarios precompilados para esta plataforma "

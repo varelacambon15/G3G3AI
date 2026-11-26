@@ -157,30 +157,23 @@
         <div class="page">
           <h1 class="page-title">Modelos</h1>
           <div class="card">
-            <h2>Recomendado para este equipo</h2>
-            <div id="hw-box"><p class="muted">Analizando el equipo…</p></div>
-          </div>
-          <div class="card">
-            <h2>Ollama</h2>
-            <div id="ollama-box"><p class="muted">Comprobando Ollama…</p></div>
-          </div>
-          <div class="card">
-            <h2>Modelo cargado</h2>
+            <h2>Tu modelo local <small id="disk-free"></small></h2>
             <div id="llama-status"></div>
-            <details><summary>Registro de llama-server</summary><pre id="llama-logs" class="logs"></pre></details>
-          </div>
-          <div class="card">
-            <h2>Mis modelos <small id="disk-free"></small></h2>
-            <div class="row params">
-              <label>Contexto <input id="p-ctx" type="number" min="512" step="512"></label>
-              <label>Hilos <input id="p-threads" type="number" min="0" placeholder="auto"></label>
-              <label>Capas GPU <input id="p-ngl" type="number" min="0"></label>
-            </div>
             <ul id="local-models" class="list"></ul>
+            <details class="adv-local">
+              <summary>Opciones avanzadas</summary>
+              <p class="muted small">Se aplican al cargar un modelo. 0 o vacío = automático (lo normal).</p>
+              <div class="row params">
+                <label>Contexto <input id="p-ctx" type="number" min="512" step="512"></label>
+                <label>Hilos <input id="p-threads" type="number" min="0" placeholder="auto"></label>
+                <label>Capas GPU <input id="p-ngl" type="number" min="0"></label>
+              </div>
+              <details><summary>Registro de llama-server</summary><pre id="llama-logs" class="logs"></pre></details>
+            </details>
           </div>
           <div class="card">
-            <h2>Generación de imágenes</h2>
-            <div id="image-engine"></div>
+            <h2>Recomendados para tu equipo</h2>
+            <div id="hw-box"><p class="muted">Analizando el equipo…</p></div>
           </div>
           <div class="card">
             <h2>Buscar y descargar modelos <small>Hugging Face · formato GGUF</small></h2>
@@ -228,6 +221,14 @@
             <p id="hub-count" class="muted small-text"></p>
             <div id="downloads"></div>
             <ul id="hub-results" class="list"></ul>
+          </div>
+          <details class="card fold-card">
+            <summary><h2>Otro motor: Ollama</h2><small class="muted">Opcional. Descarga modelos por su nombre y usa la gráfica sola.</small></summary>
+            <div id="ollama-box"><p class="muted">Comprobando Ollama…</p></div>
+          </details>
+          <div class="card">
+            <h2>Generación de imágenes</h2>
+            <div id="image-engine"></div>
           </div>
         </div>
       </section>

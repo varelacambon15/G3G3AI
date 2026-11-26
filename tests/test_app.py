@@ -108,7 +108,7 @@ def test_local_model_chat_and_tools(env):
     h = auth(cfg)
     models = client.get("/api/models/local", headers=h).json()
     assert models[0]["repo"] == "org/repo" and models[0]["quant"] == "Q4_K_M"
-    assert client.post("/api/chat", headers=h, json={"message": "hola"}).status_code == 409
+    # sin modelo cargado ya no falla: se carga solo (ver test_local_model_loads_itself_when_you_write)
     client.post("/api/llama/load", headers=h, json={"path": models[0]["path"]})
     for _ in range(50):
         if client.get("/api/llama/status", headers=h).json()["state"] == "ready":
@@ -2641,3 +2641,37 @@ def test_model_naming_a_tool_is_told_to_use_it(env):
     assert any("en vez de usarla" in e.get("text", "") for e in evs if e["type"] == "status")
     conv = client.get(f"/api/conversations/{next(e['conversation_id'] for e in evs if e['type'] == 'start')}", headers=h).json()
     assert conv["messages"][-1]["content"].strip() == "Ya lo he buscado yo."
+
+
+def test_local_model_loads_itself_when_you_write(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    assert client.get("/api/llama/status", headers=h).json()["state"] != "ready"
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "texto largo"}))
+    assert any("Cargando" in e.get("text", "") for e in evs if e["type"] == "status")
+    assert "primera parte" in "".join(e["text"] for e in evs if e["type"] == "content")
+    assert client.get("/api/llama/status", headers=h).json()["state"] == "ready"
+
+
+def test_no_local_model_downloaded_gives_clear_advice(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    for m in client.get("/api/models/local", headers=h).json():
+        Path(m["path"]).unlink()
+    r = client.post("/api/chat", headers=h, json={"message": "hola"})
+    assert r.status_code == 409 and "descargar" in r.json()["detail"]
+
+
+def test_engine_installer_finds_binaries_in_past_releases(monkeypatch):
+    from g3g3ai import engine as E
+    monkeypatch.setattr(E.sys, "platform", "win32")
+    monkeypatch.setattr(E.platform, "machine", lambda: "AMD64")
+    inst = E.EngineInstaller({}, "llama")
+    rels = [{"tag_name": "v1.0.0", "assets": [{"name": "nightly-tag.txt", "browser_download_url": "x"}]},
+            {"tag_name": "b12759", "assets": [{"name": f"llama-b12759-bin-win-{v}-x64.zip", "browser_download_url": v} for v in ("cpu", "vulkan")]}]
+    r = inst.pick(rels)
+    assert r["release"] == "b12759" and {a["variant"] for a in r["assets"]} == {"cpu", "vulkan"}
+    sd = E.EngineInstaller({}, "sd")
+    names = ["sd-master-52491bd-bin-win-cpu-x64.zip", "sd-master-52491bd-bin-win-vulkan-x64.zip", "cudart-sd-bin-win-cu12-x64.zip"]
+    r = sd.pick([{"tag_name": "master-1133", "assets": [{"name": n, "browser_download_url": n} for n in names]}])
+    assert {a["name"] for a in r["assets"]} == {names[0], names[1]}
