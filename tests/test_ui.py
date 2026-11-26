@@ -196,3 +196,33 @@ def test_first_run_wizard_and_check_everything(live):
         page.wait_for_selector("#settings-tabs [data-stab=providers].active")
         browser.close()
     assert errors == [], errors
+
+
+def test_team_view(live):
+    base, cfg = live
+    errors: list[str] = []
+    with playwright_sync.sync_playwright() as p:
+        browser = launch(p)
+        page = browser.new_context(viewport={"width": 1280, "height": 820}).new_page()
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/?token={cfg['token']}")
+        page.click("[data-view=team]")
+        page.wait_for_selector(".tnode.dir >> text=G3G3AI")
+        assert page.is_visible(".tnode.ext >> text=Claude Code")                   # el director externo, arriba
+        page.click("#team-templates button:has-text('Investigador')")
+        page.click("#team-templates button:has-text('Revisor')")
+        assert page.locator(".tnode.mem").count() == 2 and page.is_checked("#team-enabled")
+        assert page.locator(".tlines path").count() == 3                            # Claude→G3G3AI y G3G3AI→cada miembro
+        page.fill("#team-editor input", "Revisora")                                 # editar el seleccionado (Revisor)
+        page.wait_for_selector(".tnode.mem >> text=Revisora")
+        assert page.evaluate("document.activeElement.tagName") == "INPUT"           # se puede seguir escribiendo
+        page.click("#team-save")
+        page.wait_for_selector("#toast >> text=Equipo guardado")
+        assert [m["name"] for m in cfg["team"]["members"]] == ["Investigador", "Revisora"] and cfg["team"]["enabled"]
+        page.click(".tnode.ext")
+        page.wait_for_selector("#team-editor >> text=claude mcp add")
+        page.click(".tnode.mem >> text=Investigador")
+        page.click("#team-editor button:has-text('Quitar del equipo')")
+        assert page.locator(".tnode.mem").count() == 1
+        browser.close()
+    assert errors == [], errors

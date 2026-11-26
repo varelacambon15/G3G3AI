@@ -44,7 +44,7 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 FILE_TOOLS = {"list_dir", "read_file", "search_files", "grep_files"}
 WRITE_TOOLS = {"write_file", "edit_file", "create_document", "mail_save_attachments"}
-PARALLEL_TOOLS = {"delegate", "delegate_edit", "list_dir", "read_file", "search_files", "grep_files", "web_search", "fetch_url"}
+PARALLEL_TOOLS = {"team_delegate", "delegate", "delegate_edit", "list_dir", "read_file", "search_files", "grep_files", "web_search", "fetch_url"}
 COMMAND_TOOLS = {"run_command", "build_exe"}
 WEB_TOOLS = {"web_search", "fetch_url"}
 MEMORY_TOOLS = {"memory_save", "memory_delete"}
@@ -177,6 +177,11 @@ ALL_SPECS = {
                              "folder": {"type": "string", "description": "Parte del nombre de la carpeta (Inbox, Enviados…)"},
                              "limit": {"type": "integer", "description": "Máximo de resultados (por defecto 20, tope 50)"},
                              "include_junk": {"type": "boolean", "description": "Incluir papelera y spam"}})),
+    "team_delegate": ("Encarga una tarea a un miembro de tu equipo (otro modelo con un papel concreto) y devuelve su informe. "
+                      "Úsalo cuando la tarea encaje con su papel; dale todo el contexto que necesite, porque no ve esta "
+                      "conversación. Puedes repartir tareas independientes a varios miembros a la vez.",
+                      _schema({"member": {"type": "string", "description": "Nombre del miembro"},
+                               "task": {"type": "string", "description": "Tarea completa y autosuficiente"}}, ["member", "task"])),
     "diagnose": ("Comprueba de verdad cómo funciona G3G3AI en este equipo (modelo local, proveedores, web, correo, carpetas, "
                  "permisos, MCP, disco) y devuelve qué falla, por qué y qué ajuste cambiar. Úsalo cuando el usuario pregunte "
                  "por qué algo no funciona; luego propón el arreglo con app_settings (si es un ajuste) o explica el paso.",
@@ -343,6 +348,8 @@ class ToolContext:
         self.result_limit: int | None = None  # caracteres máximos por resultado (se fija en modelos locales)
         self.todos_dirty = False
         self.dirty = False  # se han modificado archivos y aún no se ha ejecutado nada para comprobarlo
+        self.team: dict | None = None           # equipo activo (director = este modelo)
+        self.team_runner: Callable[..., Awaitable[str]] | None = None
         self.diagnostics: Callable[[], Awaitable[dict]] | None = None  # «Comprobar todo» (lo fija el servidor)
         self.subagent: Callable[..., Awaitable[str]] | None = None  # lo fija el servidor: (tarea, write=False)
         self.mail = None             # MailIndex (búsqueda en el correo), lo fija el servidor si está activada
@@ -517,6 +524,8 @@ class ToolContext:
                 out.append("mail_save_attachments")
         if self.agent and not plan and not self.auto_all:
             out.append("request_folder_access")
+        if self.team and self.team.get("members") and self.team_runner and not self.auto_all:
+            out.append("team_delegate")
         if not self.auto_all:
             out.append("app_settings")
             if self.diagnostics:
@@ -537,6 +546,11 @@ class ToolContext:
 
     def _spec(self, n: str) -> tuple[str, dict]:
         desc, schema = ALL_SPECS[n] if n in ALL_SPECS else self.mcp.specs()[n]
+        if n == "team_delegate" and self.team:  # los miembros, en la propia descripción
+            from . import team as TM
+            names = [m["name"] for m in self.team["members"]]
+            desc = desc + " Miembros:\n" + TM.roster(self.team)
+            schema = {**schema, "properties": {**schema["properties"], "member": {"type": "string", "enum": names}}}
         return (compact_spec(desc, schema) if self.compact_specs else (desc, schema))
 
     def openai_specs(self) -> list[dict]:
@@ -612,6 +626,11 @@ class ToolContext:
         if self.web:
             parts.append("Puedes buscar en internet con web_search y leer páginas con fetch_url. "
                          "Cuando uses información de la web, cita las fuentes con enlaces.")
+        if self.team and self.team.get("members") and self.team_runner:
+            from . import team as TM
+            parts.append("## Tu equipo\nDiriges un equipo. Delega con team_delegate las tareas que encajen con el papel de "
+                         "cada miembro (puedes encargar varias a la vez) y revisa lo que te devuelvan antes de responder; "
+                         "lo que no encaje con nadie, hazlo tú.\n" + TM.roster(self.team))
         todos = self.state.get("todos") or []  # lo más cambiante, al final: el resto del prompt se reutiliza de la caché
         if self.agent and todos:
             mark = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}
@@ -819,6 +838,16 @@ class ToolContext:
                 return await asyncio.to_thread(self._save_attachments, args)
             if name == "request_folder_access":
                 return self._grant_folder(args)
+            if name == "team_delegate":
+                from . import team as TM
+                m = TM.find(self.team or {}, str(args.get("member", "")))
+                if not m:
+                    return f"Error: no hay ningún miembro llamado «{args.get('member')}». Miembros: " + \
+                        ", ".join(x["name"] for x in (self.team or {}).get("members", []))
+                task = str(args.get("task", "")).strip()
+                if not task:
+                    return "Error: falta «task»."
+                return await self.team_runner(m, task)
             if name == "diagnose":
                 if not self.diagnostics:
                     return "Error: el diagnóstico no está disponible aquí."

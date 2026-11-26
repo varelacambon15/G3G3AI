@@ -133,6 +133,17 @@ class H(BaseHTTPRequestHandler):
             note = "Agente" if "Herramientas del equipo desactivadas" in (msgs[0]["content"] if msgs[0]["role"] == "system" else "") else "ninguna nota"
             self.chunk({"choices": [{"delta": {"content": "Nota: " + note}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "miembro del equipo de G3G3AI" in sysmsg0 and last["role"] == "user":   # un miembro del equipo
+            self.chunk({"choices": [{"delta": {"content": "INFORME EQUIPO: dato-42"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if "team_delegate" in names and last["role"] == "user" and "pregunta al equipo" in str(last["content"]):
+            self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "t1", "function": {
+                "name": "team_delegate", "arguments": json.dumps({"member": "Investigador", "task": "busca el dato"})}}]},
+                "finish_reason": "tool_calls"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if last["role"] == "tool" and "dato-42" in str(last["content"]):
+            self.chunk({"choices": [{"delta": {"content": "El equipo dice: dato-42"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "vacio tras herramienta" in str(first_user) and req.get("tools"):  # termina sin texto tras usar una herramienta
             if last["role"] == "user" and "No has escrito ninguna respuesta" in str(last["content"]):
                 self.chunk({"choices": [{"delta": {"content": "Ahora sí: he visto la carpeta."}, "finish_reason": "stop"}]})

@@ -159,12 +159,13 @@ function setView(v) {
   document.body.classList.toggle("code-mode", S.code);
   $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
   $$(".view").forEach((s) => s.classList.toggle("active", s.id === "view-" + real));
-  $("#top-title").textContent = real === "chat" ? (S.conv?.title || (S.code ? "Code" : "")) : { models: "Modelos", tasks: "Tareas", files: "Archivos", settings: "Ajustes" }[real];
+  $("#top-title").textContent = real === "chat" ? (S.conv?.title || (S.code ? "Code" : "")) : { models: "Modelos", team: "Equipo", tasks: "Tareas", files: "Archivos", settings: "Ajustes" }[real];
   closeSide();
   if (S.code && !wasCode) enterCode();
   if (real === "models") refreshModels();
   if (real === "files") loadFiles(S.filesPath);
   if (real === "tasks") loadTasks();
+  if (real === "team") loadTeam();
   if (real === "settings") loadSettings();
   store.set("view", v);
 }
@@ -220,6 +221,7 @@ const ICON_PATHS = {
   alert: '<path d="M12 4 2.8 19.5h18.4L12 4Z"/><path d="M12 10v4.5M12 17.2v.1"/>',
   info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8v.1"/>',
   minus: '<path d="M6 12h12"/>',
+  trash: '<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/>',
   key: '<circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M16 7l2.5 2.5M14 9l2 2"/>',
 };
 function ico(name, cls = "") {
@@ -250,7 +252,7 @@ const TOOL_UI = {
   compare_dirs: ["folder", "Comparó carpetas", "Comparando carpetas", "a"], system_info: ["cpu", "Consultó el equipo", "Consultando el equipo", null],
   delegate: ["users", "Ayudante", "Ayudante trabajando", "task"], delegate_edit: ["users", "Ayudante (copia aislada)", "Ayudante trabajando", "task"],
   apply_patch: ["check", "Aplicó la propuesta", "Aplicando la propuesta", "id"], github: ["git", "GitHub", "GitHub", "action"],
-  request_folder_access: ["lock", "Pidió acceso a", "Pidiendo acceso a", "path"], app_settings: ["gear", "Ajustes", "Ajustes", "action"], diagnose: ["check", "Comprobó G3G3AI", "Comprobando G3G3AI", null], steam_games: ["cube", "Juegos de Steam", "Juegos de Steam", "query"],
+  request_folder_access: ["lock", "Pidió acceso a", "Pidiendo acceso a", "path"], app_settings: ["gear", "Ajustes", "Ajustes", "action"], team_delegate: ["users", "Delegó en", "Delegando en", "member"], diagnose: ["check", "Comprobó G3G3AI", "Comprobando G3G3AI", null], steam_games: ["cube", "Juegos de Steam", "Juegos de Steam", "query"],
   game_diagnostics: ["cube", "Diagnosticó", "Diagnosticando", "game"], generate_image: ["image", "Generó una imagen", "Generando una imagen", null],
   ask_local_model: ["cpu", "Consultó el modelo local", "Consultando el modelo local", null],
 };
@@ -513,6 +515,132 @@ setInterval(async () => {
     if (S.view === "tasks") loadTasks();
   } catch { /* sin sesión o sin red */ }
 }, 30000);
+
+// --- Equipo: organigrama visual (director y miembros) ---------------------------------------------
+const TEAM = { data: null, sel: null, dirty: false };
+const TEAM_TEMPLATES = [
+  ["Investigador", "Busca información en la web y en los archivos, contrasta fuentes y resume lo importante con enlaces.", "read"],
+  ["Programador", "Escribe y revisa código: propone el cambio exacto y explica cómo probarlo.", "none"],
+  ["Correo privado", "Busca y resume correos del usuario. Usa el modelo local para que el correo no salga del equipo.", "read"],
+  ["Revisor", "Revisa críticamente el trabajo que le pasen: errores, riesgos, cosas que faltan. Breve y concreto.", "none"],
+  ["Redactor", "Redacta textos claros y bien escritos (correos, informes, resúmenes) con el tono que se le pida.", "none"],
+];
+const modelLabel = (v) => { if (!v) return "sin modelo"; const [p, m] = v.split("::"); return p === "local" ? "Modelo local" : m; };
+const modelKind = (v) => (v || "").startsWith("local::") ? "cpu" : "globe";
+async function loadTeam() {
+  if (TEAM.data && TEAM.dirty) { drawTeam(); return; }      // hay cambios sin guardar: no se pisan
+  const ticket = TEAM.ticket = (TEAM.ticket || 0) + 1;
+  const data = await api("/api/team");
+  if (ticket !== TEAM.ticket || TEAM.dirty) return;          // llegó tarde: ya hay otra carga o cambios nuevos
+  TEAM.data = data;
+  TEAM.sel = null; TEAM.dirty = false;
+  $("#team-enabled").checked = TEAM.data.enabled;
+  $("#team-templates").innerHTML = "";
+  $("#team-templates").append(h("span", { class: "muted small" }, "Añadir:"),
+    ...TEAM_TEMPLATES.map(([n, role, tools]) => h("button", { class: "ghost small", onclick: () => addMember(n, role, tools) }, ico("plus"), n)),
+    h("button", { class: "ghost small", onclick: () => addMember("Nuevo miembro", "", "none") }, ico("plus"), "Personalizado"));
+  drawTeam();
+}
+function addMember(name, role, tools) {
+  let n = name, i = 2;
+  while (TEAM.data.members.some((m) => m.name.toLowerCase() === n.toLowerCase())) n = `${name} ${i++}`;
+  const local = MS.catalog.find((m) => m.pid === "local");
+  const def = name === "Correo privado" && local ? local.value : (MS.catalog.find((m) => m.pid !== "local") || local || {}).value || "";
+  const m = { id: Math.random().toString(36).slice(2, 10), name: n, role, model: def, tools };
+  TEAM.data.members.push(m); TEAM.sel = m.id; TEAM.dirty = true;
+  if (!TEAM.data.enabled) { TEAM.data.enabled = true; $("#team-enabled").checked = true; }
+  drawTeam();
+}
+function teamNode(kind, title, sub, extra, opts = {}) {
+  return h("button", { class: "tnode " + kind + (opts.selected ? " sel" : "") + (opts.dim ? " dim" : ""), onclick: opts.onclick, style: opts.style || "" },
+    h("span", { class: "tnode-ico" }, ico(opts.icon || "spark")), h("span", { class: "tnode-t" }, title),
+    sub ? h("span", { class: "tnode-s" }, sub) : null, extra ? h("span", { class: "tnode-x" }, extra) : null);
+}
+function drawTeam(withEditor = true) {
+  const c = $("#team-canvas"); c.innerHTML = "";
+  const t = TEAM.data, W = c.clientWidth || 800, members = t.members;
+  const NW0 = W < 700 ? 150 : 190;                                   // ancho de cada recuadro
+  const perRow = Math.max(1, Math.min(4, Math.floor((W - 16) / (NW0 + 14))));
+  const rows = []; for (let i = 0; i < members.length; i += perRow) rows.push(members.slice(i, i + perRow));
+  const yClaude = 20, yDir = t.show_claude ? 150 : 30, yMem = yDir + 150;
+  const H = yMem + Math.max(1, rows.length) * 150 + 10;
+  c.style.height = H + "px";
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "tlines"); svg.setAttribute("width", W); svg.setAttribute("height", H);
+  const line = (x1, y1, x2, y2, dashed) => {
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const my = (y1 + y2) / 2;
+    p.setAttribute("d", `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`);
+    p.setAttribute("class", dashed ? "dashed" : "");
+    svg.append(p);
+  };
+  const NW = NW0, cx = W / 2;
+  c.style.setProperty("--tnode-w", NW + "px");
+  if (t.show_claude) {
+    line(cx, yClaude + 70, cx, yDir, true);
+    c.append(teamNode("ext", "Claude Code", "director externo (MCP)", "puede delegar en G3G3AI", { icon: "terminal", style: `left:${cx - NW / 2}px;top:${yClaude}px`,
+      selected: TEAM.sel === "claude", onclick: () => { TEAM.sel = "claude"; drawTeam(); } }));
+  }
+  c.append(teamNode("dir", "G3G3AI", "director · el modelo del chat", t.enabled ? `${members.length} miembro(s)` : "equipo desactivado",
+    { icon: "spark", dim: !t.enabled, style: `left:${cx - NW / 2}px;top:${yDir}px`, selected: TEAM.sel === "dir", onclick: () => { TEAM.sel = "dir"; drawTeam(); } }));
+  rows.forEach((row, r) => {
+    const gap = W / (row.length + 1), y = yMem + r * 150;
+    row.forEach((m, i) => {
+      const x = gap * (i + 1);
+      line(cx, yDir + 78, x, y, false);
+      c.append(teamNode("mem", m.name, modelLabel(m.model), (m.role || "sin papel").slice(0, 70) + ((m.role || "").length > 70 ? "…" : ""),
+        { icon: modelKind(m.model), dim: !t.enabled, style: `left:${x - NW / 2}px;top:${y}px`, selected: TEAM.sel === m.id,
+          onclick: () => { TEAM.sel = m.id; drawTeam(); } }));
+    });
+  });
+  if (!members.length) c.append(h("p", { class: "muted team-empty", style: `top:${yMem + 20}px` }, "Aún no hay miembros: añade uno con los botones de arriba."));
+  c.prepend(svg);
+  if (withEditor) drawTeamEditor();
+}
+function drawTeamEditor() {
+  const ed = $("#team-editor"); ed.innerHTML = "";
+  const t = TEAM.data;
+  if (!TEAM.sel) { ed.classList.add("hidden"); return; }
+  ed.classList.remove("hidden");
+  const close = h("button", { class: "icon-btn", "aria-label": "Cerrar", onclick: () => { TEAM.sel = null; drawTeam(); } }, ico("x"));
+  if (TEAM.sel === "claude") {
+    const cmd = `claude mcp add --transport http g3g3ai http://127.0.0.1:${S.settings?.port || 8800}/mcp`;
+    ed.append(h("div", { class: "dialog-head" }, h("b", {}, "Claude Code dirige a G3G3AI"), close),
+      h("p", { class: "muted" }, "Al revés: Claude Code puede usar G3G3AI como subagente (para tu modelo local, otros proveedores, tus archivos o tu correo). Ejecuta una vez:"),
+      h("code", { class: "access-url" }, cmd), h("button", { class: "ghost small", onclick: () => copyText(cmd, "Orden copiada") }, ico("copy"), "Copiar"),
+      h("label", { class: "check" }, h("input", { type: "checkbox", checked: t.show_claude, onchange: (e) => { t.show_claude = e.target.checked; TEAM.dirty = true; TEAM.sel = null; drawTeam(); } }), " Mostrar en el esquema"));
+    return;
+  }
+  if (TEAM.sel === "dir") {
+    ed.append(h("div", { class: "dialog-head" }, h("b", {}, "G3G3AI (director)"), close),
+      h("p", { class: "muted" }, "El director es el modelo que elijas en el chat. Cuando el equipo está activo, conoce a sus miembros y les delega lo que encaje con su papel (puede encargar varias tareas a la vez), revisa lo que le devuelven y te responde."),
+      h("p", { class: "muted" }, "Consejo: un director potente (Claude, GPT, DeepSeek…) reparte mejor; los miembros pueden ser modelos más baratos o el local."));
+    return;
+  }
+  const m = t.members.find((x) => x.id === TEAM.sel);
+  if (!m) { TEAM.sel = null; drawTeam(); return; }
+  const set = (k) => (e) => { m[k] = e.target.value; TEAM.dirty = true; drawTeamSoon(); };
+  const sel = h("select", { onchange: set("model") });
+  const groups = {};
+  for (const o of MS.catalog) (groups[o.group] ||= []).push(o);
+  for (const [g, opts] of Object.entries(groups)) sel.append(h("optgroup", { label: g }, opts.map((o) => h("option", { value: o.value }, o.label))));
+  if (m.model && ![...sel.options].some((o) => o.value === m.model)) sel.append(h("option", { value: m.model }, modelLabel(m.model) + " (no disponible ahora)"));
+  sel.value = m.model;
+  ed.append(h("div", { class: "dialog-head" }, h("b", {}, m.name), close),
+    h("label", {}, "Nombre", h("input", { value: m.name, oninput: set("name") })),
+    h("label", {}, "Papel (qué hace y cuándo delegarle)", h("textarea", { rows: 4, oninput: set("role") }, m.role || "")),
+    h("label", {}, "Modelo", sel),
+    h("label", {}, "Puede…", (() => { const t2 = selectEl("", m.tools, [["none", "Solo responder (sin herramientas)"], ["read", "Leer archivos, web y correo (sin modificar nada)"]]); t2.onchange = (e) => { m.tools = e.target.value; TEAM.dirty = true; }; return t2; })()),
+    h("div", { class: "row" }, h("button", { class: "danger small", onclick: () => { t.members = t.members.filter((x) => x !== m); TEAM.sel = null; TEAM.dirty = true; drawTeam(); } }, ico("trash"), "Quitar del equipo")));
+}
+let teamTimer = 0;
+function drawTeamSoon() { clearTimeout(teamTimer); teamTimer = setTimeout(() => drawTeam(false), 200); }  // sólo el esquema: el editor conserva el foco
+$("#team-enabled").addEventListener("change", (e) => { if (TEAM.data) { TEAM.data.enabled = e.target.checked; TEAM.dirty = true; drawTeam(); } });
+$("#team-save").addEventListener("click", async () => {
+  try { TEAM.data = await api("/api/team", { method: "PUT", body: TEAM.data }); TEAM.dirty = false; toast("Equipo guardado", 2500); drawTeam(); }
+  catch (e) { toast(e.message, 6000); }
+});
+window.addEventListener("resize", () => { if (S.view === "team" && TEAM.data) drawTeam(); });
 
 // --- «Comprobar todo» ---------------------------------------------------------------------------
 const DIAG_ICON = { ok: "check", warn: "alert", error: "x", info: "info", skip: "minus" };

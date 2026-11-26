@@ -28,7 +28,7 @@ from .hub import Hub
 from .memory import Memory, MemoryRejected
 from .llama import LlamaManager, default_threads, find_llama_server
 from . import router, sandbox
-from . import backup, catalog, costs, mcp_server, profiles, subagent
+from . import backup, catalog, costs, mcp_server, profiles, subagent, team
 from .mail import MailIndex, thunderbird_profiles, mail_sources
 from .mcp import MCPManager
 from .tasks import Scheduler, TaskError, TaskStore, next_run
@@ -556,6 +556,20 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     def _has_provider() -> bool:
         return any(p.get("enabled") and p.get("api_key") for p in cfg["providers"])
 
+    @app.get("/api/team")
+    async def team_get():
+        return {**team.DEFAULT, **(cfg["team"] or {})}
+
+    @app.put("/api/team")
+    async def team_put(body: dict):
+        try:
+            t = team.clean(body)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        cfg.data["settings_updated"] = time.time()
+        cfg.set("team", t)
+        return t
+
     @app.get("/api/onboarding")
     async def onboarding():
         profs = await asyncio.to_thread(thunderbird_profiles)
@@ -1033,6 +1047,40 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             await asyncio.to_thread(shutil.rmtree, copy, True)
                 tc.subagent = run_subagent
             tc.diagnostics = lambda _pid=chosen_pid: diagnostics(local_in_use=_pid == LOCAL_PROVIDER)
+            team_cfg = cfg["team"] or {}
+            if team_cfg.get("enabled") and team_cfg.get("members"):
+                tc.team = team_cfg
+
+                async def run_member(m: dict, task: str) -> str:
+                    mpid, mmodel = m["model"].split("::", 1)
+                    if mpid == LOCAL_PROVIDER and not llama.ready:
+                        return f"{m['name']} no puede trabajar: su modelo es el local y no hay ninguno cargado."
+                    if mpid != LOCAL_PROVIDER and not provider_available(mpid):
+                        return f"{m['name']} no puede trabajar: el proveedor «{mpid}» no está activo o no tiene clave."
+                    sub = None
+                    if m["tools"] == "read":
+                        sub = ToolContext(files, cfg, None, agent=True, web=True, memory=None, source=None, state={},
+                                          perm_mode="plan", workdir=conv.get("workdir") or None)
+                        sub.mail = mail_index if cfg["mail_enabled"] else None
+                        sub.unattended = True
+                        sub.profile = profile_for(mpid, mmodel, mpid == LOCAL_PROVIDER, cfg["agent_profile"] or "auto")
+                        sub.compact_specs = mpid == LOCAL_PROVIDER
+                    system = team.member_prompt(m) + ("\n\n" + sub.system_hint() if sub else "")
+                    mopts = dict(opts)
+                    if mpid == LOCAL_PROVIDER:
+                        mopts.update({"n_ctx": int((llama.params or {}).get("ctx") or 8192), "thinking": bool(cfg["local_thinking"])})
+                    text = ""
+                    try:
+                        async for ev in chat_stream(provider_for(mpid), mmodel, [{"role": "system", "content": system},
+                                                                                 {"role": "user", "content": task}], mopts, sub):
+                            if ev["type"] == "content":
+                                text += ev["text"]
+                            elif ev["type"] == "retract" and text.endswith(ev["text"]):
+                                text = text[: len(text) - len(ev["text"])]
+                    except (ProviderError, httpx.HTTPError, RuntimeError) as e:
+                        return f"{m['name']} falló: {e}"
+                    return f"Informe de {m['name']} ({mmodel}):\n{text.strip()[-10000:] or '(no devolvió nada)'}"
+                tc.team_runner = run_member
             if chosen_pid == LOCAL_PROVIDER:  # ~1/4 del contexto (en tokens ≈ 4 caracteres) como máximo por resultado
                 n_ctx = int((llama.params or {}).get("ctx") or 8192)
                 tc.result_limit = max(3000, n_ctx)

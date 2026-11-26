@@ -34,6 +34,7 @@
     <nav class="tabs side-nav">
       <button data-view="chat" class="active"><span class="ico" data-icon="chat"></span> Chats</button>
       <button data-view="code"><span class="ico" data-icon="code"></span> Code</button>
+      <button data-view="team"><span class="ico" data-icon="users"></span> Equipo</button>
       <button data-view="models"><span class="ico" data-icon="cube"></span> Modelos</button>
       <button data-view="tasks"><span class="ico" data-icon="clock"></span> Tareas</button>
       <button data-view="files"><span class="ico" data-icon="folder"></span> Archivos</button>
@@ -225,6 +226,19 @@
       </section>
 
       <!-- ARCHIVOS -->
+      <section id="view-team" class="view">
+        <div class="page team-page">
+          <div class="row settings-head"><h1 class="page-title grow">Equipo</h1>
+            <label class="check team-switch"><input type="checkbox" id="team-enabled"> Equipo activo</label>
+            <button id="team-save" class="primary small">Guardar</button></div>
+          <p class="muted">G3G3AI dirige y reparte el trabajo entre los miembros de su equipo: otros modelos con un papel concreto (por ejemplo, el modelo local para lo privado y uno potente para programar). Pulsa un recuadro para editarlo.</p>
+          <div class="team-templates" id="team-templates"></div>
+          <div class="team-wrap">
+            <div id="team-canvas" class="team-canvas"></div>
+            <aside id="team-editor" class="team-editor hidden"></aside>
+          </div>
+        </div>
+      </section>
       <section id="view-tasks" class="view">
         <div class="page">
           <h1 class="page-title">Tareas programadas</h1>

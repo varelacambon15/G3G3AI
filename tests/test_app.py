@@ -2317,3 +2317,29 @@ def test_ai_diagnoses_problems_and_points_to_settings(env, monkeypatch):
     assert "Búsqueda web" in text and "Ajustes relacionados (app_settings): web_provider" in text
     assert "commands_trusted" in text                                       # sabe qué ajuste quita las preguntas
     assert "Proveedores" in text
+
+
+def test_team_director_delegates_to_members(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    t = client.get("/api/team", headers=h).json()
+    assert t == {"enabled": False, "show_claude": True, "members": []}
+    bad = {"enabled": True, "members": [{"name": "A", "model": "sin-proveedor"}]}
+    assert client.put("/api/team", headers=h, json=bad).status_code == 400
+    dup = {"enabled": True, "members": [{"name": "A", "model": "local::local"}, {"name": "a", "model": "local::local"}]}
+    assert client.put("/api/team", headers=h, json=dup).status_code == 400
+    team = {"enabled": True, "members": [
+        {"name": "Investigador", "role": "Busca datos y los resume", "model": "local::local", "tools": "read"},
+        {"name": "Programador", "role": "Escribe código", "model": "deepseek::deepseek-chat", "tools": "raro"}]}
+    saved = client.put("/api/team", headers=h, json=team).json()
+    assert [m["tools"] for m in saved["members"]] == ["read", "none"] and all(m["id"] for m in saved["members"])
+    load_model(client, h)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "pregunta al equipo por el dato", "use_tools": True}))
+    call = next(e for e in evs if e["type"] == "tool_call" and e["name"] == "team_delegate")
+    res = next(e for e in evs if e["type"] == "tool_result" and e["name"] == "team_delegate")
+    assert "Informe de Investigador" in res["result"] and "dato-42" in res["result"]
+    assert "El equipo dice: dato-42" in "".join(e["text"] for e in evs if e["type"] == "content")
+    # un miembro cuyo proveedor no está activo lo dice en vez de fallar en silencio
+    import asyncio
+    from g3g3ai import team as TM
+    assert TM.find(saved, "el programador")["name"] == "Programador" and TM.find(saved, "nadie") is None

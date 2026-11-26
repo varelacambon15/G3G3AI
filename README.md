@@ -223,6 +223,12 @@ claude mcp add --transport http g3g3ai http://127.0.0.1:8800/mcp
 
 Claude verá dos herramientas: **`ask`** (preguntar o encargar una tarea a G3G3AI con el modelo local o el proveedor que quieras, con o sin herramientas) y **`list_models`**. Ejemplos: «pregúntale a g3g3ai con el modelo local si…», «que g3g3ai busque en mi correo lo último de jmoreno». Cada consulta queda como conversación en la app. Las tareas con herramientas van **sin supervisión**: por defecto solo lectura (`mode: edit` permite editar en tus carpetas) y todo lo que pediría permiso se deniega. En Ajustes puedes fijar el **modelo para Claude**.
 
+### 👥 Equipo (director y subagentes)
+En la pestaña **Equipo** ves un organigrama: **G3G3AI dirige** (con el modelo que elijas en el chat) y debajo están sus **miembros**: otros modelos o proveedores con un papel (plantillas: Investigador, Programador, Correo privado, Revisor, Redactor, o uno personalizado). Para cada miembro eliges modelo y si solo responde o también puede **leer** archivos, web y correo (nunca modificar). Con el equipo activo, el director les delega lo que encaje con su papel con `team_delegate` (varias tareas a la vez), revisa sus informes y te responde.
+Arriba aparece **Claude Code** como director externo («al revés»): puede usar G3G3AI como subagente por MCP; pulsando el recuadro tienes la orden para conectarlo.
+
+- **Se diagnostica sola:** pregúntale «¿por qué no funciona la búsqueda web?» o «¿por qué me pregunta tanto?». Ejecuta `diagnose` (lo mismo que «Comprobar todo»), te explica la causa real y te propone el ajuste concreto para que lo confirmes.
+
 ### 🕒 Tareas programadas
 En la pestaña **Tareas** el agente trabaja solo a la hora que elijas (cada día a una hora, cada N minutos o una vez), con el modelo que tengas seleccionado, aunque no haya ninguna ventana abierta (G3G3AI debe estar en marcha en ese equipo). Ejemplo: «cada noche a las 03:00 ejecuta los tests y cuéntame qué falla».
 - **Sin supervisión:** nadie puede aprobar acciones, así que todo lo que pediría permiso se **deniega** (comandos fuera de «Comandos permitidos», servidores MCP, escribir en GitHub…) y el agente continúa sin ello y lo cuenta en su informe.

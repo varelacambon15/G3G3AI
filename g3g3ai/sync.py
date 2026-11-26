@@ -24,7 +24,7 @@ import httpx
 SYNC_KEYS = [
     "providers", "default_system_prompt", "temperature", "max_tokens",
     "router_mode", "router_fast", "router_strong", "ai_write", "ai_commands",
-    "web_provider", "web_api_key", "hf_token", "github_token", "agent_profile", "agent_temperature", "local_thinking", "command_allow", "commands_trusted", "model_prices", "monthly_budget_usd", "memory_enabled", "memory_auto", "memory_api",
+    "web_provider", "web_api_key", "hf_token", "github_token", "agent_profile", "agent_temperature", "local_thinking", "command_allow", "commands_trusted", "team", "model_prices", "monthly_budget_usd", "memory_enabled", "memory_auto", "memory_api",
     "vision_fallback", "context_budget", "image_provider", "image_model", "image_mode", "image_size",
     "sd_steps", "sd_cfg", "model_favorites", "model_hidden",
 ]
