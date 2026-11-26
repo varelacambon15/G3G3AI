@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+
 import json
 from pathlib import Path
 from typing import AsyncIterator
@@ -201,12 +203,25 @@ class HistoryBuilder:
                     parts += [image_part(mt, b) for mt, b in images]
                     continue
                 if a["path"] not in descriptions:
-                    yield {"type": "status", "text": f"👁 Describiendo {a['name']}…"}
-                    descs = []
-                    for i, (mt, b) in enumerate(images, 1):
-                        d, by = await self.describe(mt, b)
-                        descs.append((f"Página {i}: " if len(images) > 1 else "") + d)
-                    descriptions[a["path"]] = {"text": "\n".join(descs), "by": by}
+                    if self.describer():
+                        yield {"type": "status", "text": f"👁 Describiendo {a['name']}…"}
+                        descs = []
+                        for i, (mt, b) in enumerate(images, 1):
+                            d, by = await self.describe(mt, b)
+                            descs.append((f"Página {i}: " if len(images) > 1 else "") + d)
+                        descriptions[a["path"]] = {"text": "\n".join(descs), "by": by}
+                    else:
+                        # Ningún modelo ve imágenes: al menos se lee su texto con OCR en este equipo
+                        yield {"type": "status", "text": f"🔎 Leyendo el texto de {a['name']}…"}
+                        from . import ocr
+                        try:
+                            t = await asyncio.to_thread(ocr.image_text, path) if a["kind"] == "image" else ""
+                        except Exception:  # noqa: BLE001
+                            t = ""
+                        descriptions[a["path"]] = {
+                            "text": t or "(no se encontró texto; el modelo elegido no ve imágenes: para describir la imagen "
+                                         "usa un modelo con visión)",
+                            "by": "OCR local, sólo el texto"}
                     changed = True
                 d = descriptions[a["path"]]
                 parts.append({"type": "text", "text": f"[Contenido de la imagen «{a['name']}» "

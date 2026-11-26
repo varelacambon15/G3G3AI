@@ -1656,6 +1656,7 @@ function showChatError(msg) {
     h("div", { class: "ce-text" }, h("b", {}, "No se pudo completar la respuesta"), h("span", {}, msg)),
     h("div", { class: "row" },
       h("button", { class: "ghost small", onclick: () => { card.remove(); if (!S.streaming) send("", [], true); } }, ico("retry"), "Reintentar"),
+      /modelo local|Modelos/i.test(msg) ? h("button", { class: "primary small", onclick: () => { card.remove(); setView("models"); } }, "Abrir Modelos") : null,
       h("button", { class: "ghost small", onclick: () => { card.remove(); openModelPicker(); } }, "Cambiar de modelo"),
       h("button", { class: "ghost small", onclick: () => { card.remove(); openDiagnostics(); } }, "Diagnosticar")));
   $("#messages").append(card); card.scrollIntoView({ block: "nearest" });

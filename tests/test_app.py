@@ -2691,3 +2691,18 @@ def test_local_model_gets_web_results_without_asking(env, monkeypatch):
     cid = next(e["conversation_id"] for e in evs if e["type"] == "start")
     conv = client.get(f"/api/conversations/{cid}", headers=h).json()
     assert any(t["name"] == "web_search" for t in conv["messages"][-1]["meta"]["tools"])
+
+
+def test_image_text_reaches_model_without_vision(env):
+    pytest.importorskip("rapidocr")
+    from PIL import Image, ImageDraw, ImageFont
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    img = Image.new("RGB", (900, 200), "white")
+    ImageDraw.Draw(img).text((40, 60), "Factura 2026 total 345,60", font=ImageFont.load_default(size=48), fill="black")
+    p = Path(cfg["write_roots"][0]) / "captura.png"
+    img.save(p)
+    load_model(client, h)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "eco del usuario", "attachments": [str(p)]}))
+    text = "".join(e["text"] for e in evs if e["type"] == "content")
+    assert "345,60" in text and "OCR" in text
