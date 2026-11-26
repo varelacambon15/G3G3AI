@@ -134,12 +134,15 @@
           <div id="ctab-term" class="code-body hidden"></div>
           <div id="ctab-plan" class="code-body hidden"></div>
         </aside>
-        <!-- Panel de vista previa (HTML / SVG) -->
+        <!-- Panel de vista previa (HTML / SVG / Mermaid) -->
         <aside id="artifact" class="artifact hidden">
           <div class="artifact-head">
-            <b id="artifact-title">Vista previa</b>
-            <span>
+            <span class="art-titlebox"><b id="artifact-title">Vista previa</b>
+              <span id="artifact-ver" class="art-ver hidden"><button id="artifact-prev" class="icon-btn" title="Versión anterior">‹</button><span id="artifact-vn"></span><button id="artifact-next" class="icon-btn" title="Versión siguiente">›</button></span></span>
+            <span class="art-actions">
               <button id="artifact-code" class="ghost small">Código</button>
+              <button id="artifact-copy" class="ghost small" title="Copiar el código">Copiar</button>
+              <button id="artifact-dl" class="ghost small" title="Descargar">⬇</button>
               <button id="artifact-open" class="ghost small" title="Abrir en una pestaña">↗</button>
               <button id="artifact-close" class="icon-btn" aria-label="Cerrar">✕</button>
             </span>

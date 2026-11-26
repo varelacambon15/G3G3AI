@@ -103,6 +103,10 @@ async def with_keepalive(agen, every: float = 15.0):
         await it.aclose() if hasattr(it, "aclose") else None
 
 
+ARTIFACT_NOTE = (
+    "Si te piden una página web, una visualización, un gráfico o un diagrama, entrégalo en un único bloque de código "
+    "completo y autocontenido (```html con CSS y JS dentro, ```svg o ```mermaid): el usuario lo ve funcionando en un panel "
+    "al lado del chat. Para cambiarlo, vuelve a escribir el bloque entero.")
 NO_AGENT_NOTE = (
     "## Herramientas del equipo desactivadas\n"
     "El modo Agente está desactivado en este chat: no puedes leer archivos, ejecutar comandos ni ver el hardware del "
@@ -1198,7 +1202,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                         n_ctx = int((llama.params or {}).get("ctx") or 8192)
                         budget = int(n_ctx * 0.3 * 3) if cpid == LOCAL_PROVIDER else 80_000
                         proj_text = await asyncio.to_thread(projects.context, project, files, budget)
-                    system = "\n\n".join(x for x in (base_system, proj_text, mem_text, ctx.system_hint() if ctx else "", no_agent) if x)
+                    system = "\n\n".join(x for x in (base_system, ARTIFACT_NOTE, proj_text, mem_text, ctx.system_hint() if ctx else "", no_agent) if x)
                     try:
                         history = []
                         async for ev in builder.build(conv, cpid, cmodel, system, opts["max_tokens"] or 2048):

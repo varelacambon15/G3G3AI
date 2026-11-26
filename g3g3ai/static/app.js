@@ -86,7 +86,15 @@ function md(src) {
       while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]);
       i++;
       const lang = (fence[1] || "").toLowerCase();
-      const canPreview = ["html", "svg", "xml"].includes(lang) || (lang === "" && /^\s*<(!doctype|html|svg)/i.test(buf.join("\n")));
+      const kind = artKind(lang, buf.join("\n"));
+      if (kind && (kind === "mermaid" || buf.length >= 15)) {   // pieza grande o diagrama: tarjeta que se abre al lado
+        const code = buf.join("\n"), meta = artMeta(kind, code);
+        out += `<div class="art-card" data-kind="${kind}"><span class="art-ico">${ico(meta.icon).outerHTML}</span>`
+          + `<span class="art-info"><b>${esc(meta.title)}</b><small>${meta.label} · ${buf.length} líneas</small></span>`
+          + `<button class="art-open">Abrir</button><code class="art-code" hidden>${esc(code)}</code></div>`;
+        continue;
+      }
+      const canPreview = !!kind;
       out += `<pre><div class="code-head"><span class="lang">${esc(lang || "código")}</span>`
         + (canPreview ? `<button class="preview">▶ Vista previa</button>` : "")
         + `<button class="copy">Copiar</button></div><code data-lang="${esc(lang)}">${esc(buf.join("\n"))}</code></pre>`;
@@ -187,6 +195,7 @@ const ICON_PATHS = {
   code: '<path d="m8 9-4 3 4 3M16 9l4 3-4 3M13.5 5l-3 14"/>',
   cube: '<path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/>',
   project: '<path d="M4 7.5V18a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 18V9.5A1.5 1.5 0 0 0 18.5 8h-6L10.5 5.5h-5A1.5 1.5 0 0 0 4 7Z"/><path d="M8.5 13h7M8.5 16h4"/>',
+  share: '<circle cx="6" cy="12" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="M8 11l8-4M8 13l8 4"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
   folder: '<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5v-10Z"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
@@ -1301,28 +1310,92 @@ function messageEl(m) {
   return el;
 }
 $("#messages").addEventListener("click", (e) => {
+  const card = e.target.closest(".art-card");
+  if (card) { openArtifactCard(card); return; }
   const pre = e.target.closest("pre");
   if (!pre) return;
   const code = pre.querySelector("code")?.textContent || "";
   if (e.target.classList.contains("copy")) copyText(code, "Código copiado");
-  if (e.target.classList.contains("preview")) openArtifact(code, pre.querySelector("code")?.dataset.lang);
+  if (e.target.classList.contains("preview")) openArtifact(code, artKind(pre.querySelector("code")?.dataset.lang || "", code));
 });
 // --- Panel de vista previa (HTML / SVG en un iframe aislado) -----------------------------------
-function openArtifact(code, lang) {
-  const isSvg = lang === "svg" || /^\s*<svg/i.test(code);
-  const doc = isSvg ? `<!doctype html><meta charset="utf-8"><body style="margin:0;display:grid;place-items:center;min-height:100vh;background:#fff">${code}</body>` : code;
+function artKind(lang, code) {
+  if (lang === "mermaid") return "mermaid";
+  if (lang === "svg" || (["", "xml"].includes(lang) && /^\s*<svg/i.test(code))) return "svg";
+  if (lang === "html" || (["", "xml"].includes(lang) && /^\s*<(!doctype|html)/i.test(code))) return "html";
+  return null;
+}
+function artMeta(kind, code) {
+  const t = code.match(/<title>([^<]{1,80})<\/title>/i)?.[1] || code.match(/<h1[^>]*>([^<]{1,80})<\/h1>/i)?.[1];
+  if (kind === "mermaid") {
+    const first = code.trim().split(/\s/)[0].toLowerCase();
+    const names = { graph: "Diagrama de flujo", flowchart: "Diagrama de flujo", sequencediagram: "Diagrama de secuencia", classdiagram: "Diagrama de clases",
+      gantt: "Diagrama de Gantt", pie: "Gráfico circular", erdiagram: "Diagrama entidad-relación", mindmap: "Mapa mental", timeline: "Cronología", statediagram: "Diagrama de estados" };
+    return { icon: "share", title: code.match(/^\s*title\s+(.+)$/m)?.[1]?.trim() || names[first.replace(/-v2$/, "")] || "Diagrama", label: "Diagrama", ext: "mmd" };
+  }
+  if (kind === "svg") return { icon: "image", title: t || "Imagen SVG", label: "SVG", ext: "svg" };
+  return { icon: "globe", title: t?.trim() || "Página web", label: "HTML", ext: "html" };
+}
+const ART = { list: [], idx: 0 };
+function artifactsInView() {
+  return [...$$("#messages .art-card")].map((c) => ({ kind: c.dataset.kind, code: c.querySelector(".art-code").textContent, card: c }));
+}
+function openArtifactCard(card) {
+  ART.list = artifactsInView(); ART.idx = Math.max(0, ART.list.findIndex((a) => a.card === card));
+  const a = ART.list[ART.idx]; openArtifact(a.code, a.kind, true);
+}
+let mermaidReady = null;
+function loadMermaid() {
+  mermaidReady ??= new Promise((ok, fail) => {
+    const s = document.createElement("script"); s.src = "/static/vendor/mermaid.min.js";
+    s.onload = () => { window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default" }); ok(window.mermaid); };
+    s.onerror = () => { mermaidReady = null; fail(new Error("No se pudo cargar el motor de diagramas")); };
+    document.head.append(s);
+  });
+  return mermaidReady;
+}
+async function artDoc(code, kind) {
+  const wrap = (body, bg = "#fff") => `<!doctype html><meta charset="utf-8"><body style="margin:0;display:grid;place-items:center;min-height:100vh;background:${bg};font-family:system-ui,sans-serif">${body}</body>`;
+  if (kind === "svg") return wrap(code);
+  if (kind === "mermaid") {
+    try {
+      const m = await loadMermaid();
+      const { svg } = await m.render("mmd" + Date.now(), code);
+      return wrap(`<div style="padding:16px;max-width:100%">${svg}</div>`);
+    } catch (e) {
+      return wrap(`<pre style="color:#b3261e;white-space:pre-wrap;padding:16px">El diagrama tiene un error de sintaxis:\n${esc(String(e.message || e))}</pre>`);
+    }
+  }
+  return code;
+}
+async function openArtifact(code, kind, fromCard = false) {
+  if (!fromCard) ART.list = [];
+  kind = kind || "html";
+  const meta = artMeta(kind, code), doc = await artDoc(code, kind);
   $("#artifact-frame").srcdoc = doc;
   $("#artifact-src").textContent = code;
-  $("#artifact-title").textContent = isSvg ? "Vista previa (SVG)" : "Vista previa (HTML)";
+  $("#artifact-title").textContent = meta.title;
   $("#artifact-frame").classList.remove("hidden"); $("#artifact-src").classList.add("hidden");
   $("#artifact-code").textContent = "Código";
+  const multi = ART.list.length > 1;
+  $("#artifact-ver").classList.toggle("hidden", !multi);
+  if (multi) {
+    $("#artifact-vn").textContent = `${ART.idx + 1} / ${ART.list.length}`;
+    $("#artifact-prev").disabled = ART.idx === 0; $("#artifact-next").disabled = ART.idx === ART.list.length - 1;
+  }
+  $$("#messages .art-card").forEach((c) => c.classList.toggle("open", fromCard && c === ART.list[ART.idx]?.card));
   $("#artifact").classList.remove("hidden");
-  $("#artifact-open").onclick = () => {
-    const url = URL.createObjectURL(new Blob([doc], { type: "text/html" }));
-    window.open(url, "_blank", "noopener");
+  $("#artifact-open").onclick = () => window.open(URL.createObjectURL(new Blob([doc], { type: "text/html" })), "_blank", "noopener");
+  $("#artifact-copy").onclick = () => copyText(code, "Código copiado");
+  $("#artifact-dl").onclick = () => {
+    const a = h("a", { href: URL.createObjectURL(new Blob([code], { type: "text/plain" })), download: meta.title.replace(/[\\/:*?"<>|]+/g, " ").trim() + "." + meta.ext });
+    document.body.append(a); a.click(); a.remove();
   };
 }
-$("#artifact-close").addEventListener("click", () => $("#artifact").classList.add("hidden"));
+const artStep = (d) => { const i = ART.idx + d; if (ART.list[i]) { ART.idx = i; openArtifact(ART.list[i].code, ART.list[i].kind, true); ART.list[i].card.scrollIntoView({ block: "nearest", behavior: "smooth" }); } };
+$("#artifact-prev").addEventListener("click", () => artStep(-1));
+$("#artifact-next").addEventListener("click", () => artStep(1));
+$("#artifact-close").addEventListener("click", () => { $("#artifact").classList.add("hidden"); $$("#messages .art-card.open").forEach((c) => c.classList.remove("open")); });
 $("#artifact-code").addEventListener("click", () => {
   const showCode = !$("#artifact-frame").classList.contains("hidden");
   $("#artifact-frame").classList.toggle("hidden", showCode); $("#artifact-src").classList.toggle("hidden", !showCode);
@@ -1612,7 +1685,11 @@ async function send(text, attachments, isContinue = false) {
     S.streaming = null;
     setSending(false);
     if (errorMsg) toast("Error: " + errorMsg, 7000);
-    if (S.convId) { await new Promise((r) => setTimeout(r, 150)); const wd = S.workdir; await openConversation(S.convId).catch(() => {}); S.workdir = wd; }
+    if (S.convId) {
+      await new Promise((r) => setTimeout(r, 150)); const wd = S.workdir; await openConversation(S.convId).catch(() => {}); S.workdir = wd;
+      const cards = $$("#messages .msg.assistant:last-child .art-card");   // la IA acaba de crear una página o diagrama: se muestra al lado
+      if (cards.length && !isMobile()) openArtifactCard(cards[cards.length - 1]);
+    }
     else el.remove();
     refreshContext();
     if (S.queued) { const q = S.queued; S.queued = null; setTimeout(() => send(q, []), 200); }

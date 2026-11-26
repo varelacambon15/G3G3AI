@@ -622,3 +622,18 @@ mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: in
 .project-chip { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; margin: 0 0 6px 4px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel); color: var(--muted); font-size: 12.5px; cursor: pointer; }
 .project-chip:hover { color: var(--text); } .project-chip .ico { width: 14px; height: 14px; }
 @media (max-width: 800px) { .proj-cols { grid-template-columns: 1fr; } }
+
+/* Piezas (páginas, SVG, diagramas) como tarjeta que se abre al lado */
+.art-card { display: flex; align-items: center; gap: 12px; margin: 10px 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); cursor: pointer; max-width: 460px; transition: border-color .15s; }
+.art-card:hover, .art-card.open { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.art-ico { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 9px; background: var(--hover); color: var(--muted); flex-shrink: 0; }
+.art-ico .ico { width: 19px; height: 19px; }
+.art-info { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.art-info b { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.art-info small { color: var(--muted); font-size: 12px; }
+.art-open { background: none; border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px; font-size: 13px; cursor: pointer; }
+.art-titlebox { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.art-titlebox b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.art-ver { display: inline-flex; align-items: center; gap: 2px; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.art-ver .icon-btn { padding: 2px 6px; font-size: 15px; } .art-ver .icon-btn:disabled { opacity: .35; }
+.art-actions { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }

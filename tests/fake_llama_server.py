@@ -166,6 +166,12 @@ class H(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"delta": {"content": "empiezo bien… "}}]})
             self.chunk({"error": {"message": "upstream exploded", "code": 502}})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "haz una pagina" in str(first_user):  # responde con una página HTML grande y un diagrama
+            page = "\n".join(["<!doctype html>", "<html><head><title>Calculadora de horas</title></head><body>"]
+                             + [f"<p>Fila {i}</p>" for i in range(18)] + ["</body></html>"])
+            text = f"Aquí la tienes:\n\n```html\n{page}\n```\n\nY el flujo:\n\n```mermaid\nflowchart TD\n  A[Inicio] --> B[Fin]\n```\n"
+            self.chunk({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "eco del sistema" in str(first_user):  # devuelve el mensaje del sistema tal cual
             self.chunk({"choices": [{"delta": {"content": "SISTEMA<<" + sysmsg0 + ">>"}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return

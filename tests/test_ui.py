@@ -164,6 +164,19 @@ def test_ui_end_to_end(live):
         page.wait_for_selector(".proj-conv >> text=eco del sistema")
         page.click("[data-view=chat]")
 
+        # 2e) Piezas: la página y el diagrama salen como tarjetas y el último se abre al lado
+        page.click("#new-chat")
+        page.fill("#input", "haz una pagina")
+        page.click("#send-btn")
+        page.wait_for_selector(".art-card >> text=Calculadora de horas", timeout=10000)
+        page.wait_for_selector("#artifact:not(.hidden) #artifact-title >> text=Diagrama de flujo", timeout=10000)
+        assert page.inner_text("#artifact-vn") == "2 / 2"
+        page.wait_for_function("document.querySelector('#artifact-frame').srcdoc.includes('<svg')", timeout=10000)
+        page.click("#artifact-prev")
+        page.wait_for_selector("#artifact-title >> text=Calculadora de horas")
+        assert "Fila 17" in page.eval_on_selector("#artifact-frame", "f => f.srcdoc")
+        page.click("#artifact-close")
+
         # 2b) Selector de modelos con buscador
         page.click("#model-btn")
         page.wait_for_selector("#model-picker .mp-row")
