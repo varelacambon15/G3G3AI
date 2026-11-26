@@ -1405,6 +1405,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                                        "cost": costs.cost_of(cfg, route["provider"] if route else pid,
                                                              route["model"] if route else model, used_in, used_out)}
                                       if (used_in or used_out) else None)}
+                    # el modelo a veces imita el registro automático del historial: no se guarda como texto suyo
+                    content = re.sub(r"\s*<registro_de_herramientas>.*?(?:</registro_de_herramientas>|$)", "", content, flags=re.S).rstrip()
                     stats["message_id"] = db.add_message(cid, "assistant", content, reasoning or None, meta)
             if cfg["monthly_budget_usd"]:
                 s = await asyncio.to_thread(costs.summary, db, cfg)

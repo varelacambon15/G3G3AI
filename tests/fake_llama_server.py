@@ -190,6 +190,18 @@ class H(BaseHTTPRequestHandler):
             else:
                 self.chunk({"choices": [{"delta": {"content": "Dime qué quieres que busque usando `web_search`."}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "desbocate" in str(first_user):  # se va al chino salvo que se le baje la temperatura
+            if (req.get("temperature") or 1) <= 0.25:
+                self.chunk({"choices": [{"delta": {"content": "Respuesta serena y correcta."}, "finish_reason": "stop"}]})
+            else:
+                self.chunk({"choices": [{"delta": {"content": "Empiezo bien, pero "}}]})
+                for _ in range(12):
+                    self.chunk({"choices": [{"delta": {"content": "我们的目标是确保每个人都能够获得公平的机会"}}]})
+                self.chunk({"choices": [{"delta": {"content": ""}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
+        if "imita el registro" in str(first_user):
+            self.chunk({"choices": [{"delta": {"content": "Hecho.\n\n<registro_de_herramientas>\n- read_file(x)\n</registro_de_herramientas>"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "eco del usuario" in str(first_user):  # devuelve el último mensaje del usuario tal cual le llega
             self.chunk({"choices": [{"delta": {"content": "USUARIO<<" + str(last["content"]) + ">>"}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return

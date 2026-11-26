@@ -129,12 +129,45 @@ TOOL_TO_USER_MSG = ("No le pidas al usuario que use herramientas ni le expliques
                     "pedido) y después respóndele con el resultado.")
 
 
+# Sólo cuenta si el modelo le pide al USUARIO usar la herramienta (o le pregunta qué hacer con ella). Hablar de
+# ella («create_document genera el Excel en JSON…») es normal y no debe cortar la respuesta.
+_TOOL_TO_USER = (r"(?:necesitas?|tienes que|hay que|deber[ií]as|puedes|podr[ií]as|usa|usar|utiliza|utilizar|ejecuta|lanza|"
+                 r"llama a|pide(?:me)?|dime qu[eé] (?:quieres que )?(?:busque|lea|haga)[^.\n]{0,40}?(?:usando|con))"
+                 r"\s+(?:la herramienta\s+|el comando\s+)?`?{tool}`?")
+
+
 def tool_left_to_user(text: str, names) -> str | None:
-    """Herramienta que el modelo menciona en su respuesta en vez de llamarla («usa mail_read con el ID…»)."""
+    """Herramienta que el modelo le dice al usuario que use en vez de llamarla («usa mail_read con el ID…»)."""
     low = (text or "").lower()
     for n in names:
-        if len(n) > 4 and "_" in n and re.search(rf"(?<![\w`]){re.escape(n)}(?![\w])|`{re.escape(n)}`", low):
+        if len(n) > 4 and "_" in n and n in low and re.search(_TOOL_TO_USER.replace("{tool}", re.escape(n)), low):
             return n
+    return None
+
+
+# --- Respuestas descontroladas -------------------------------------------------------------------
+# Algunos modelos, a veces, se desbocan: cambian a otro alfabeto (chino…) o repiten lo mismo en bucle. Se corta,
+# se retira lo escrito y se reintenta una vez con un modelo más «sereno»; si vuelve a pasar, se avisa.
+_CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
+DEGEN_MSG = ("⚠ El modelo empezó a escribir texto sin sentido y se ha detenido. Repite la pregunta, pídela de otra forma "
+             "o cambia de modelo.")
+
+
+class Degenerate(Exception):
+    pass
+
+
+def degenerate(text: str, cjk_ok: bool = False) -> str | None:
+    """«alfabeto» si se ha ido a otro alfabeto, «bucle» si repite lo mismo una y otra vez, o None."""
+    if not cjk_ok and len(_CJK.findall(text[-300:])) >= 25:
+        return "alfabeto"
+    tt = text[-1200:]
+    for p in range(6, 141):
+        if len(tt) < p * 8:
+            break
+        seg = tt[-p:]
+        if tt.endswith(seg * 8) and seg.strip() and not set(seg) <= set("-=_*.|:# \n\t"):
+            return "bucle"
     return None
 
 
@@ -296,8 +329,9 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
     if local and opts.get("n_ctx"):  # nunca pedir más salida de la que cabe: lo demás es contexto para la conversación
         from .context import local_reply_tokens
         max_tokens = local_reply_tokens(int(opts["n_ctx"]), int(opts.get("max_tokens") or 2048))
-    continuations = nudges = verifies = empties = thinking_retries = 0
+    continuations = nudges = verifies = empties = thinking_retries = degen_retries = 0
     reasoning_seen = False
+    cjk_ok = any(_CJK.search(str(m.get("content") or "")) for m in messages if m.get("role") == "user")
     used_tools = False
     tail, after_length = "", False   # último carácter mostrado y si el paso anterior se cortó por longitud
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), trust_env=not local) as c:
@@ -319,6 +353,7 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
             content, calls, finish, details = "", {}, None, []
             usage_seen = None
             for attempt in range(3):
+                last_check = 0
                 try:
                     async with c.stream("POST", url, json=body, headers=headers) as r:
                         await _raise_for(r)
@@ -366,6 +401,10 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                                 content += delta["content"]
                                 tail = delta["content"][-1:] or tail
                                 yield {"type": "content", "text": delta["content"]}
+                                if len(content) - last_check >= 120:
+                                    last_check = len(content)
+                                    if degenerate(content, cjk_ok):
+                                        raise Degenerate()
                             for tc in delta.get("tool_calls") or []:
                                 slot = calls.setdefault(tc.get("index", 0), {"id": "", "name": "", "args": ""})
                                 slot["id"] = tc.get("id") or slot["id"]
@@ -373,6 +412,17 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                                 slot["name"] += fn.get("name") or ""
                                 slot["args"] += fn.get("arguments") or ""
                     break
+                except Degenerate:
+                    yield {"type": "retract", "text": content}
+                    content, calls, finish = "", {}, None
+                    if degen_retries < 1:
+                        degen_retries += 1
+                        body["temperature"] = 0.2
+                        body["frequency_penalty"] = 0.4
+                        yield {"type": "status", "text": "↪ La respuesta se descontroló (texto sin sentido); se repite…"}
+                        continue
+                    yield {"type": "content", "text": DEGEN_MSG}
+                    return
                 except (ProviderError, httpx.TransportError) as e:
                     smaller = cap_from_error(str(e), max_tokens) if isinstance(e, ProviderError) else None
                     if smaller and not content and not calls and attempt < 2:

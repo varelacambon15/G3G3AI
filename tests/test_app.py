@@ -2815,3 +2815,17 @@ def test_ai_can_schedule_tasks_with_weekdays(env):
     assert "Incidencias MX" in out and "de lunes a viernes" in out
     out = asyncio.run(ctx.run("scheduled_tasks", {"action": "create", "name": "x", "prompt": "y", "time": "09:30", "days": ["lunes", "jueves"]}))
     assert "los lunes, jueves a las 09:30" in out
+
+
+def test_runaway_output_is_cut_and_retried(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "desbocate"}))
+    assert any("descontroló" in e.get("text", "") for e in evs if e["type"] == "status")
+    cid = next(e["conversation_id"] for e in evs if e["type"] == "start")
+    msgs = client.get(f"/api/conversations/{cid}", headers=h).json()["messages"]
+    assert msgs[-1]["content"] == "Respuesta serena y correcta."              # sin rastro del chino
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "imita el registro"}))
+    cid = next(e["conversation_id"] for e in evs if e["type"] == "start")
+    assert client.get(f"/api/conversations/{cid}", headers=h).json()["messages"][-1]["content"] == "Hecho."

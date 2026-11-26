@@ -120,6 +120,7 @@ function inlineMd(s) {
   });
 }
 function md(src) {
+  src = src.replace(/\s*<registro_de_herramientas>[\s\S]*?(<\/registro_de_herramientas>|$)/g, "");   // registro interno que el modelo imita
   const lines = src.replace(/\r/g, "").split("\n");
   let out = "", i = 0, para = [];
   const flush = () => { if (para.length) { out += `<p>${para.map(inlineMd).join("<br>")}</p>`; para = []; } };
