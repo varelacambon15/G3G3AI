@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS tasks (
 """
 
 
+LEVELS = ("manual", "semi", "auto")   # permisos propios de la tarea (ver ToolContext.task_level)
+
+
 class TaskError(Exception):
     pass
 
@@ -107,6 +110,10 @@ class TaskStore:
         for stmt in SCHEMA.strip().split(";"):
             if stmt.strip():
                 db._q(stmt)
+        try:   # nivel de permisos propio de cada tarea (manual | semi | auto); vacío = el del chat
+            db._q("ALTER TABLE tasks ADD COLUMN level TEXT")
+        except Exception:  # noqa: BLE001  (ya existe)
+            pass
 
     def _row(self, r) -> dict:
         d = dict(r)
@@ -123,7 +130,7 @@ class TaskStore:
         return self._row(r) if r else None
 
     def create(self, name: str, prompt: str, schedule, provider: str | None, model: str | None,
-               workdir: str | None, mode: str) -> dict:
+               workdir: str | None, mode: str, level: str | None = None) -> dict:
         if not name.strip() or not prompt.strip():
             raise TaskError("Falta el nombre o el encargo")
         sch = validate_schedule(schedule)
@@ -135,6 +142,8 @@ class TaskStore:
                    "VALUES (?,?,?,?,?,?,?,?,1,?,?)",
                    (tid, name.strip()[:80], prompt.strip(), json.dumps(sch), provider, model, workdir or None,
                     mode if mode in ("plan", "edits") else "plan", nxt, time.time()))
+        if level in LEVELS:
+            self.db._q("UPDATE tasks SET level=? WHERE id=?", (level, tid))
         return self.get(tid)
 
     def update(self, tid: str, **f) -> dict | None:
@@ -146,6 +155,9 @@ class TaskStore:
             if k in f:
                 sets.append(f"{k}=?")
                 args.append(f[k])
+        if "level" in f:
+            sets.append("level=?")
+            args.append(f["level"] if f["level"] in LEVELS else None)
         if "schedule" in f:
             sch = validate_schedule(f["schedule"])
             sets += ["schedule=?", "next_run=?"]

@@ -663,7 +663,7 @@ async function loadTasks() {
       S.taskSeen[t.id] = t.last_run;
       box.append(h("div", { class: "task" + (t.enabled ? "" : " off") },
         h("div", { class: "grow" },
-          h("b", {}, (t.running ? "⏳ " : "") + t.name), " ", h("span", { class: "muted" }, `· ${t.when}${t.mode === "edits" ? " · puede editar" : ""}`),
+          h("b", {}, (t.running ? "⏳ " : "") + t.name), " ", h("span", { class: "muted" }, `· ${t.when}${t.mode === "edits" ? " · puede editar" : ""}${t.level ? " · " + { manual: "🔒 Manual", semi: "🤝 Semi-auto", auto: "⚡ Auto" }[t.level] : ""}`),
           h("div", { class: "muted" }, `${t.provider || "local"} · ${t.model || ""} · próxima: ${t.enabled ? fmtWhen(t.next_run) : "pausada"}`),
           t.last_status ? h("div", { class: "muted" }, `Última (${fmtWhen(t.last_run)}): ${t.last_status}`) : null),
         h("div", { class: "row" },
@@ -699,7 +699,8 @@ $("#task-form").addEventListener("submit", async (e) => {
   const { provider, model } = currentModel();
   try {
     await api("/api/tasks", { method: "POST", body: { name: f.elements.name.value, prompt: f.elements.prompt.value, schedule,
-      provider, model, workdir: f.elements.workdir.value.trim() || null, mode: f.elements.edits.checked ? "edits" : "plan" } });
+      provider, model, workdir: f.elements.workdir.value.trim() || null, mode: f.elements.edits.checked ? "edits" : "plan",
+      level: f.elements.level.value } });
     f.reset(); taskWhenInput(); toast("Tarea creada"); loadTasks();
   } catch (er) { toast(er.message, 6000); }
 });

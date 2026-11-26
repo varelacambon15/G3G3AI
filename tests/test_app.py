@@ -2855,3 +2855,27 @@ def test_pdf_tables_keep_rows_and_columns(tmp_path):
     text = D.extract_text(p)
     assert "| Roberto Solano | 0,00 | 5,00 | HORAS EXTRA POR VIDEO |" in text
     assert "| Operario | Dias | Extras | Observaciones |" in text
+
+
+def test_task_keeps_its_own_permission_level(env):
+    client, cfg, home, tmp = env
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    cfg.set("ai_commands", "ask"); cfg.set("commands_trusted", False)     # el chat está en «Manual»
+    ctx = ToolContext(Files(cfg), cfg, agent=True)
+    ctx.unattended = True
+    assert ctx.mode("run_command") == "ask"
+    ctx.task_level = "auto"
+    assert ctx.mode("run_command") == "auto" and ctx.mode("write_file") == "auto"
+    ctx.task_level = "semi"
+    assert ctx.mode("write_file") == "auto" and ctx.mode("run_command") == "ask"
+    root = cfg["write_roots"][0]
+    (Path(root) / "s.py").write_text("print(1)")
+    assert ctx.trusted_command("python s.py", root)                         # lo habitual, sin preguntar
+    ctx.task_level = "manual"
+    assert not ctx.trusted_command("python s.py", root)
+    h = auth(cfg)
+    t = client.post("/api/tasks", headers=h, json={"name": "x", "prompt": "y", "schedule": {"kind": "daily", "time": "08:00"},
+                                                   "level": "auto"}).json()
+    assert t["level"] == "auto"
+    assert client.patch(f"/api/tasks/{t['id']}", headers=h, json={"level": "manual"}).json()["level"] == "manual"

@@ -273,6 +273,13 @@
               <label id="task-when-wrap">Hora <input name="when" type="time" value="03:00"></label>
               <label>Carpeta del proyecto (opcional) <input name="workdir" placeholder="C:\Proyectos\app"></label>
               <label class="check"><input type="checkbox" name="edits"> Puede editar archivos (sin preguntar, solo en carpetas permitidas)</label>
+              <label>Qué puede hacer sola
+                <select name="level">
+                  <option value="semi">🤝 Semi-auto: lo habitual (python, pruebas, documentos) sin preguntar</option>
+                  <option value="manual">🔒 Manual: sólo leer y los «Comandos permitidos»</option>
+                  <option value="auto">⚡ Auto: cualquier comando (lo peligroso se sigue bloqueando)</option>
+                </select>
+              </label>
               <p class="muted">Usará el modelo seleccionado ahora en el chat.</p>
               <div class="row end"><button class="primary">Crear tarea</button></div>
             </form>

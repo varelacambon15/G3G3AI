@@ -232,7 +232,10 @@ ALL_SPECS = {
                                  "time": {"type": "string", "description": "HH:MM"},
                                  "days": {"description": "días de la semana o «laborables» / «fin de semana»"},
                                  "every_minutes": {"type": "integer"}, "at": {"type": "string"},
-                                 "can_edit": {"type": "boolean"}, "id": {"type": "string"}}, ["action"])),
+                                 "can_edit": {"type": "boolean"},
+                                 "permissions": {"type": "string", "enum": ["manual", "semi", "auto"],
+                                                 "description": "qué puede hacer sola: semi (lo habitual, por defecto) o auto"},
+                                 "id": {"type": "string"}}, ["action"])),
     "attach_file": ("Adjunta al chat un archivo que YA existe (p.ej. el PDF original de un correo que guardaste, o un Excel "
                     "de sus carpetas) para que el usuario lo abra o lo descargue con un clic. Úsalo cuando pida «pásamelo», "
                     "«adjúntamelo», «mándamelo por aquí» o «dame el archivo»; no regeneres el documento ni des sólo la ruta.",
@@ -372,6 +375,7 @@ class ToolContext:
         self.subagent: Callable[..., Awaitable[str]] | None = None  # lo fija el servidor: (tarea, write=False)
         self.mail = None             # MailIndex (búsqueda en el correo), lo fija el servidor si está activada
         self.tasks = None            # TaskStore (tareas programadas), lo fija el servidor
+        self.task_level = None       # tarea programada con permisos propios: manual | semi | auto
         self.cloud = False           # el modelo elegido es de una API en la nube
         self.mcp = None              # MCPManager (herramientas externas), lo fija el servidor
         self.unattended = False      # tarea en segundo plano: nadie puede aprobar nada, todo lo que pida permiso se deniega
@@ -386,6 +390,12 @@ class ToolContext:
     def mode(self, name: str) -> str:
         if self.auto_all and (name in WRITE_TOOLS or name in COMMAND_TOOLS):
             return "auto"
+        if self.task_level == "auto" and (name in WRITE_TOOLS or name in COMMAND_TOOLS):
+            return "auto"     # tarea con permisos «Auto»: no depende de lo que tengas puesto ahora en el chat
+        if self.task_level == "semi" and name in WRITE_TOOLS:
+            return "auto"
+        if self.task_level == "manual" and name in COMMAND_TOOLS:
+            return "ask"      # sin supervisión «preguntar» = denegar (salvo «Comandos permitidos»)
         if name == "create_document" and not self.agent:
             return "auto" if (self.cfg["ai_write"] or "off") != "off" else "off"   # sólo crea archivos nuevos en su carpeta
         if name in WRITE_TOOLS:
@@ -460,7 +470,7 @@ class ToolContext:
     def trusted_command(self, command, cwd=None) -> bool:
         """Con «commands_trusted»: comandos de desarrollo habituales, sin encadenados, ejecutados dentro de las carpetas
         modificables y (si es un script) con el script también dentro de ellas. No incluye pip install, git push, -c, etc."""
-        if not self.cfg["commands_trusted"]:
+        if self.task_level == "manual" or (not self.cfg["commands_trusted"] and self.task_level not in ("semi", "auto")):
             return False
         cmd = re.sub(r"\s+2>&1(?=\s|$)", "", str(command or "")).strip()   # «2>&1» (mezclar errores con la salida) es inofensivo
         parts = [p.strip() for p in cmd.split("|")]
@@ -778,7 +788,9 @@ class ToolContext:
                     from . import tasks as TK
                     sch = TK.validate_schedule(self._task_schedule(args))
                     what = (f"programa la tarea «{args.get('name') or 'sin nombre'}» ({TK.describe(sch)}"
-                            + (", podrá editar archivos" if args.get("can_edit") else ", sólo lectura") + f"): {args.get('prompt', '')[:300]}")
+                            + (", podrá editar archivos" if args.get("can_edit") else ", sólo lectura")
+                            + f", permisos {({'manual': 'Manual', 'auto': 'Auto'}).get(args.get('permissions'), 'Semi-auto')}"
+                            + f"): {args.get('prompt', '')[:300]}")
                     return None, [what], []
                 if act == "delete":
                     t = self.tasks.get(str(args.get("id") or ""))
@@ -1076,7 +1088,8 @@ class ToolContext:
             if act == "create":
                 try:
                     t = self.tasks.create(str(a.get("name") or "Tarea"), str(a.get("prompt") or ""), self._task_schedule(a),
-                                          None, None, None, "edits" if a.get("can_edit") else "plan")
+                                          None, None, None, "edits" if a.get("can_edit") else "plan",
+                                          a.get("permissions") if a.get("permissions") in ("manual", "semi", "auto") else "semi")
                 except TK.TaskError as e:
                     return f"Error: {e}"
                 when = time.strftime("%d/%m/%Y %H:%M", time.localtime(t["next_run"])) if t.get("next_run") else "—"

@@ -242,12 +242,12 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     async def run_task(task: dict) -> tuple[str, str | None]:
         """Ejecuta una tarea programada llamando al propio /api/chat en modo sin supervisión."""
         pid, model = task["provider"] or LOCAL_PROVIDER, task["model"] or "local"
-        if pid == LOCAL_PROVIDER and not llama.ready:
-            return "No se ejecutó: no hay un modelo local cargado.", None
+        if pid == LOCAL_PROVIDER and not llama.ready and llama.state != "loading" and not pick_local_model():
+            return "No se ejecutó: no hay ningún modelo local descargado.", None   # si lo hay, /api/chat lo carga solo
         if pid != LOCAL_PROVIDER and not provider_available(pid):
             return f"No se ejecutó: el proveedor «{pid}» no está disponible o no tiene clave.", None
         body = {"message": task["prompt"], "provider": pid, "model": model, "use_tools": True, "use_web": True,
-                "mode": task["mode"], "unattended": True,
+                "mode": task["mode"], "unattended": True, "task_level": task.get("level"),
                 "system": (cfg["default_system_prompt"] or "") + "\n\nTrabajas en SEGUNDO PLANO, sin supervisión: nadie puede "
                           "aprobar acciones. Si algo se deniega, sigue sin ello. Termina con un informe breve de lo que hiciste y encontraste."}
         if task.get("workdir"):
@@ -624,7 +624,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     async def tasks_create(body: dict):
         try:
             return task_store.create(str(body.get("name", "")), str(body.get("prompt", "")), body.get("schedule"),
-                                     body.get("provider"), body.get("model"), body.get("workdir"), body.get("mode", "plan"))
+                                     body.get("provider"), body.get("model"), body.get("workdir"), body.get("mode", "plan"),
+                                     body.get("level"))
         except TaskError as e:
             raise HTTPException(400, str(e))
 
@@ -632,7 +633,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     async def tasks_update(tid: str, body: dict):
         try:
             t = task_store.update(tid, **{k: v for k, v in body.items() if k in
-                                          ("name", "prompt", "schedule", "provider", "model", "workdir", "mode", "enabled")})
+                                          ("name", "prompt", "schedule", "provider", "model", "workdir", "mode", "enabled", "level")})
         except TaskError as e:
             raise HTTPException(400, str(e))
         if not t:
@@ -1187,6 +1188,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             recent = [m["content"] or "" for m in (conv.get("messages") or []) if m["role"] == "user"][-3:]
             tc.focus = " ".join(recent + [text or ""])[-4000:]
             tc.unattended = unattended
+            tc.task_level = body.get("task_level") if unattended else None
             tc.profile = profile_for(chosen_pid, (llama.status()["model"] or "") if chosen_pid == LOCAL_PROVIDER else chosen_model,
                                      chosen_pid == LOCAL_PROVIDER,
                                      cfg["agent_profile"] or "auto")
