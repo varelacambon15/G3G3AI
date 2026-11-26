@@ -382,7 +382,7 @@ def test_web_tools_in_chat(env, monkeypatch):
     from g3g3ai.files import Files
     from g3g3ai.tools import ToolContext
     ctx = ToolContext(Files(cfg), cfg, agent=False, web=True)
-    assert ctx.names() == ["app_settings", "web_search", "fetch_url"]   # sin Agente: web y, si se lo pides, sus ajustes
+    assert ctx.names() == ["create_document", "app_settings", "web_search", "fetch_url"]   # sin Agente: documentos, web y sus ajustes
     ctx = ToolContext(Files(cfg), cfg, agent=True, web=False)
     assert "web_search" not in ctx.names() and "read_file" in ctx.names()
     from g3g3ai import web
@@ -2754,3 +2754,17 @@ def test_cloud_copy_through_onedrive_folder(tmp_path):
         pc.post("/api/cloud/now", headers=hp)
         c = pc.get(f"/api/conversations/{conv['id']}", headers=hp).json()
         assert c["title"] == "Horas extras (revisado)" and c["messages"][-1]["content"] == "respuesta desde el portátil"
+
+
+def test_excel_without_agent_mode(env):
+    """Sin modo Agente también puede crear un Excel: va a su carpeta y nunca sobrescribe."""
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    for i in range(2):
+        evs = sse(client.post("/api/chat", headers=h, json={"message": "hazme un excel con esto"}))
+        files = [e["path"] for e in evs if e["type"] == "file"]
+        assert files, evs
+    root = Path(cfg["write_roots"][0]) / "G3G3AI-documentos"
+    assert sorted(p.name for p in root.iterdir()) == ["nomina (2).xlsx", "nomina.xlsx"]
+    assert not any(e["type"] == "approval" for e in evs)                  # no pide permiso para un documento nuevo

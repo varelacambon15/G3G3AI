@@ -113,7 +113,8 @@ NO_AGENT_NOTE = (
     "El modo Agente está desactivado en este chat: no puedes leer archivos, ejecutar comandos ni ver el hardware del "
     "usuario. Si lo que pide lo necesita (hardware, archivos, correo, comandos, carpetas), díselo en una frase y dile que "
     "active «🛠 Agente» en el menú ⚙ junto al cuadro de texto; no le pidas que te pegue la salida de comandos que el agente "
-    "podría obtener solo.")
+    "podría obtener solo. Lo que SÍ puedes hacer siempre: crear documentos Word, Excel, PowerPoint o PDF con create_document "
+    "(si te piden «un Excel», «un Word», «un PDF», créalo; nunca digas que no puedes ni ofrezcas CSV para copiar).")
 
 
 def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastAPI:
@@ -1159,7 +1160,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         def make_ctx(chosen_pid: str, chosen_model: str = ""):
             mem = memory if (memory_for(chosen_pid) and cfg["memory_auto"]) else None
             img = image_gen if cfg["image_provider"] else None
-            if not (agent or use_web or mem or img):
+            docs = (cfg["ai_write"] or "off") != "off" and bool(files.write_roots)   # crear Word/Excel/PDF siempre
+            if not (agent or use_web or mem or img or docs):
                 return None
             delegate = local_complete if (agent and chosen_pid != LOCAL_PROVIDER and llama.ready) else None
             tc = ToolContext(files, cfg, delegate, agent=agent, web=use_web,

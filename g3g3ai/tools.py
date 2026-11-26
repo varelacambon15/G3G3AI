@@ -367,6 +367,8 @@ class ToolContext:
     def mode(self, name: str) -> str:
         if self.auto_all and (name in WRITE_TOOLS or name in COMMAND_TOOLS):
             return "auto"
+        if name == "create_document" and not self.agent:
+            return "auto" if (self.cfg["ai_write"] or "off") != "off" else "off"   # sólo crea archivos nuevos en su carpeta
         if name in WRITE_TOOLS:
             m = self.cfg["ai_write"] or "off"
             return "auto" if ((self.perm_mode == "edits" or self.cfg["commands_trusted"]) and m != "off") else m
@@ -390,6 +392,8 @@ class ToolContext:
         ({"system_info"}, r"equipo|hardware|\bram\b|memoria|procesador|\bcpu\b|gr[aá]fica|\bgpu\b|ordenador|port[aá]til|\bpc\b|"
                           r"modelo local|disco"),
         ({"delegate", "delegate_edit", "apply_patch"}, r"ayudante|deleg|en paralelo|reparte|subagente|propuesta"),
+        ({"create_document"}, r"excel|word|\bpdf|docx|xlsx|pptx|power ?point|documento|informe|hoja de c[aá]lculo|"
+                              r"presentaci[oó]n|diapositiva|tabla|gr[aá]fico|exporta|descarg|archivo|fichero"),
     ]
 
     def _relevant(self, names: list[str]) -> list[str]:
@@ -516,6 +520,8 @@ class ToolContext:
                 out.append("ask_local_model")
             if self.subagent and not plan:
                 out += ["delegate", "delegate_edit", "apply_patch"]
+        if (not self.agent and not plan and self.files.write_roots and (self.cfg["ai_write"] or "off") != "off"):
+            out.append("create_document")   # sin Agente también: genera documentos nuevos en su propia carpeta
         if self.agent and github.token(self.cfg):
             out.append("github")
         if self.agent and self.mail and self.cfg["mail_enabled"]:
@@ -664,9 +670,27 @@ class ToolContext:
         return p
 
     # Comprobaciones previas a la aprobación ---------------------------------------------
+    DOCS_DIR = "G3G3AI-documentos"
+
+    def _doc_path(self, path) -> Path:
+        """Dónde se guarda un documento. Sin modo Agente, siempre en su carpeta propia y sin sobrescribir nada."""
+        if self.agent:
+            return self.files.resolve(path, "ai_write")
+        name = Path(str(path or "documento.docx")).name or "documento.docx"
+        base = self.files.resolve(self.DOCS_DIR, "ai_write")
+        p = base / name
+        n = 2
+        while p.exists():
+            p = base / f"{Path(name).stem} ({n}){Path(name).suffix}"
+            n += 1
+        return p
+
     def precheck(self, name: str, args: dict) -> tuple[str | None, list[str], list[str]]:
         """Devuelve (error, avisos_fuertes, avisos_suaves). Los fuertes obligan a preguntar siempre."""
         try:
+            if name == "create_document" and not self.agent:
+                self._doc_path(args.get("path"))
+                return None, [], []
             if name in WRITE_TOOLS:
                 p = self.files.resolve(args.get("path"), "ai_write")
                 if name in ("edit_file", "write_file"):
@@ -972,7 +996,7 @@ class ToolContext:
             return f"Guardado {p} ({n} bytes)"
         if name == "create_document":
             from . import office
-            p = f.resolve(a["path"], "ai_write")
+            p = self._doc_path(a.get("path"))
             self._before_write(p)
             try:
                 office.create(p, a.get("content", ""))

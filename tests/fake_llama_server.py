@@ -51,6 +51,11 @@ class H(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c2", "function": {
                 "name": "run_command", "arguments": json.dumps({"command": "echo hola-g3"})}}]}}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "create_document" in names and last["role"] == "user" and "hazme un excel" in str(last["content"]):
+            content = json.dumps({"sheets": [{"name": "Nómina", "rows": [["Nombre", "Total"], ["Ana", 100]]}]})
+            self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "d1", "function": {
+                "name": "create_document", "arguments": json.dumps({"path": "nomina.xlsx", "content": content})}}]}}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "generate_image" in names and last["role"] == "user" and "dibuja" in str(last["content"]):
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "g1", "function": {
                 "name": "generate_image", "arguments": json.dumps({"prompt": "a cat on a desk"})}}]}}]})
