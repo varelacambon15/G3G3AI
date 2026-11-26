@@ -15,6 +15,8 @@ import re
 import shutil
 import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -49,8 +51,16 @@ def _get(url: str) -> bytes:
     tok = os.environ.get("GITHUB_TOKEN")
     if tok and "api.github.com" in url:
         req.add_header("Authorization", f"Bearer {tok}")
-    with urllib.request.urlopen(req, timeout=300) as r:
-        return r.read()
+    for attempt in range(4):                     # GitHub devuelve a veces 502/503/504 pasajeros
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                return r.read()
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            code = getattr(e, "code", None)
+            if attempt == 3 or (code is not None and code < 500 and code != 429):
+                raise
+            print(f"  reintento {attempt + 1} tras: {e}", flush=True)
+            time.sleep(5 * (attempt + 1))
 
 
 def find_asset(repo: str, pattern: str) -> dict | None:

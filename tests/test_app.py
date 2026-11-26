@@ -2472,3 +2472,29 @@ def test_fetch_extras_searches_past_releases_without_binaries(monkeypatch):
     assert F.pick(sd, src["sd"])["name"] == "sd-master-52491bd-bin-win-cpu-x64.zip"
     lin = dict((s[0], s[2]) for s in F.SOURCES["linux"])
     assert F.pick(sd, lin["sd"])["name"] == "sd-master-52491bd-bin-Linux-Ubuntu-26.04-x86_64.zip"
+
+
+def test_fetch_extras_retries_transient_errors(monkeypatch):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "packaging"))
+    import urllib.error
+    import fetch_extras as F
+    calls = []
+
+    class R:
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def read(self): return b"ok"
+
+    def fake_open(req, timeout):
+        calls.append(1)
+        if len(calls) < 3:
+            raise urllib.error.HTTPError(req.full_url, 504, "Gateway Timeout", {}, None)
+        return R()
+    monkeypatch.setattr(F.urllib.request, "urlopen", fake_open)
+    monkeypatch.setattr(F.time, "sleep", lambda s: None)
+    assert F._get("https://example.com/x") == b"ok" and len(calls) == 3
+    calls.clear()
+    monkeypatch.setattr(F.urllib.request, "urlopen", lambda req, timeout: (_ for _ in ()).throw(
+        urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)))
+    with pytest.raises(urllib.error.HTTPError):                       # un 404 no se reintenta
+        F._get("https://example.com/x")
