@@ -207,6 +207,17 @@ Idioma y motor, en Ajustes → Modelos locales.
 
 Cuando un modelo local tiene que leer mucho (un documento largo, una conversación larga), verás «Leyendo el contexto… 43 % · ~12 s» en vez de una espera sin señales. La siguiente pregunta reutiliza lo ya leído.
 
+### ☁️ Tus datos en la nube (OneDrive o Google Drive)
+
+Ajustes → Datos y uso → **Tus datos en la nube**: elige tu carpeta de OneDrive o Google Drive y una contraseña. G3G3AI guarda allí (en `G3G3AI/g3g3ai-nube.g3bak`) tus claves API, ajustes, proyectos, recuerdos y, si quieres, conversaciones, **cifrados con tu contraseña**, y los pone al día solo cada pocos minutos. En otro equipo eliges la misma carpeta y contraseña y se junta todo. Microsoft y Google sólo ven un archivo ilegible.
+
+En el **móvil** (chat directo): Ajustes → *Importar desde tu nube* → elige ese archivo en OneDrive/Drive y escribe la contraseña; se descifra en el propio móvil.
+
+### 📲 Android: compartir y avisos
+
+- **Compartir con G3G3AI** desde cualquier app (texto, enlaces, fotos, PDF): se abre tu último equipo (o el chat directo) con lo compartido en el cuadro.
+- Te avisa con una notificación cuando una respuesta termina o la IA necesita tu permiso mientras usas otra app.
+
 ### ⌨️ Atajos
 
 - **Ctrl+K**: buscador de todo (conversaciones, mensajes, acciones y ajustes).

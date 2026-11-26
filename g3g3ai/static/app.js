@@ -2631,7 +2631,7 @@ async function loadSettings() {
   loadMemory();
   renderSync();
   renderDevtools();
-  renderUsage();
+  renderUsage(); renderCloud();
   renderMcp();
   renderMail();
   renderClaude();
@@ -3018,6 +3018,65 @@ async function saveSettings(quiet = false) {
   } catch (e) { setSaveState("error", e.message); toast(e.message, 6000); }
 }
 $("#logout").addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); location.href = "/"; });
+
+
+// --- Tus datos en la nube: carpeta de OneDrive / Google Drive + contraseña ---------------------------
+async function renderCloud() {
+  const box = $("#cloud-box"); if (!box) return;
+  let st; try { st = await api("/api/cloud"); } catch (e) { box.textContent = e.message; return; }
+  box.innerHTML = "";
+  const when = (t) => t ? new Date(t * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "nunca";
+  if (st.enabled) {
+    const kind = st.candidates.find((c) => st.dir.startsWith(c.path))?.kind || "la nube";
+    box.append(
+      h("p", {}, h("b", { class: "ok-text" }, "✓ Activada"), ` · ${kind}: `, h("code", {}, st.dir)),
+      h("p", { class: "muted" }, `Tus claves, ajustes, proyectos${st.conversations ? ", conversaciones" : ""} y recuerdos se guardan cifrados y se ponen al día solos cada pocos minutos. `
+        + `Última subida: ${when(st.last_push)} · última bajada: ${when(st.last_pull)}.`),
+      st.error ? h("p", { class: "err-text" }, "⚠ " + st.error) : null,
+      h("div", { class: "row" },
+        h("button", { class: "ghost small", onclick: async (e) => {
+          e.target.disabled = true;
+          try { const r = await api("/api/cloud/now", { method: "POST" }); toast(r.pulled ? `Al día: ${r.pulled} cambios traídos de la nube` : "Al día ✔"); S.settings = null; }
+          catch (err) { toast(err.message, 6000); }
+          renderCloud();
+        } }, "Sincronizar ahora"),
+        h("button", { class: "ghost small", onclick: async () => {
+          if (!confirm("¿Dejar de usar la copia en la nube en este equipo? El archivo de la nube no se borra.")) return;
+          await api("/api/cloud/disable", { method: "POST" }); renderCloud();
+        } }, "Desactivar")));
+    return;
+  }
+  box.append(h("p", { class: "muted" }, "Guarda tus claves API, ajustes, proyectos y conversaciones en tu OneDrive o Google Drive, cifrados con una contraseña. "
+    + "En otro equipo eliges la misma carpeta y contraseña y lo tienes todo. Microsoft y Google sólo ven un archivo ilegible."));
+  let dir = st.candidates[0]?.path || "";
+  const pass = h("input", { type: "password", class: "grow", placeholder: "Contraseña (la misma en todos tus equipos, mín. 6)", autocomplete: "new-password" });
+  const convs = h("input", { type: "checkbox", checked: true });
+  const hint = h("p", { class: "muted small" });
+  const opts = h("div", { class: "cloud-opts" });
+  const drawOpts = () => {
+    opts.innerHTML = "";
+    for (const c of st.candidates) opts.append(h("button", { class: "cloud-opt" + (c.path === dir ? " sel" : ""), onclick: () => { dir = c.path; drawOpts(); } },
+      h("b", {}, c.kind), h("small", { class: "muted" }, c.path), c.has_copy ? h("span", { class: "badge ok" }, "ya hay copia") : null));
+    if (dir && !st.candidates.some((c) => c.path === dir)) opts.append(h("button", { class: "cloud-opt sel" }, h("b", {}, "Otra carpeta"), h("small", { class: "muted" }, dir)));
+    opts.append(h("button", { class: "cloud-opt", onclick: () => pickFolder("Carpeta de la nube", (p) => { dir = p; drawOpts(); }) }, h("b", {}, "Elegir otra carpeta…"),
+      h("small", { class: "muted" }, st.candidates.length ? "Cualquier carpeta que sincronice tu nube" : "No encontré OneDrive ni Google Drive: elige su carpeta")));
+    const has = st.candidates.find((c) => c.path === dir)?.has_copy;
+    hint.textContent = has ? "Ya hay una copia de otro equipo en esa carpeta: escribe su misma contraseña y se juntará con lo de aquí." : "";
+  };
+  drawOpts();
+  box.append(opts, hint,
+    h("label", { class: "check" }, convs, " Incluir las conversaciones"),
+    h("div", { class: "row" }, pass, h("button", { class: "primary small", onclick: async (e) => {
+      if (!dir) return toast("Elige la carpeta de tu OneDrive o Google Drive");
+      e.target.disabled = true; e.target.textContent = "Activando…";
+      try {
+        const r = await api("/api/cloud/setup", { method: "POST", body: { dir, password: pass.value, conversations: convs.checked } });
+        toast(r.pulled ? `Activada: se trajeron ${r.pulled} elementos de la nube` : "Activada ✔ Tus datos ya están en la nube", 6000);
+        S.settings = null; loadProviders(); loadConversations(); loadProjects();
+        renderCloud();
+      } catch (err) { toast(err.message, 7000); e.target.disabled = false; e.target.textContent = "Activar"; }
+    } }, "Activar")));
+}
 
 // --- Arranque --------------------------------------------------------------------------
 async function init() {

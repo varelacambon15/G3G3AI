@@ -2706,3 +2706,51 @@ def test_image_text_reaches_model_without_vision(env):
     evs = sse(client.post("/api/chat", headers=h, json={"message": "eco del usuario", "attachments": [str(p)]}))
     text = "".join(e["text"] for e in evs if e["type"] == "content")
     assert "345,60" in text and "OCR" in text
+
+
+def test_cloud_copy_through_onedrive_folder(tmp_path):
+    """Dos equipos que usan la misma carpeta de OneDrive: claves, proyectos y conversaciones viajan cifrados."""
+    from fastapi.testclient import TestClient
+    from g3g3ai.config import Config
+    from g3g3ai.server import create_app
+
+    def device(name):
+        d = tmp_path / name
+        cfg = Config(d / "config.json")
+        cfg.data.update(localhost_without_token=False, autoload_last_model=False, file_roots=[str(d)],
+                        write_roots=[str(d)], models_dir=str(d / "models"), llama_port=free_port())
+        cfg.save()
+        return cfg, create_app(cfg, data_dir=d)
+
+    onedrive = tmp_path / "OneDrive"
+    onedrive.mkdir()
+    cfg_pc, app_pc = device("pc")
+    cfg_lap, app_lap = device("portatil")
+    with TestClient(app_pc) as pc, TestClient(app_lap) as lap:
+        hp, hl = auth(cfg_pc), auth(cfg_lap)
+        s = pc.get("/api/settings", headers=hp).json()
+        next(p for p in s["providers"] if p["id"] == "deepseek").update(enabled=True, api_key="sk-secreta-123")
+        pc.put("/api/settings", headers=hp, json=s)
+        proj = pc.post("/api/projects", headers=hp, json={"name": "Nóminas", "instructions": "En tablas"}).json()
+        conv = app_pc.state.db.create_conversation(title="Horas extras", project_id=proj["id"])
+        app_pc.state.db.add_message(conv["id"], "user", "hola desde el PC")
+        assert pc.post("/api/cloud/setup", headers=hp, json={"dir": "x", "password": "123"}).status_code == 400  # corta
+        r = pc.post("/api/cloud/setup", headers=hp, json={"dir": str(onedrive), "password": "secreto-largo"}).json()
+        assert r["pushed"] and r["enabled"]
+        f = onedrive / "G3G3AI" / "g3g3ai-nube.g3bak"
+        assert f.is_file() and b"sk-secreta-123" not in f.read_bytes()            # cifrado
+        assert "secreto-largo" not in pc.get("/api/settings", headers=hp).text      # la contraseña no se expone
+        # En el portátil: contraseña equivocada → error sin tocar nada; correcta → llega todo
+        bad = lap.post("/api/cloud/setup", headers=hl, json={"dir": str(onedrive), "password": "otra-clave"})
+        assert bad.status_code == 400 and "contraseña" in bad.json()["detail"]
+        assert lap.post("/api/cloud/setup", headers=hl, json={"dir": str(onedrive), "password": "secreto-largo"}).json()["pulled"]
+        assert cfg_lap.provider("deepseek")["api_key"] == "sk-secreta-123"
+        p2 = lap.get("/api/projects", headers=hl).json()
+        assert [p["name"] for p in p2] == ["Nóminas"] and p2[0]["conversations"] == 1
+        # Un cambio en el portátil vuelve al PC
+        app_lap.state.db.add_message(conv["id"], "assistant", "respuesta desde el portátil")
+        app_lap.state.db.update_conversation(conv["id"], title="Horas extras (revisado)")
+        lap.post("/api/cloud/now", headers=hl)
+        pc.post("/api/cloud/now", headers=hp)
+        c = pc.get(f"/api/conversations/{conv['id']}", headers=hp).json()
+        assert c["title"] == "Horas extras (revisado)" and c["messages"][-1]["content"] == "respuesta desde el portátil"

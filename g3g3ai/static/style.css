@@ -688,3 +688,10 @@ details.fold-card[open] > summary { margin-bottom: 12px; }
 .palette { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.18); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
 .palette-box { position: static; width: min(600px, calc(100vw - 24px)); max-height: 64vh; }
 .palette .mp-name small { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Tus datos en la nube */
+.cloud-opts { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 6px; }
+.cloud-opt { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; text-align: left; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); cursor: pointer; }
+.cloud-opt small { flex: 1 1 100%; overflow-wrap: anywhere; }
+.cloud-opt.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.ok-text { color: #2e7d4f; } .err-text { color: #c0392b; }

@@ -105,3 +105,23 @@ def test_android_direct_chat_flow():
         page.wait_for_selector("#convs >> text=Sin resultados")
         browser.close()
     assert errors == [], errors
+
+
+def test_android_decrypts_cloud_copy_made_by_the_pc():
+    """El chat directo descifra en el móvil el archivo que el PC deja en OneDrive / Google Drive."""
+    import json
+    from g3g3ai import cloudsync
+    doc = {"app": "g3g3ai", "changes": {"settings": {"values": {"providers": [
+        {"id": "deepseek", "name": "DeepSeek", "type": "openai", "base_url": "https://api.deepseek.com", "api_key": "sk-nube-1", "enabled": True}]}}}}
+    data = list(cloudsync._seal(json.dumps(doc).encode(), "secreto-largo"))
+    pw = pytest.importorskip("playwright.sync_api")
+    with pw.sync_playwright() as p:
+        browser = launch(p)
+        page = browser.new_page()
+        page.add_init_script(BRIDGE)
+        page.goto((DIRECT / "index.html").as_uri())
+        got = page.evaluate("async (d) => (await decryptCloud(new Uint8Array(d), 'secreto-largo')).changes.settings.values.providers[0].api_key", data)
+        assert got == "sk-nube-1"
+        err = page.evaluate("async (d) => { try { await decryptCloud(new Uint8Array(d), 'otra'); return 'ok'; } catch (e) { return e.message; } }", data)
+        assert err == "contraseña incorrecta"
+        browser.close()

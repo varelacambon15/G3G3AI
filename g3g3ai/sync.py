@@ -104,7 +104,8 @@ class Sync:
         mems = [dict(r) for r in q("SELECT uid, content, source, created, updated FROM memories WHERE updated > ?",
                                    (since,)).fetchall()]
         tombs = [dict(r) for r in q("SELECT kind, uid, deleted FROM tombstones WHERE deleted > ?", (since,)).fetchall()]
-        out = {"conversations": convs, "memories": mems, "tombstones": tombs}
+        projs = [dict(r) for r in q("SELECT * FROM projects WHERE updated > ?", (since,)).fetchall()]
+        out = {"conversations": convs, "memories": mems, "tombstones": tombs, "projects": projs}
         if (self.cfg["settings_updated"] or 0) > since:
             out["settings"] = {"updated": self.cfg["settings_updated"],
                                "values": {k: self.cfg[k] for k in SYNC_KEYS}}
@@ -130,6 +131,12 @@ class Sync:
                 if row and row["updated"] < t["deleted"]:
                     q("DELETE FROM memories WHERE uid=?", (t["uid"],))
                     n += 1
+            elif t["kind"] == "project":
+                row = q("SELECT updated FROM projects WHERE id=?", (t["uid"],)).fetchone()
+                if row and row["updated"] < t["deleted"]:
+                    q("UPDATE conversations SET project_id=NULL WHERE project_id=?", (t["uid"],))
+                    q("DELETE FROM projects WHERE id=?", (t["uid"],))
+                    n += 1
             self.db.tombstone(t["kind"], t["uid"], t["deleted"])
             tomb[key] = t["deleted"]
 
@@ -143,9 +150,9 @@ class Sync:
                 conn = self.db.conn
                 conn.execute("DELETE FROM messages WHERE conv_id=?", (c["id"],))
                 conn.execute("INSERT OR REPLACE INTO conversations (id, title, provider, model, system, created, updated,"
-                             " summary, summary_upto) VALUES (?,?,?,?,?,?,?,?,NULL)",
+                             " summary, summary_upto, project_id) VALUES (?,?,?,?,?,?,?,?,NULL,?)",
                              (c["id"], c["title"], c.get("provider"), c.get("model"), c.get("system"), c["created"],
-                              c["updated"], c.get("summary")))
+                              c["updated"], c.get("summary"), c.get("project_id")))
                 upto = None
                 for m in c["messages"]:
                     cur = conn.execute("INSERT INTO messages (conv_id, uid, role, content, reasoning, meta, created) "
@@ -171,6 +178,16 @@ class Sync:
             else:
                 q("INSERT INTO memories (uid, content, source, created, updated) VALUES (?,?,?,?,?)",
                   (m["uid"], m["content"], m.get("source"), m["created"], m["updated"]))
+            n += 1
+
+        for p in ch.get("projects", []):   # proyectos: gana la versión más reciente
+            if tomb.get(("project", p["id"]), 0) >= p["updated"]:
+                continue
+            row = q("SELECT updated FROM projects WHERE id=?", (p["id"],)).fetchone()
+            if row and row["updated"] >= p["updated"]:
+                continue
+            q("INSERT OR REPLACE INTO projects (id, name, instructions, files, created, updated) VALUES (?,?,?,?,?,?)",
+              (p["id"], p["name"], p.get("instructions") or "", p.get("files") or "[]", p["created"], p["updated"]))
             n += 1
 
         st = ch.get("settings")

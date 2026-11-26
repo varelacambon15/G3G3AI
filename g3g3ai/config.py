@@ -107,6 +107,10 @@ DEFAULTS: dict = {
     # Sincronización entre equipos
     "device_id": "",
     "sync_key": "",             # clave común en todos los equipos que se sincronizan
+    # Copia en la nube (carpeta de OneDrive / Google Drive): archivo cifrado con contraseña (ver cloudsync.py)
+    "cloud_dir": "",
+    "cloud_password": "",       # sólo en este equipo; nunca se sincroniza ni se muestra
+    "cloud_conversations": True,
     "sync_peers": [],           # [{"url": "http://192.168.1.50:8800", "name": "..."}]
     "settings_updated": 0,      # cuándo se cambiaron por última vez los ajustes comunes
     # Memoria entre conversaciones
@@ -197,7 +201,7 @@ DEFAULTS: dict = {
     "config_version": CONFIG_VERSION,
 }
 
-SECRET_KEYS = {"token", "hf_token", "web_api_key", "sync_key", "github_token"}
+SECRET_KEYS = {"token", "hf_token", "web_api_key", "sync_key", "github_token", "cloud_password"}
 
 
 def default_blocked() -> list[str]:

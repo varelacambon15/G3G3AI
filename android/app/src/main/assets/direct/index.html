@@ -45,6 +45,12 @@
       <div id="servers"></div>
     </div>
     <div class="card">
+      <h3>Importar desde tu nube</h3>
+      <p class="muted">Si activaste «Tus datos en la nube» en el PC, elige el archivo <b>g3g3ai-nube.g3bak</b> de tu OneDrive o Google Drive (carpeta G3G3AI) y escribe su contraseña. Se descifra aquí, en el móvil.</p>
+      <div class="row"><input id="cloud-pass" type="password" placeholder="Contraseña de la copia" autocomplete="current-password"><button id="cloud-import" class="ghost">Elegir archivo…</button></div>
+      <input id="cloud-file" type="file" hidden>
+    </div>
+    <div class="card">
       <h3>Proveedores de IA</h3>
       <p class="muted small">Elige uno, pega tu clave y pruébala. Puedes activar varios.</p>
       <input id="prov-search" type="search" placeholder="Buscar proveedor…">

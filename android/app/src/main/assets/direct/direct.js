@@ -533,3 +533,51 @@ window.g3Share = async ({ text = "", files = [] } = {}) => {
   if (others) toast(`${others} documento(s) no se pueden leer en el chat directo: conéctate a tu PC para analizarlos.`, 6000);
   input.focus();
 };
+
+// --- Importar desde la copia en la nube (archivo cifrado del PC) ----------------------------------
+// Formato: «G3G3AI-CLOUD-1\n» + sal en base64 + «\n» + token Fernet (PBKDF2-SHA256 600 000 iteraciones → clave de 32 bytes:
+// 16 para firmar con HMAC-SHA256 y 16 para AES-128-CBC). Todo con la criptografía del propio navegador.
+const b64urlBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+async function decryptCloud(bytes, password) {
+  const text = new TextDecoder().decode(bytes);
+  const MAGIC = "G3G3AI-CLOUD-1\n", MAGIC2 = "G3G3AI-BACKUP-1\n";
+  const magic = text.startsWith(MAGIC) ? MAGIC : text.startsWith(MAGIC2) ? MAGIC2 : null;
+  if (!magic) throw new Error("ese archivo no es una copia de G3G3AI");
+  const rest = text.slice(magic.length), nl = rest.indexOf("\n");
+  const salt = Uint8Array.from(atob(rest.slice(0, nl)), (c) => c.charCodeAt(0)), token = b64urlBytes(rest.slice(nl + 1).trim());
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const key = new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: 600000 }, base, 256));
+  const signKey = await crypto.subtle.importKey("raw", key.slice(0, 16), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  const body = token.slice(0, token.length - 32), mac = token.slice(token.length - 32);
+  if (!(await crypto.subtle.verify("HMAC", signKey, mac, body))) throw new Error("contraseña incorrecta");
+  const aes = await crypto.subtle.importKey("raw", key.slice(16, 32), { name: "AES-CBC" }, false, ["decrypt"]);
+  const plain = await crypto.subtle.decrypt({ name: "AES-CBC", iv: body.slice(9, 25) }, aes, body.slice(25));
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+$("#cloud-import")?.addEventListener("click", () => {
+  if ((($("#cloud-pass").value) || "").length < 6) return toast("Escribe primero la contraseña de la copia");
+  $("#cloud-file").click();
+});
+$("#cloud-file")?.addEventListener("change", async (e) => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  const btn = $("#cloud-import"); btn.disabled = true; btn.textContent = "Descifrando…";
+  try {
+    const doc = await decryptCloud(new Uint8Array(await f.arrayBuffer()), $("#cloud-pass").value);
+    const vals = doc.changes?.settings?.values || {};
+    let n = 0;
+    for (const p of vals.providers || []) {
+      if (!p.enabled || !p.api_key) continue;
+      const clean = { id: p.id, name: p.name, type: p.type, base_url: p.base_url, api_key: p.api_key, enabled: true };
+      const cur = S.providers.find((x) => x.id === p.id);
+      if (cur) Object.assign(cur, clean); else S.providers.push(clean);
+      n++;
+    }
+    if (vals.default_system_prompt) S.settings.system = vals.default_system_prompt;
+    store.set("providers", S.providers); store.set("settings", S.settings);
+    $("#cloud-pass").value = "";
+    S.models = {}; renderProviders();
+    toast(n ? `${n} API(s) importadas de tu nube` : "La copia no tiene APIs con clave", 5000);
+    await renderModels(true);
+  } catch (err) { toast("No se pudo importar: " + err.message, 6000); }
+  finally { btn.disabled = false; btn.textContent = "Elegir archivo…"; }
+});

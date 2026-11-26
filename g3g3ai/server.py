@@ -125,6 +125,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     engines = {"llama": EngineInstaller(cfg, "llama"), "sd": EngineInstaller(cfg, "sd")}
     memory = Memory(db)
     sync = Sync(cfg, db, memory)
+    from .cloudsync import CloudError, CloudSync
+    cloud = CloudSync(cfg, sync)
     mcp_mgr = MCPManager(cfg)
     task_store = TaskStore(db)
     mail_index = MailIndex(cfg)
@@ -147,6 +149,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         if cfg["autoload_last_model"] and last and Path(last).is_file():
             await llama.load(last)
         sync.start()
+        cloud.start()
         scheduler.start()
         if cfg["mail_enabled"]:
             mail_index.start()          # pone al día el índice del correo en segundo plano
@@ -154,6 +157,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         scheduler.stop()
         mail_index._stop = True
         sync.stop()
+        cloud.stop()
         await mcp_mgr.stop()
         await llama.unload()
 
@@ -550,6 +554,35 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         session_state.pop(cid, None)
         session_allow.pop(cid, None)
         return {"ok": True}
+
+    # --- Copia en la nube (carpeta de OneDrive / Google Drive) ---------------------------------------
+    @app.get("/api/cloud")
+    async def cloud_status():
+        return await asyncio.to_thread(cloud.status)
+
+    @app.post("/api/cloud/setup")
+    async def cloud_setup(body: dict):
+        try:
+            r = await asyncio.to_thread(cloud.setup, str(body.get("dir") or ""), str(body.get("password") or ""),
+                                        bool(body.get("conversations", True)))
+        except (CloudError, OSError) as e:
+            raise HTTPException(400, str(e)) from e
+        return {**r, **(await asyncio.to_thread(cloud.status))}
+
+    @app.post("/api/cloud/now")
+    async def cloud_now():
+        if not cloud.enabled:
+            raise HTTPException(409, "La copia en la nube no está activada")
+        try:
+            r = await cloud.now(force=True)
+        except (CloudError, OSError) as e:
+            raise HTTPException(400, str(e)) from e
+        return {**r, **(await asyncio.to_thread(cloud.status))}
+
+    @app.post("/api/cloud/disable")
+    async def cloud_disable():
+        cloud.disable()
+        return await asyncio.to_thread(cloud.status)
 
     @app.post("/api/backup/export")
     async def backup_export(body: dict):

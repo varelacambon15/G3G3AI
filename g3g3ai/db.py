@@ -253,6 +253,7 @@ class DB:
         """Borra el proyecto; sus conversaciones se conservan, sin proyecto."""
         self._q("UPDATE conversations SET project_id=NULL WHERE project_id=?", (pid,))
         self._q("DELETE FROM projects WHERE id=?", (pid,))
+        self.tombstone("project", pid)
 
     def delete_conversation(self, cid: str) -> None:
         self._q("DELETE FROM messages WHERE conv_id=?", (cid,))
