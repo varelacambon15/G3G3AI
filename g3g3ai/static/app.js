@@ -228,6 +228,7 @@ const ICON_PATHS = {
   chevron: '<path d="m9 6 6 6-6 6"/>',
   arrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
   mic: '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/>',
+  speaker: '<path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
   stop: '<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/>',
   spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/>',
   brain: '<path d="M9 4.5A2.5 2.5 0 0 0 6.5 7v.3A3 3 0 0 0 4.5 10c0 .9.4 1.7 1 2.2A3 3 0 0 0 7 17.5 2.5 2.5 0 0 0 12 18V6.5A2 2 0 0 0 9 4.5ZM15 4.5A2.5 2.5 0 0 1 17.5 7v.3a3 3 0 0 1 2 2.7c0 .9-.4 1.7-1 2.2a3 3 0 0 1-1.5 5.3A2.5 2.5 0 0 1 12 18"/>',
@@ -1328,6 +1329,7 @@ function messageEl(m, pos = -1) {
     el.append(h("div", { class: "meta" },
       h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, ico("copy")),
       h("button", { class: "act", title: "Volver a generar (la respuesta actual se conserva)", onclick: () => regenerate(m) }, ico("retry")),
+      "speechSynthesis" in window ? h("button", { class: "act speak", title: "Leer en voz alta", onclick: (e) => speak(m.content, e.currentTarget) }, ico("speaker")) : null,
       branchNav(pos),
       m.meta?.finish ? h("button", { class: "act continue", title: "La respuesta quedó incompleta",
         onclick: () => { if (!S.streaming) send("Continúa exactamente donde lo dejaste.", []); } }, ico("play"), "Continuar") : null,
@@ -1648,6 +1650,26 @@ $("#send-btn").addEventListener("click", () => {
   input.value = ""; input.style.height = "auto"; S.attachments = []; renderAttachments();
   send(outgoing, att);
 });
+
+// --- Leer en voz alta (voces del sistema) --------------------------------------------------------
+function plainForSpeech(md) {
+  return md.replace(/```[\s\S]*?```/g, " (bloque de código) ").replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^\s*[#>|-]+\s*/gm, "").replace(/[*_~]+/g, "").replace(/\|/g, ", ").replace(/\n{2,}/g, ". ").trim();
+}
+let speakingBtn = null;
+function speak(text, btn) {
+  const synth = window.speechSynthesis;
+  if (speakingBtn) { synth.cancel(); const was = speakingBtn; speakingBtn.classList.remove("on"); speakingBtn = null; if (was === btn) return; }
+  const u = new SpeechSynthesisUtterance(plainForSpeech(text || ""));
+  const lang = (navigator.language || "es-ES").slice(0, 2);
+  const voices = synth.getVoices().filter((v) => v.lang.toLowerCase().startsWith(lang));
+  u.voice = voices.find((v) => /natural|neural|online/i.test(v.name)) || voices[0] || null;   // las voces «naturales» suenan mucho mejor
+  u.lang = u.voice?.lang || navigator.language || "es-ES";
+  u.onend = u.onerror = () => { btn.classList.remove("on"); if (speakingBtn === btn) speakingBtn = null; };
+  speakingBtn = btn; btn.classList.add("on"); btn.title = "Detener lectura";
+  synth.speak(u);
+}
 
 // Un error no debe dejar la respuesta en blanco: queda en la conversación con su causa y un botón para reintentar
 function showChatError(msg) {
