@@ -1,4 +1,4 @@
-# Compila G3G3AI en tu propio PC con Windows (sin depender de GitHub Actions).
+﻿# Compila G3G3AI en tu propio PC con Windows (sin depender de GitHub Actions).
 # Uso: doble clic en packaging\compilar-windows.bat  (o: powershell -ExecutionPolicy Bypass -File packaging\compilar-windows.ps1)
 # Resultado en la carpeta dist:
 #   G3G3AI.exe                     versión ligera
