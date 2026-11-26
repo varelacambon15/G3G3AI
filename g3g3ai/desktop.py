@@ -78,6 +78,10 @@ def main() -> None:
             import webview  # pywebview
 
             # text_select=True: pywebview desactiva por defecto la selección de texto (no se podría copiar)
+            try:
+                webview.settings["ALLOW_DOWNLOADS"] = True     # exportar conversaciones y copias de seguridad
+            except Exception:  # noqa: BLE001  (versiones antiguas de pywebview)
+                pass
             webview.create_window("G3G3AI", url, width=1280, height=840, min_size=(380, 500), text_select=True)
             webview.start()
             opened = True

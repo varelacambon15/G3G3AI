@@ -130,6 +130,28 @@ def test_ui_end_to_end(live):
         page.wait_for_selector(".msg.assistant .bubble >> text=primera parte, segunda parte.", timeout=5000)
         page.wait_for_selector("#ctx-meter:not(.hidden)", timeout=5000)           # medidor de contexto
 
+        # 2a) Exportar la conversación
+        page.click("#top-export")
+        with page.expect_download() as dl:
+            page.click(".export-opt[data-fmt=md]")
+        assert dl.value.suggested_filename.endswith(".md")
+        assert "## Tú" in Path(dl.value.path()).read_text(encoding="utf-8")
+
+        # 2b) Selector de modelos con buscador
+        page.click("#model-btn")
+        page.wait_for_selector("#model-picker .mp-row")
+        page.fill("#model-picker input", "zzzz-no-existe")
+        page.wait_for_selector("#model-picker >> text=Ningún modelo coincide")
+        page.fill("#model-picker input", "local")
+        page.wait_for_selector("#model-picker .mp-row.hi")
+        page.keyboard.press("Enter")
+        assert not page.is_visible("#model-picker")
+        assert page.input_value("#model-select") == "local::local"
+        page.keyboard.press("Control+Shift+M")
+        page.wait_for_selector("#model-picker")
+        page.keyboard.press("Escape")
+        assert not page.is_visible("#model-picker")
+
         # 3) Code: proyecto, comandos con / y atajos
         page.click("[data-view=code]")
         page.fill("#code-dir", str(Path(cfg["write_roots"][0]) / "proyecto"))

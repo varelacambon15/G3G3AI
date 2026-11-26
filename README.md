@@ -186,11 +186,16 @@ En el modo 🛠 Agente, la IA tiene dos herramientas:
 - Si el programa necesita librerías de internet (`pip`), **siempre** te lo pregunta.
 - En Linux, `build_exe` crea ejecutables de Linux. Los `.exe` de Windows se crean en el PC con Windows.
 
-### ⭐ Favoritos y modelos ocultos
+### ⭐ Elegir modelo, favoritos y ocultos
 
-- **☆/★** junto al selector marca el modelo actual como favorito. Los favoritos salen arriba, en el grupo «⭐ Favoritos».
-- **⚙ Gestionar modelos…** (al final del selector) abre una ventana con buscador para marcar favoritos y ocultar modelos, uno a uno o todos los de un proveedor (respetando los favoritos). Útil con OpenRouter, que lista cientos.
-- El modelo seleccionado se sigue viendo aunque esté oculto. Favoritos y ocultos se sincronizan entre tus equipos.
+- Pulsa el nombre del modelo junto al botón de enviar, o **Ctrl+Mayús+M**, y escribe para buscar: «glm», «local», «opencode»… Las flechas y Enter eligen el modelo sin tocar el ratón.
+- Arriba salen tus **favoritos** (★) y los **5 últimos** que usaste; después, todos agrupados por proveedor.
+- **Gestionar modelos** abre una ventana para ocultar modelos, uno a uno o todos los de un proveedor (respetando los favoritos). Útil con OpenRouter, que lista cientos. Un modelo oculto sigue apareciendo si lo buscas.
+- Favoritos y ocultos se sincronizan entre tus equipos.
+
+### 📤 Exportar una conversación
+
+Botón de descarga arriba a la derecha, el icono de cada conversación en la barra lateral, o `/export`. Formatos: **Markdown**, **Word** y **PDF**, y opcionalmente con las herramientas que usó la IA.
 
 ### 💻 Code
 La pestaña **Code** es el chat con el agente activado y un panel de proyecto:

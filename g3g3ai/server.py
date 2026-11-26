@@ -448,6 +448,22 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             raise HTTPException(404, "No existe")
         return c
 
+    @app.get("/api/conversations/{cid}/export")
+    async def export_conversation(cid: str, fmt: str = "md", tools: bool = False):
+        from urllib.parse import quote
+
+        from . import office
+        c = db.get_conversation(cid)
+        if not c:
+            raise HTTPException(404, "No existe")
+        try:
+            data = await asyncio.to_thread(office.export_conversation, c, fmt, tools)
+        except office.OfficeError as e:
+            raise HTTPException(400, str(e)) from e
+        name = office.export_filename(c, fmt)
+        return Response(data, media_type=office.EXPORT_FORMATS[fmt][0],
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
     @app.patch("/api/conversations/{cid}")
     async def patch_conversation(cid: str, body: dict):
         db.update_conversation(cid, **body)

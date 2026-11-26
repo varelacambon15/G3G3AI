@@ -199,6 +199,7 @@ const ICON_PATHS = {
   rewind: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
   play: '<path d="m7 5 12 7-12 7V5Z"/>',
   file: '<path d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8L14 3.5Z"/><path d="M14 3.5V8h4.5"/>',
+  download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>',
   doc: '<path d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8L14 3.5Z"/><path d="M14 3.5V8h4.5M9 12.5h6M9 16h6"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/>',
   terminal: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="m7.5 9.5 3 2.5-3 2.5M12.5 15h4"/>',
@@ -266,6 +267,7 @@ async function refreshStatus() {
     pill.textContent = { ready: "● " + l.model, loading: "◌ cargando…", error: "✕ error", stopped: "○ sin modelo local" }[l.state];
     pill.title = l.error || l.model_path || "";
     if (S.view === "models") renderLlamaStatus();
+    updateModelBtn();
   } catch { /* */ }
 }
 
@@ -324,7 +326,100 @@ function renderModelSelect(prev, empty = []) {
   if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
   updateFavButton();
 }
+// --- Selector de modelos con buscador ---------------------------------------------------------
+const shortModel = (m) => {
+  if (!m) return "Elige un modelo";
+  if (m.pid === "local") return S.status?.llama?.model ? S.status.llama.model.replace(/\.gguf$/i, "") : "Modelo local";
+  return m.label.split("/").pop();
+};
+function updateModelBtn() {
+  const b = $("#model-btn"); if (!b) return;
+  const auto = $("#auto-toggle").checked;
+  const m = MS.catalog.find((x) => x.value === $("#model-select").value);
+  b.querySelector(".mb-name").textContent = auto ? "Auto (local ↔ API)" : shortModel(m);
+  b.title = auto ? "En modo Auto el modelo se elige solo; desactívalo en ⚙ para elegir" : (m ? `${m.label} · ${m.group} — Ctrl+Mayús+M` : "Elegir modelo");
+  b.disabled = auto;
+}
+function pickModel(value) {
+  const sel = $("#model-select");
+  if (![...sel.options].some((o) => o.value === value)) renderModelSelect(value);   // un modelo oculto también se puede elegir
+  sel.value = value; sel.dispatchEvent(new Event("change"));
+  const rec = [value, ...store.get("recent_models", []).filter((x) => x !== value)].slice(0, 5);
+  store.set("recent_models", rec);
+  updateModelBtn(); closeModelPicker();
+}
+function closeModelPicker() { $("#model-picker")?.remove(); document.removeEventListener("mousedown", pickerOutside, true); }
+function pickerOutside(e) { if (!e.target.closest("#model-picker") && !e.target.closest("#model-btn")) closeModelPicker(); }
+function openModelPicker() {
+  if ($("#model-picker")) { closeModelPicker(); return; }
+  if ($("#auto-toggle").checked) { toast("Estás en modo Auto: desactívalo en ⚙ para elegir modelo"); return; }
+  const cur = $("#model-select").value;
+  const search = h("input", { type: "search", placeholder: "Buscar modelo o proveedor…", autocomplete: "off" });
+  const list = h("div", { class: "mp-list", role: "listbox" });
+  const pop = h("div", { id: "model-picker", class: "model-picker" }, search, list,
+    h("div", { class: "mp-foot" },
+      h("button", { class: "ghost small", onclick: () => { closeModelPicker(); openModelsDialog(); } }, "Gestionar modelos"),
+      h("button", { class: "ghost small", onclick: () => { closeModelPicker(); providerDialog(); } }, ico("plus"), "Añadir proveedor")));
+  let rows = [], hi = 0;
+  const row = (m) => {
+    const fav = MS.favs.includes(m.value);
+    const el = h("div", { class: "mp-row" + (m.value === cur ? " cur" : ""), role: "option", onclick: () => pickModel(m.value) },
+      h("span", { class: "mp-ico" }, ico(m.pid === "local" ? "cpu" : "globe")),
+      h("span", { class: "mp-name" }, h("b", {}, shortModel(m)), h("small", {}, m.group)),
+      m.value === cur ? h("span", { class: "mp-check" }, ico("check")) : null,
+      h("button", { class: "mp-star" + (fav ? " on" : ""), title: fav ? "Quitar de favoritos" : "Añadir a favoritos", onclick: async (e) => {
+        e.stopPropagation();
+        MS.favs = fav ? MS.favs.filter((x) => x !== m.value) : [...MS.favs, m.value];
+        MS.hidden = MS.hidden.filter((x) => x !== m.value);
+        renderModelSelect(); draw(); await saveModelPrefs();
+      } }, fav ? "★" : "☆"));
+    rows.push({ el, value: m.value });
+    return el;
+  };
+  const draw = () => {
+    list.innerHTML = ""; rows = [];
+    const q = search.value.trim().toLowerCase();
+    const words = q.split(/\s+/).filter(Boolean);
+    const match = (m) => words.every((w) => (m.label + " " + m.group + " " + m.value).toLowerCase().includes(w));
+    const section = (title, items) => { if (items.length) list.append(h("div", { class: "mp-sec" }, title), ...items.map(row)); };
+    if (q) section("Resultados", MS.catalog.filter(match).slice(0, 80));
+    else {
+      const favs = MS.catalog.filter((m) => MS.favs.includes(m.value));
+      const rec = store.get("recent_models", []).map((v) => MS.catalog.find((m) => m.value === v)).filter((m) => m && !MS.favs.includes(m.value));
+      section("Favoritos", favs); section("Recientes", rec);
+      const seen = new Set([...favs, ...rec].map((m) => m.value));
+      const groups = new Map();
+      for (const m of MS.catalog) {
+        if (seen.has(m.value) || MS.hidden.includes(m.value)) continue;
+        if (!groups.has(m.group)) groups.set(m.group, []);
+        groups.get(m.group).push(m);
+      }
+      for (const [g, items] of groups) section(g, items);
+    }
+    if (!rows.length) list.append(h("p", { class: "muted mp-empty" }, q ? "Ningún modelo coincide." : "No hay modelos: añade un proveedor o carga uno local."));
+    hi = Math.max(0, rows.findIndex((r) => r.value === cur)); if (q) hi = 0;
+    mark();
+  };
+  const mark = () => rows.forEach((r, i) => { r.el.classList.toggle("hi", i === hi); if (i === hi) r.el.scrollIntoView({ block: "nearest" }); });
+  search.addEventListener("input", draw);
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); hi = Math.min(rows.length - 1, hi + 1); mark(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); hi = Math.max(0, hi - 1); mark(); }
+    else if (e.key === "Enter") { e.preventDefault(); if (rows[hi]) pickModel(rows[hi].value); }
+    else if (e.key === "Escape") { e.preventDefault(); closeModelPicker(); $("#input").focus(); }
+  });
+  $(".composer").append(pop);
+  draw();
+  search.focus();
+  setTimeout(() => document.addEventListener("mousedown", pickerOutside, true), 0);
+}
+$("#model-btn").addEventListener("click", openModelPicker);
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "m") { e.preventDefault(); openModelPicker(); }
+});
+
 function updateFavButton() {
+  updateModelBtn();
   const v = $("#model-select").value, on = MS.favs.includes(v);
   const b = $("#fav-btn");
   b.textContent = on ? "★" : "☆"; b.classList.toggle("on", on);
@@ -860,7 +955,8 @@ const SLASH = {
   "/init": () => "Explora este proyecto (estructura, tecnologías, cómo se ejecutan los tests y la build) y crea un archivo G3G3AI.md en la raíz con instrucciones breves y útiles para trabajar en él. No inventes nada que no hayas comprobado.",
   "/review": () => "Revisa los cambios que acabas de hacer en esta conversación: relee los archivos modificados, busca errores, casos límite y cosas que falten, y ejecuta los tests si existen. Corrige lo que encuentres.",
   "/test": () => "Ejecuta los tests del proyecto y, si fallan, diagnostica la causa y corrígela.",
-  "/help": () => { toast("/plan · /clear · /undo · /compact · /init · /review · /test", 6000); },
+  "/export": () => { S.convId ? exportDialog(S.convId) : toast("No hay ninguna conversación abierta"); },
+  "/help": () => { toast("/plan · /clear · /undo · /compact · /export · /init · /review · /test", 6000); },
 };
 function runSlash(text) {
   const cmd = text.split(/\s+/)[0].toLowerCase();
@@ -887,7 +983,37 @@ async function loadConversations() {
   convCache = await api("/api/conversations");
   renderConvList();
 }
+// Exportar una conversación a Markdown, Word o PDF
+async function exportConversation(id, fmt, tools = false) {
+  const r = await fetch(`/api/conversations/${id}/export?` + qs({ fmt, tools }));
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  const cd = r.headers.get("Content-Disposition") || "", m = cd.match(/filename\*=UTF-8''([^;]+)/);
+  const a = h("a", { href: URL.createObjectURL(await r.blob()), download: m ? decodeURIComponent(m[1]) : `conversacion.${fmt}` });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+}
+function exportDialog(id) {
+  const tools = h("input", { type: "checkbox" });
+  const fmts = [["md", "Markdown", "Texto con formato; se abre en cualquier editor, Obsidian, GitHub…"],
+                ["docx", "Word", "Para editar, compartir o imprimir"],
+                ["pdf", "PDF", "Para enviar o archivar tal cual"]];
+  const dlg = h("dialog", { class: "export-dialog" },
+    h("h3", {}, "Exportar conversación"),
+    h("div", { class: "export-opts" }, ...fmts.map(([f, name, sub]) =>
+      h("button", { class: "export-opt", "data-fmt": f, onclick: async (e) => {
+        const b = e.currentTarget; b.disabled = true;
+        try { await exportConversation(id, f, tools.checked); dlg.close(); toast(`Exportada como ${name}`); }
+        catch (err) { toast(err.message, 6000); } finally { b.disabled = false; }
+      } }, h("b", {}, name), h("small", {}, sub)))),
+    h("label", { class: "check" }, tools, " Incluir qué herramientas usó la IA"),
+    h("div", { class: "row end" }, h("button", { class: "ghost", onclick: () => dlg.close() }, "Cancelar")));
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg); dlg.showModal();
+}
+$("#top-export").addEventListener("click", () => S.convId && exportDialog(S.convId));
+
 function renderConvList() {
+  $("#top-export").classList.toggle("hidden", !S.convId);
   const ul = $("#conv-list"), q = $("#conv-search").value.trim().toLowerCase();
   ul.innerHTML = "";
   let group = null;
@@ -904,6 +1030,7 @@ function renderConvList() {
           const t = prompt("Nuevo título", c.title);
           if (t) { await api(`/api/conversations/${c.id}`, { method: "PATCH", body: { title: t } }); loadConversations(); if (S.convId === c.id) $("#top-title").textContent = t; }
         } }, "✎"),
+        h("button", { title: "Exportar", onclick: (e) => { e.stopPropagation(); exportDialog(c.id); } }, ico("download")),
         h("button", { title: "Borrar", onclick: async (e) => {
           e.stopPropagation();
           if (!confirm("¿Borrar esta conversación?")) return;

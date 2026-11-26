@@ -275,22 +275,22 @@ def create_pdf(path: Path, markdown: str) -> None:
         if kind == "h":
             pdf.set_font(fam, "B", {1: 20, 2: 16, 3: 13}.get(block[1], 12))
             pdf.ln(3)
-            pdf.multi_cell(width, 8, plain(block[2]))
+            pdf.multi_cell(width, 8, plain(block[2]), new_x="LMARGIN", new_y="NEXT")
             pdf.ln(1)
         elif kind == "p":
             pdf.set_font(fam, "", 11)
-            pdf.multi_cell(width, 6, plain(block[1]))
+            pdf.multi_cell(width, 6, plain(block[1]), new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
         elif kind in ("ul", "ol"):
             pdf.set_font(fam, "", 11)
             for n, item in enumerate(block[1], 1):
                 mark = f"{n}." if kind == "ol" else "-"
-                pdf.multi_cell(width, 6, plain(f"  {mark} {item}"))
+                pdf.multi_cell(width, 6, plain(f"  {mark} {item}"), new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
         elif kind == "code":
             pdf.set_font("Courier", "", 9)
             pdf.set_fill_color(244, 242, 236)
-            pdf.multi_cell(width, 5, block[1].encode("latin-1", "replace").decode("latin-1"), fill=True)
+            pdf.multi_cell(width, 5, block[1].encode("latin-1", "replace").decode("latin-1"), fill=True, new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
         elif kind == "table":
             pdf.set_font(fam, "", 10)
@@ -320,3 +320,61 @@ def create(path: Path, content) -> Path:
     except ImportError as e:
         raise OfficeError(f"Falta una librería para crear {ext}: {e.name}. Reinstala G3G3AI.") from e
     return path
+
+
+# --- Exportar una conversación ----------------------------------------------------------------
+EXPORT_FORMATS = {"md": ("text/markdown; charset=utf-8", ".md"),
+                  "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"),
+                  "pdf": ("application/pdf", ".pdf")}
+
+
+def conversation_markdown(conv: dict, tools: bool = False) -> str:
+    """La conversación como Markdown legible: título, fecha y cada turno con su autor."""
+    import time as _t
+
+    def model_name(meta: dict | None) -> str:
+        m = (meta or {}).get("model") or ""
+        return m.rsplit("/", 1)[-1].removesuffix(".gguf") if m else ""
+
+    out = [f"# {conv.get('title') or 'Conversación'}", "",
+           f"*Exportada desde G3G3AI el {_t.strftime('%d/%m/%Y %H:%M')}*", ""]
+    for m in conv.get("messages", []):
+        role, meta, text = m["role"], m.get("meta") or {}, (m.get("content") or "").strip()
+        if role not in ("user", "assistant"):
+            continue
+        if role == "user":
+            out += ["---", "", "## Tú", ""]
+            names = [Path(a.get("path") or a.get("name") or "").name for a in meta.get("attachments") or []]
+            if any(names):
+                out += ["*Adjuntos: " + ", ".join(n for n in names if n) + "*", ""]
+        else:
+            who = model_name(meta)
+            out += [f"## G3G3AI" + (f" · {who}" if who else ""), ""]
+            if tools and meta.get("tools"):
+                used = [t.get("name", "?") if isinstance(t, dict) else str(t) for t in meta["tools"]]
+                out += ["*Herramientas: " + ", ".join(used) + "*", ""]
+        out += [text or "*(sin texto)*", ""]
+        for f in (meta.get("files") or []) + (meta.get("images") or []):
+            out += [f"- Archivo: `{f}`"]
+        if meta.get("files") or meta.get("images"):
+            out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
+def export_conversation(conv: dict, fmt: str, tools: bool = False) -> bytes:
+    import tempfile
+
+    if fmt not in EXPORT_FORMATS:
+        raise OfficeError(f"Formato no soportado: {fmt}. Usa md, docx o pdf.")
+    md = conversation_markdown(conv, tools)
+    if fmt == "md":
+        return md.encode("utf-8")
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / ("c" + EXPORT_FORMATS[fmt][1])
+        create(p, md)
+        return p.read_bytes()
+
+
+def export_filename(conv: dict, fmt: str) -> str:
+    base = re.sub(r'[\\/:*?"<>|\s]+', " ", conv.get("title") or "conversacion").strip()[:80] or "conversacion"
+    return base + EXPORT_FORMATS[fmt][1]
