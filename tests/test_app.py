@@ -2515,3 +2515,31 @@ def test_search_inside_conversations(env):
     assert [x["id"] for x in client.get("/api/search", headers=h, params={"q": "nominas"}).json()] == [a["id"]]  # título
     assert client.get("/api/search", headers=h, params={"q": "tortilla jose"}).json() == []   # todas las palabras
     assert client.get("/api/search", headers=h, params={"q": "  "}).json() == []
+
+
+def test_projects_share_instructions_and_documents(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    root = Path(cfg["write_roots"][0])
+    (root / "criterios.md").write_text("Redondear siempre a dos decimales. CLAVE-1234", encoding="utf-8")
+    assert client.post("/api/projects", headers=h, json={"name": " "}).status_code == 400
+    assert client.post("/api/projects", headers=h, json={"name": "X", "files": ["/etc/shadow"]}).status_code in (400, 403)
+    p = client.post("/api/projects", headers=h, json={"name": "Nóminas", "instructions": "Responde en tablas.",
+                                                     "files": [str(root / "criterios.md")]}).json()
+    load_model(client, h)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "eco del sistema", "project_id": p["id"]}))
+    text = "".join(e["text"] for e in evs if e["type"] == "content")
+    assert "# Proyecto: Nóminas" in text and "Responde en tablas." in text and "CLAVE-1234" in text
+    cid = next(e["conversation_id"] for e in evs if e["type"] == "start")
+    got = client.get(f"/api/projects/{p['id']}", headers=h).json()
+    assert [c["id"] for c in got["conversations"]] == [cid]
+    assert client.get("/api/projects", headers=h).json()[0]["conversations"] == 1
+    # Una conversación normal no recibe nada del proyecto
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "eco del sistema"}))
+    assert "CLAVE-1234" not in "".join(e["text"] for e in evs if e["type"] == "content")
+    # Mover una conversación fuera y borrar el proyecto conserva las conversaciones
+    client.patch(f"/api/conversations/{cid}", headers=h, json={"project_id": None})
+    assert client.get(f"/api/projects/{p['id']}", headers=h).json()["conversations"] == []
+    client.patch(f"/api/conversations/{cid}", headers=h, json={"project_id": p["id"]})
+    client.delete(f"/api/projects/{p['id']}", headers=h)
+    assert client.get(f"/api/conversations/{cid}", headers=h).json()["project_id"] is None

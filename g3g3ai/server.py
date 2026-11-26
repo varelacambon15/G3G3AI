@@ -36,7 +36,7 @@ from .profiles import profile_for
 from .undo import UndoJournal
 from .engine import EngineInstaller
 from . import documents as D
-from . import devtools, extras, hardware, images, ollama, web
+from . import devtools, extras, hardware, images, ollama, projects, web
 from .context import HistoryBuilder
 from .sync import INTERVAL as SYNC_INTERVAL, Sync, SyncError, new_key as new_sync_key
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
@@ -447,6 +447,46 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         if not c:
             raise HTTPException(404, "No existe")
         return c
+
+    # --- Proyectos ----------------------------------------------------------------------
+    def _check_files(paths) -> list[str]:
+        out = []
+        for p in paths or []:
+            out.append(str(fa(files.resolve, p)))          # sólo carpetas visibles (y nunca las protegidas)
+        return list(dict.fromkeys(out))
+
+    @app.get("/api/projects")
+    async def projects_list():
+        return db.list_projects()
+
+    @app.post("/api/projects")
+    async def projects_create(body: dict):
+        name = (body.get("name") or "").strip()[:80]
+        if not name:
+            raise HTTPException(400, "Ponle un nombre al proyecto")
+        return db.create_project(name, body.get("instructions") or "", _check_files(body.get("files")))
+
+    @app.get("/api/projects/{pid}")
+    async def projects_get(pid: str):
+        p = db.get_project(pid)
+        if not p:
+            raise HTTPException(404, "No existe el proyecto")
+        p["conversations"] = [c for c in db.list_conversations() if c.get("project_id") == pid]
+        return p
+
+    @app.patch("/api/projects/{pid}")
+    async def projects_patch(pid: str, body: dict):
+        if not db.get_project(pid):
+            raise HTTPException(404, "No existe el proyecto")
+        fields = {k: body[k] for k in ("name", "instructions") if k in body}
+        if "files" in body:
+            fields["files"] = _check_files(body["files"])
+        return db.update_project(pid, **fields)
+
+    @app.delete("/api/projects/{pid}")
+    async def projects_delete(pid: str):
+        db.delete_project(pid)
+        return {"ok": True}
 
     @app.get("/api/search")
     async def search_conversations(q: str = ""):
@@ -982,7 +1022,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
 
         turn_mid = None
         if not conv:
-            conv = db.create_conversation(provider=pid, model=model, system=body.get("system"))
+            proj_id = body.get("project_id") if body.get("project_id") and db.get_project(body["project_id"]) else None
+            conv = db.create_conversation(provider=pid, model=model, system=body.get("system"), project_id=proj_id)
             cid = conv["id"]
         if text or attach_text:
             meta = ({"attachments": attach_meta, "expanded": f"{attach_text}\n\n{text}".strip() or text}
@@ -999,6 +1040,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         conv = db.get_conversation(cid)
 
         unattended = bool(body.get("unattended"))
+        project = db.get_project(conv["project_id"]) if conv.get("project_id") else None
         base_system = conv.get("system") if conv.get("system") is not None else cfg["default_system_prompt"]
         opts = {"temperature": body.get("temperature", cfg["temperature"]),
                 "max_tokens": body.get("max_tokens", cfg["max_tokens"])}
@@ -1150,7 +1192,13 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                     ctx = make_ctx(cpid, cmodel)
                     mem_text = memory.prompt() if memory_for(cpid) else ""
                     no_agent = "" if (ctx and ctx.agent) else NO_AGENT_NOTE
-                    system = "\n\n".join(x for x in (base_system, mem_text, ctx.system_hint() if ctx else "", no_agent) if x)
+                    proj_text = ""
+                    if project:
+                        # Presupuesto: ~30 % del contexto en los modelos locales; 80 000 caracteres en las APIs
+                        n_ctx = int((llama.params or {}).get("ctx") or 8192)
+                        budget = int(n_ctx * 0.3 * 3) if cpid == LOCAL_PROVIDER else 80_000
+                        proj_text = await asyncio.to_thread(projects.context, project, files, budget)
+                    system = "\n\n".join(x for x in (base_system, proj_text, mem_text, ctx.system_hint() if ctx else "", no_agent) if x)
                     try:
                         history = []
                         async for ev in builder.build(conv, cpid, cmodel, system, opts["max_tokens"] or 2048):

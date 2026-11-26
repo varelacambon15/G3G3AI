@@ -29,6 +29,14 @@ CREATE TABLE IF NOT EXISTS messages (
     created REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conv_id, id);
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    instructions TEXT NOT NULL DEFAULT '',
+    files TEXT NOT NULL DEFAULT '[]',
+    created REAL NOT NULL,
+    updated REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tombstones (
     kind TEXT NOT NULL,
     uid TEXT NOT NULL,
@@ -65,7 +73,8 @@ class DB:
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
         for table, col in (("conversations", "summary TEXT"), ("conversations", "summary_upto INTEGER"),
-                           ("messages", "uid TEXT"), ("conversations", "workdir TEXT")):  # columnas añadidas en versiones posteriores
+                           ("messages", "uid TEXT"), ("conversations", "workdir TEXT"),
+                           ("conversations", "project_id TEXT")):  # columnas añadidas en versiones posteriores
             try:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:
@@ -85,7 +94,7 @@ class DB:
     # Conversaciones ---------------------------------------------------------
     def list_conversations(self) -> list[dict]:
         rows = self._q(
-            "SELECT id, title, provider, model, updated FROM conversations ORDER BY updated DESC"
+            "SELECT id, title, provider, model, updated, project_id FROM conversations ORDER BY updated DESC"
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -112,12 +121,13 @@ class DB:
                                      "message_id": None, "role": None, "snippet": ""})
         return sorted(out.values(), key=lambda o: -o["updated"])[:limit]
 
-    def create_conversation(self, title="Nueva conversación", provider=None, model=None, system=None) -> dict:
+    def create_conversation(self, title="Nueva conversación", provider=None, model=None, system=None,
+                            project_id=None) -> dict:
         cid = uuid.uuid4().hex[:12]
         now = time.time()
         self._q(
-            "INSERT INTO conversations (id, title, provider, model, system, created, updated) VALUES (?,?,?,?,?,?,?)",
-            (cid, title, provider, model, system, now, now),
+            "INSERT INTO conversations (id, title, provider, model, system, created, updated, project_id) VALUES (?,?,?,?,?,?,?,?)",
+            (cid, title, provider, model, system, now, now, project_id),
         )
         return self.get_conversation(cid)
 
@@ -135,7 +145,7 @@ class DB:
         return conv
 
     def update_conversation(self, cid: str, **fields) -> None:
-        keys = [k for k in ("title", "provider", "model", "system", "workdir") if k in fields]
+        keys = [k for k in ("title", "provider", "model", "system", "workdir", "project_id") if k in fields]
         if not keys:
             return
         sets = ", ".join(f"{k}=?" for k in keys)
@@ -143,6 +153,43 @@ class DB:
             f"UPDATE conversations SET {sets}, updated=? WHERE id=?",
             (*[fields[k] for k in keys], time.time(), cid),
         )
+
+    # Proyectos -------------------------------------------------------------
+    def _project(self, row) -> dict:
+        p = dict(row)
+        p["files"] = json.loads(p.get("files") or "[]")
+        return p
+
+    def list_projects(self) -> list[dict]:
+        rows = self._q("SELECT p.*, (SELECT COUNT(*) FROM conversations c WHERE c.project_id = p.id) AS conversations, "
+                       "(SELECT MAX(c.updated) FROM conversations c WHERE c.project_id = p.id) AS last_used "
+                       "FROM projects p").fetchall()
+        return sorted((self._project(r) for r in rows), key=lambda p: -(p["last_used"] or p["updated"]))
+
+    def get_project(self, pid: str) -> dict | None:
+        row = self._q("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+        return self._project(row) if row else None
+
+    def create_project(self, name: str, instructions: str = "", files: list | None = None) -> dict:
+        pid, now = uuid.uuid4().hex[:12], time.time()
+        self._q("INSERT INTO projects (id, name, instructions, files, created, updated) VALUES (?,?,?,?,?,?)",
+                (pid, name, instructions, json.dumps(files or [], ensure_ascii=False), now, now))
+        return self.get_project(pid)
+
+    def update_project(self, pid: str, **fields) -> dict | None:
+        sets, args = [], []
+        for k in ("name", "instructions", "files"):
+            if k in fields:
+                sets.append(f"{k}=?")
+                args.append(json.dumps(fields[k], ensure_ascii=False) if k == "files" else fields[k])
+        if sets:
+            self._q(f"UPDATE projects SET {', '.join(sets)}, updated=? WHERE id=?", (*args, time.time(), pid))
+        return self.get_project(pid)
+
+    def delete_project(self, pid: str) -> None:
+        """Borra el proyecto; sus conversaciones se conservan, sin proyecto."""
+        self._q("UPDATE conversations SET project_id=NULL WHERE project_id=?", (pid,))
+        self._q("DELETE FROM projects WHERE id=?", (pid,))
 
     def delete_conversation(self, cid: str) -> None:
         self._q("DELETE FROM messages WHERE conv_id=?", (cid,))

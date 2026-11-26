@@ -33,6 +33,7 @@
     <button id="new-chat" class="new-chat"><span class="plus" data-icon="plus"></span> Nueva conversación</button>
     <nav class="tabs side-nav">
       <button data-view="chat" class="active"><span class="ico" data-icon="chat"></span> Chats</button>
+      <button data-view="projects"><span class="ico" data-icon="project"></span> Proyectos</button>
       <button data-view="code"><span class="ico" data-icon="code"></span> Code</button>
       <button data-view="team"><span class="ico" data-icon="users"></span> Equipo</button>
       <button data-view="models"><span class="ico" data-icon="cube"></span> Modelos</button>
@@ -242,6 +243,9 @@
           </div>
         </div>
       </section>
+      <section id="view-projects" class="view">
+        <div class="page" id="projects-page"></div>
+      </section>
       <section id="view-tasks" class="view">
         <div class="page">
           <h1 class="page-title">Tareas programadas</h1>
@@ -372,7 +376,7 @@
 
 <!-- Selector de archivos para adjuntar -->
 <dialog id="picker">
-  <div class="dialog-head"><b>Adjuntar archivo</b><button class="icon-btn" data-close>✕</button></div>
+  <div class="dialog-head"><b id="picker-title">Adjuntar archivo</b><button class="icon-btn" data-close>✕</button></div>
   <div class="row">
     <label class="primary btn-like">Desde este dispositivo<input id="picker-upload" type="file" multiple hidden></label>
   </div>

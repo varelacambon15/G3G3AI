@@ -159,12 +159,13 @@ function setView(v) {
   document.body.classList.toggle("code-mode", S.code);
   $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
   $$(".view").forEach((s) => s.classList.toggle("active", s.id === "view-" + real));
-  $("#top-title").textContent = real === "chat" ? (S.conv?.title || (S.code ? "Code" : "")) : { models: "Modelos", team: "Equipo", tasks: "Tareas", files: "Archivos", settings: "Ajustes" }[real];
+  $("#top-title").textContent = real === "chat" ? (S.conv?.title || (S.code ? "Code" : "")) : { models: "Modelos", team: "Equipo", tasks: "Tareas", files: "Archivos", settings: "Ajustes", projects: "Proyectos" }[real];
   closeSide();
   if (S.code && !wasCode) enterCode();
   if (real === "models") refreshModels();
   if (real === "files") loadFiles(S.filesPath);
   if (real === "tasks") loadTasks();
+  if (real === "projects") renderProjects();
   if (real === "team") loadTeam();
   if (real === "settings") loadSettings();
   store.set("view", v);
@@ -185,6 +186,7 @@ const ICON_PATHS = {
   chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12Z"/>',
   code: '<path d="m8 9-4 3 4 3M16 9l4 3-4 3M13.5 5l-3 14"/>',
   cube: '<path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/>',
+  project: '<path d="M4 7.5V18a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 18V9.5A1.5 1.5 0 0 0 18.5 8h-6L10.5 5.5h-5A1.5 1.5 0 0 0 4 7Z"/><path d="M8.5 13h7M8.5 16h4"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
   folder: '<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5v-10Z"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
@@ -1015,7 +1017,7 @@ function markIn(root, q) {
 }
 function renderSearchResults(ul, q, items) {
   if (!items.length) { ul.append(h("div", { class: "conv-group" }, "Sin resultados")); return; }
-  ul.append(h("div", { class: "conv-group" }, `${items.length} conversación${items.length > 1 ? "es" : ""}`));
+  ul.append(h("div", { class: "conv-group" }, `${items.length} ${items.length > 1 ? "conversaciones" : "conversación"}`));
   for (const c of items) {
     ul.append(h("div", { class: "conv-item search-hit" + (c.id === S.convId ? " active" : ""), onclick: () => { setView("chat"); openConversation(c.id, c.message_id, q); } },
       h("span", { class: "t", title: c.title }, highlight(c.title, q)),
@@ -1075,6 +1077,7 @@ function renderConvList() {
           const t = prompt("Nuevo título", c.title);
           if (t) { await api(`/api/conversations/${c.id}`, { method: "PATCH", body: { title: t } }); loadConversations(); if (S.convId === c.id) $("#top-title").textContent = t; }
         } }, "✎"),
+        h("button", { title: "Mover a un proyecto", onclick: (e) => { e.stopPropagation(); moveToProject(c); } }, ico("project")),
         h("button", { title: "Exportar", onclick: (e) => { e.stopPropagation(); exportDialog(c.id); } }, ico("download")),
         h("button", { title: "Borrar", onclick: async (e) => {
           e.stopPropagation();
@@ -1093,7 +1096,8 @@ async function openConversation(id, focusMsg, q) {
     if ([...$("#model-select").options].some((o) => o.value === v)) { $("#model-select").value = v; updateFavButton(); }
   }
   S.workdir = undefined;
-  renderMessages(); loadConversations(); refreshChanges(); refreshContext();
+  S.projectId = S.conv.project_id || null;
+  renderMessages(); loadConversations(); refreshChanges(); refreshContext(); renderProjectChip();
   if (focusMsg) requestAnimationFrame(() => {      // desde la búsqueda: ir al mensaje y resaltarlo
     const el = $(`#messages .msg[data-id="${focusMsg}"]`); if (!el) return;
     el.scrollIntoView({ block: "center" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2400);
@@ -1105,7 +1109,7 @@ async function openConversation(id, focusMsg, q) {
 }
 function newChat() {
   if (S.code) queueMicrotask(() => { S.workdir = store.get("code_dir", "") || undefined; renderCodePanel(); });
-  S.convId = null; S.conv = null; S.system = undefined; store.set("conv", null);
+  S.convId = null; S.conv = null; S.system = undefined; S.projectId = null; store.set("conv", null); renderProjectChip();
   renderMessages(); loadConversations(); closeSide(); $("#top-title").textContent = "";
   if (!isMobile()) $("#input").focus();
 }
@@ -1558,6 +1562,7 @@ async function send(text, attachments, isContinue = false) {
       mode: $("#mode-select").value };
     if (S.workdir !== undefined) body.workdir = S.workdir;
     if (S.system !== undefined) body.system = S.system;
+    if (!S.convId && S.projectId) body.project_id = S.projectId;
     const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body), signal: ctrl.signal });
     if (r.status === 401) { showLogin(); throw new Error("No autorizado"); }
@@ -1656,7 +1661,113 @@ input.addEventListener("paste", (e) => {
   const imgs = [...(e.clipboardData?.files || [])];
   if (imgs.length) { e.preventDefault(); attachLocalFiles(imgs); }
 });
-$("#attach-btn").addEventListener("click", () => { $("#picker").showModal(); loadPicker(S.pickerPath); });
+$("#attach-btn").addEventListener("click", () => openPicker("Adjuntar archivo", null));
+// --- Proyectos ------------------------------------------------------------------------------------
+// Conversaciones agrupadas con instrucciones y documentos que la IA tiene siempre presentes.
+const PJ = { list: [], cur: null };
+async function loadProjects() {
+  try { PJ.list = await api("/api/projects"); } catch { PJ.list = []; }
+  return PJ.list;
+}
+function projectName(id) { return PJ.list.find((p) => p.id === id)?.name; }
+async function renderProjects() {
+  const page = $("#projects-page"); page.innerHTML = "";
+  if (PJ.cur) return renderProject(PJ.cur);
+  await loadProjects();
+  page.append(h("div", { class: "page-head" }, h("h1", { class: "page-title" }, "Proyectos"),
+    h("button", { class: "primary", onclick: newProject }, ico("plus"), "Nuevo proyecto")));
+  if (!PJ.list.length) {
+    page.append(h("div", { class: "card proj-empty" },
+      h("h2", {}, "Agrupa tu trabajo"),
+      h("p", { class: "muted" }, "Un proyecto reúne conversaciones sobre un mismo tema con unas instrucciones y unos documentos que la IA tiene siempre presentes: tus plantillas, criterios, el contrato de referencia… Así no tienes que adjuntarlos ni explicarlos en cada conversación."),
+      h("button", { class: "primary", onclick: newProject }, "Crear el primero")));
+    return;
+  }
+  page.append(h("div", { class: "proj-grid" }, PJ.list.map((p) => h("button", { class: "proj-card", onclick: () => openProject(p.id) },
+    h("b", {}, p.name),
+    h("span", { class: "muted" }, (p.instructions || "Sin instrucciones").slice(0, 140)),
+    h("small", { class: "muted" }, `${p.conversations} ${p.conversations === 1 ? "conversación" : "conversaciones"} · ${p.files.length} documento${p.files.length === 1 ? "" : "s"}` +
+      (p.last_used ? ` · ${ago(p.last_used * 1000)}` : ""))))));
+}
+async function newProject() {
+  const name = prompt("Nombre del proyecto"); if (!name?.trim()) return;
+  try { const p = await api("/api/projects", { method: "POST", body: { name: name.trim() } }); await loadProjects(); openProject(p.id); }
+  catch (e) { toast(e.message); }
+}
+async function openProject(id) {
+  PJ.cur = id; if (S.view !== "projects") setView("projects"); else renderProjects();
+}
+async function renderProject(id) {
+  const page = $("#projects-page");
+  let p; try { p = await api(`/api/projects/${id}`); } catch (e) { PJ.cur = null; toast(e.message); return renderProjects(); }
+  page.innerHTML = "";
+  $("#top-title").textContent = p.name;
+  const save = async (fields) => {
+    try { Object.assign(p, await api(`/api/projects/${id}`, { method: "PATCH", body: fields })); loadProjects(); toast("Guardado", 1500); }
+    catch (e) { toast(e.message, 6000); }
+  };
+  const name = h("input", { class: "proj-name", value: p.name, onchange: () => name.value.trim() && save({ name: name.value.trim() }) });
+  const instr = h("textarea", { rows: 6, placeholder: "Por ejemplo: «Soy técnico de RRHH. Responde en tablas cuando compares datos y cita siempre de qué documento sale cada cifra.»" }, p.instructions || "");
+  instr.addEventListener("change", () => save({ instructions: instr.value }));
+  const docs = h("div", { class: "proj-docs" });
+  const drawDocs = () => {
+    docs.innerHTML = "";
+    if (!p.files.length) docs.append(h("p", { class: "muted" }, "Aún no hay documentos. Añade los que la IA deba consultar siempre (PDF, Word, Excel, texto…)."));
+    for (const f of p.files) docs.append(h("div", { class: "proj-doc" }, ico("doc"), h("span", { class: "grow", title: f }, baseName(f)),
+      h("button", { class: "icon-btn", title: "Quitar del proyecto", onclick: async () => { await save({ files: p.files.filter((x) => x !== f) }); drawDocs(); } }, "✕")));
+  };
+  drawDocs();
+  const convs = h("div", { class: "proj-convs" });
+  if (!p.conversations.length) convs.append(h("p", { class: "muted" }, "Todavía no hay conversaciones en este proyecto."));
+  for (const c of p.conversations) convs.append(h("button", { class: "proj-conv", onclick: () => { setView("chat"); openConversation(c.id); } },
+    h("span", { class: "grow" }, c.title), h("small", { class: "muted" }, ago(c.updated * 1000))));
+  page.append(
+    h("button", { class: "ghost small back", onclick: () => { PJ.cur = null; renderProjects(); $("#top-title").textContent = "Proyectos"; } }, "‹ Proyectos"),
+    h("div", { class: "proj-head" }, name, h("button", { class: "primary", onclick: () => newChatInProject(id) }, ico("plus"), "Nueva conversación")),
+    h("div", { class: "proj-cols" },
+      h("div", { class: "card" }, h("h2", {}, "Conversaciones"), convs),
+      h("div", {},
+        h("div", { class: "card" }, h("h2", {}, "Instrucciones"), h("p", { class: "muted small" }, "Se aplican a todas las conversaciones del proyecto."), instr),
+        h("div", { class: "card" }, h("h2", {}, "Documentos"), docs,
+          h("button", { class: "ghost small", onclick: () => openPicker("Añadir documento al proyecto", async (path) => {
+            if (!p.files.includes(path)) { await save({ files: [...p.files, path] }); drawDocs(); }
+          }) }, ico("plus"), "Añadir documentos")),
+        h("button", { class: "ghost small danger", onclick: async () => {
+          if (!confirm(`¿Borrar el proyecto «${p.name}»? Sus conversaciones se conservan, fuera del proyecto.`)) return;
+          await api(`/api/projects/${id}`, { method: "DELETE" }); PJ.cur = null; renderProjects(); loadConversations();
+        } }, "Borrar proyecto"))));
+}
+function newChatInProject(id) {
+  setView("chat"); newChat(); S.projectId = id; renderProjectChip();
+}
+function renderProjectChip() {
+  const id = S.conv?.project_id || (!S.convId ? S.projectId : null);
+  $("#project-chip")?.remove();
+  if (!id) return;
+  const chip = h("button", { id: "project-chip", class: "project-chip", title: "Esta conversación usa las instrucciones y documentos del proyecto", onclick: () => openProject(id) },
+    ico("project"), projectName(id) || "Proyecto");
+  $(".composer-wrap").prepend(chip);
+}
+async function moveToProject(c) {
+  await loadProjects();
+  const sel = h("select", {}, h("option", { value: "" }, "— Sin proyecto —"), ...PJ.list.map((p) => h("option", { value: p.id }, p.name)));
+  sel.value = c.project_id || "";
+  const dlg = h("dialog", { class: "export-dialog" }, h("h3", {}, "Mover a un proyecto"), h("p", { class: "muted" }, c.title), sel,
+    h("div", { class: "row end" }, h("button", { class: "ghost", onclick: () => dlg.close() }, "Cancelar"),
+      h("button", { class: "primary", onclick: async () => {
+        await api(`/api/conversations/${c.id}`, { method: "PATCH", body: { project_id: sel.value || null } });
+        dlg.close(); loadConversations(); if (S.convId === c.id) { S.conv.project_id = sel.value || null; renderProjectChip(); }
+        toast(sel.value ? `Movida a «${projectName(sel.value)}»` : "Quitada del proyecto");
+      } }, "Mover")));
+  dlg.addEventListener("close", () => dlg.remove()); document.body.append(dlg); dlg.showModal();
+}
+function openPicker(title, handler) {
+  S.pickHandler = handler; $("#picker-title").textContent = title;
+  $("#picker").showModal(); loadPicker(S.pickerPath);
+}
+$("#picker").addEventListener("close", () => { S.pickHandler = null; $("#picker-title").textContent = "Adjuntar archivo"; });
+const pickFile = (path) => (S.pickHandler ? S.pickHandler(path) : addAttachment(path));
+
 async function loadPicker(path) {
   try {
     const d = await api("/api/files/list?" + qs({ path: path || "" }));
@@ -1664,7 +1775,7 @@ async function loadPicker(path) {
     $("#picker-up").disabled = !d.parent; $("#picker-up").onclick = () => loadPicker(d.parent);
     const ul = $("#picker-list"); ul.innerHTML = "";
     for (const e of d.entries) ul.append(h("li", { onclick: () => {
-      if (e.is_dir) loadPicker(e.path); else { addAttachment(e.path); $("#picker").close(); }
+      if (e.is_dir) loadPicker(e.path); else { pickFile(e.path); $("#picker").close(); }
     } }, h("span", { class: "name" }, (e.is_dir ? "📁 " : "📄 ") + e.name), e.is_dir ? null : h("span", { class: "sub" }, fmtSize(e.size))));
   } catch (e) { toast(e.message); }
 }
@@ -1679,7 +1790,7 @@ async function uploadFiles(fileList, dir) {
 }
 $("#picker-upload").addEventListener("change", async (e) => {
   const res = await uploadFiles(e.target.files, await uploadsDir());
-  res.forEach((r) => addAttachment(r.path)); e.target.value = ""; $("#picker").close();
+  res.forEach((r) => pickFile(r.path)); e.target.value = ""; $("#picker").close();
   if (res.length) toast(`Subido a ${res[0].path.replace(/[\\/][^\\/]*$/, "")}`);
 });
 async function uploadsDir() {
@@ -2660,6 +2771,7 @@ async function init() {
   try { await refreshStatus(); await api("/api/conversations"); } catch { return; }
   await loadProviders();
   await loadConversations();
+  loadProjects().then(renderProjectChip);
   const last = store.get("conv", null);
   if (last) await openConversation(last).catch(newChat); else newChat();
   api("/api/onboarding").then((o) => { if (o.needed) openWizard(); }).catch(() => {});

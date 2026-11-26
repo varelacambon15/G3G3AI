@@ -166,6 +166,9 @@ class H(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"delta": {"content": "empiezo bien… "}}]})
             self.chunk({"error": {"message": "upstream exploded", "code": 502}})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "eco del sistema" in str(first_user):  # devuelve el mensaje del sistema tal cual
+            self.chunk({"choices": [{"delta": {"content": "SISTEMA<<" + sysmsg0 + ">>"}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "contexto enorme" in str(first_user):  # informa del progreso de lectura (llama.cpp con return_progress)
             if req.get("return_progress"):
                 for done in (0, 2000, 4000, 6000, 8000):
