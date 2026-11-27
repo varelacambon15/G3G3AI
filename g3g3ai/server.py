@@ -123,7 +123,9 @@ APP_FEATURES = (
     "configurado o el local) y herramientas «ninguna» o «sólo lectura» (leer archivos, web, correo; nunca modifica). "
     "Los miembros no ven la conversación: el director les pasa todo el contexto. Se activa con el interruptor de la sección; "
     "lo configura el usuario allí (tú no puedes crear miembros), pero puedes proponerle nombres, papeles y modelos concretos. "
-    "Se pueden guardar varios equipos con nombre y asignar uno a cada proyecto (en la página del proyecto).\n"
+    "Se pueden guardar varios equipos con nombre y asignar uno a cada proyecto (en la página del proyecto). "
+    "Si te piden sugerir o diseñar un equipo para una tarea, propónlo con suggest_team: el usuario lo ve como "
+    "tarjeta y lo guarda con un botón.\n"
     "- Conectores (sección «Conectores»): GitHub, servidores MCP de un catálogo (navegador, Notion, documentación, "
     "bases de datos…) o remotos por URL, y plugins compatibles con los de Claude Code (habilidades, comandos /, "
     "conectores) instalables desde un repositorio de GitHub.\n"
@@ -479,15 +481,30 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                 "system": cfg["default_system_prompt"], "temperature": cfg["temperature"],
                 "max_tokens": cfg["max_tokens"]}
 
+    models_seen: dict[str, list[str]] = {}       # modelos que ha devuelto cada proveedor (para proponer equipos)
+
     @app.get("/api/providers/{pid}/models")
     async def provider_models(pid: str):
         if pid == LOCAL_PROVIDER:
             st = llama.status()
             return [st["model"]] if st["model"] else []
         try:
-            return await list_models(provider_for(pid))
+            ms = await list_models(provider_for(pid))
         except (ProviderError, httpx.HTTPError) as e:
             raise HTTPException(502, str(e)) from e
+        models_seen[pid] = ms
+        return ms
+
+    def model_choices() -> list[str]:
+        """Modelos que el usuario puede usar: favoritos primero, luego el local y los de cada proveedor activo."""
+        active = {p["id"] for p in cfg["providers"] if provider_available(p["id"])}
+        out = [v for v in (cfg["model_favorites"] or []) if v.split("::", 1)[0] in active or v.startswith("local::")]
+        out.append("local::local")
+        hidden = set(cfg["model_hidden"] or [])
+        for pid in active:
+            names = models_seen.get(pid) or list(model_info_cache.get(pid, (0, {}))[1])
+            out += [f"{pid}::{m}" for m in names[:60] if f"{pid}::{m}" not in hidden]
+        return list(dict.fromkeys(out))
 
     # --- Conversaciones ------------------------------------------------------------
     @app.get("/api/conversations")
@@ -759,6 +776,33 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         cfg.data["settings_updated"] = time.time()
         cfg.set("teams", saved)
         return _teams_payload()
+
+    @app.post("/api/teams/from-proposal")
+    async def teams_from_proposal(body: dict):
+        """Guarda un equipo propuesto por la IA (y, si se indica, lo asigna a un proyecto)."""
+        prop = body.get("team") or {}
+        try:
+            t = team.clean_saved({"id": prop.get("id"), "name": body.get("name") or prop.get("name"),
+                                  "members": [{k: m.get(k) for k in ("id", "name", "role", "model", "tools")} for m in prop.get("members") or []]})
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        saved = _saved_teams()
+        base, i = t["name"], 2
+        while any(x["name"].lower() == t["name"].lower() and x["id"] != t["id"] for x in saved):
+            t["name"] = f"{base} ({i})"
+            i += 1
+        saved = [x for x in saved if x["id"] != t["id"]] + [t]
+        if len(saved) > team.MAX_TEAMS:
+            raise HTTPException(400, f"Como mucho {team.MAX_TEAMS} equipos guardados")
+        cfg.data["settings_updated"] = time.time()
+        cfg.set("teams", saved)
+        if body.get("project_id"):
+            if not db.get_project(body["project_id"]):
+                raise HTTPException(404, "No existe el proyecto")
+            db.update_project(body["project_id"], team_id=t["id"])
+        if body.get("message_id"):                      # la tarjeta recuerda que ya se guardó
+            db.mark_proposal_saved(int(body["message_id"]), prop.get("id"), t["id"], body.get("project_id"))
+        return {"team": t, **_teams_payload()}
 
     @app.delete("/api/teams/{tid}")
     async def teams_delete(tid: str):
@@ -1422,6 +1466,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             tc.mail = mail_index if cfg["mail_enabled"] else None
             tc.tasks = task_store
             tc.plugins = plugins
+            tc.model_choices = model_choices()
             tc.cloud = chosen_pid != LOCAL_PROVIDER
             tc.compact_specs = chosen_pid == LOCAL_PROVIDER
             recent = [m["content"] or "" for m in (conv.get("messages") or []) if m["role"] == "user"][-3:]
@@ -1526,6 +1571,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                     a["name"] + (" (OCR)" if a.get("kind") == "document" and "OCR" in attach_text[:2000] else "") for a in attach_meta))
             made: list[str] = []
             out_files: list[str] = []
+            team_props: list[dict] = []
             todos: list = []
             finish = None
             used_in = used_out = 0
@@ -1646,6 +1692,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                                 made.append(ev["path"])
                             elif ev["type"] == "file":
                                 out_files.append(ev["path"])
+                            elif ev["type"] == "team_proposal":
+                                team_props.append(ev["team"])
                             elif ev["type"] == "stats":
                                 stats.update({k: v for k, v in ev.items() if v is not None and k != "type"})
                             if ev["type"] == "status":
@@ -1669,12 +1717,13 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             break
                         yield sse({"type": "route_fallback", "message": f"{shown}: {msg}"})
             finally:
-                if content or reasoning or trace or made:
+                if content or reasoning or trace or made or team_props:
                     meta = {"provider": route["provider"] if route else pid,
                             "model": route["model"] if route else model,
                             "route": route.get("reason") if route else None,
                             "stats": stats, "tools": trace or None, "images": made or None,
-                            "files": [f for f in dict.fromkeys(out_files) if Path(f).is_file()] or None, "todos": todos or None, "mode": perm_mode,
+                            "files": [f for f in dict.fromkeys(out_files) if Path(f).is_file()] or None,
+                            "team_proposals": team_props or None, "todos": todos or None, "mode": perm_mode,
                             "finish": finish, "log": gen_log or None, "elapsed": round(time.time() - t_start, 1),
                             "usage": ({"in": used_in, "out": used_out,
                                        # lo que cobró el proveedor si lo dice; si no, la estimación con los precios

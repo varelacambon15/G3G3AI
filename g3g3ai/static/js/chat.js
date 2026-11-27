@@ -465,6 +465,7 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
       continue;
     }
     if (t.name === "todo_write") continue;  // ya se ve en la tarjeta del plan
+    if (t.name === "suggest_team" && !/^Error/.test(t.result || "")) continue;   // se ve como tarjeta del equipo
     if (t.type === "tool_call") pendingCalls[t.name] = t;  // se muestra junto a su resultado
     else if (t.type === "approval") frag.append(approvalCard(t));
     else if (t.type === "tool_result") { toolList().append(toolRow(t.name, pendingCalls[t.name]?.args, t.result)); delete pendingCalls[t.name]; }
@@ -479,6 +480,7 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
     frag.append(b);
   }
   const fileIcon = (p) => ({ docx: "📘", doc: "📘", xlsx: "📗", xlsm: "📗", csv: "📗", pptx: "📙", pdf: "📕", exe: "⚙️", py: "🐍" }[String(p).split(".").pop().toLowerCase()] || "📄");
+  for (const t of extra.teams || []) frag.append(teamProposalCard(t, extra.msgId));
   const outs = [...new Set(extra.files || [])];
   if (outs.length) frag.append(h("div", { class: "file-cards" }, outs.map(fileCard)));
   const imgs = extra.images || [];
@@ -522,7 +524,7 @@ function messageEl(m, pos = -1) {
       branchNav(pos),
       (S.checkpoints || []).some((c) => c.id >= m.id) ? h("button", { class: "act", title: "Volver aquí: los archivos que la IA tocó desde este mensaje vuelven a como estaban antes", onclick: () => rewindTo(m) }, ico("rewind")) : null));
   } else {
-    el.append(assistantInner(m.content, m.reasoning, m.meta?.tools, false, { images: m.meta?.images || [], files: m.meta?.files || [], todos: m.meta?.todos || [] }));
+    el.append(assistantInner(m.content, m.reasoning, m.meta?.tools, false, { images: m.meta?.images || [], files: m.meta?.files || [], todos: m.meta?.todos || [], teams: m.meta?.team_proposals || [], msgId: m.id }));
     const st = m.meta?.stats || {};
     el.append(h("div", { class: "meta" },
       h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, ico("copy")),
@@ -1008,7 +1010,7 @@ function liveKey(content, reasoning, tools, extra) {
   const waiting = !content && !reasoning && !(tools || []).length && !extra.progress;
   return JSON.stringify([reasoning.length, think.length, !body, (tools || []).map((t) => [t.type, t.name, t.state, (t.result || "").length]),
     extra.todos, extra.compacted, (extra.liveOut || "").length, extra.status, extra.progress, extra.route, extra.fallbacks.length,
-    extra.files.length, extra.images.length, waiting ? Math.round((Date.now() - extra.t0) / 1000) : 0, extra.reading]);
+    extra.files.length, extra.images.length, extra.teams.length, waiting ? Math.round((Date.now() - extra.t0) / 1000) : 0, extra.reading]);
 }
 
 // Un error no debe dejar la respuesta en blanco: queda en la conversación con su causa y un botón para reintentar
@@ -1041,7 +1043,7 @@ async function send(text, attachments, isContinue = false) {
   const ctrl = new AbortController(); S.streaming = ctrl;
   setSending(true);
   let content = "", reasoning = "", tools = [], errorMsg = null, raf = 0;
-  const extra = { route: null, fallbacks: [], images: [], files: [], todos: [], t0: Date.now(), reading: attachments.length };
+  const extra = { route: null, fallbacks: [], images: [], files: [], todos: [], teams: [], t0: Date.now(), reading: attachments.length };
   // Mientras no llegue nada, «Pensando… N s» (y la fase: leyendo adjuntos, conectando…) para que nunca parezca colgado
   const waitTick = setInterval(() => { if (!content && !reasoning && !tools.length && !extra.progress) paint(); }, 1000);
   const view = liveView();
@@ -1102,6 +1104,7 @@ async function send(text, attachments, isContinue = false) {
         else if (ev.type === "todos") extra.todos = ev.items;
         else if (ev.type === "retract") { if (content.endsWith(ev.text)) content = content.slice(0, content.length - ev.text.length); }
         else if (ev.type === "file") extra.files.push(ev.path);
+        else if (ev.type === "team_proposal") extra.teams.push(ev.team);
         else if (ev.type === "compacted") extra.compacted = ev.messages;
         else if (ev.type === "route_fallback") extra.fallbacks.push(ev.message);
         else if (ev.type === "budget") toast(ev.pct >= 100 ? `⚠ Has superado tu límite mensual (${ev.cost} de ${ev.limit} $)` : `Gasto del mes: ${ev.pct}% de tu límite (${ev.cost} de ${ev.limit} $)`, 7000);
@@ -1173,3 +1176,65 @@ window.g3Share = async ({ text = "", files = [] } = {}) => {
   }
   input.focus();
 };
+
+// --- Propuesta de equipo de la IA: tarjeta con el organigrama y botón para guardarla ---------------------
+function teamModelLabel(v) {
+  const m = (typeof MS !== "undefined" && MS.catalog || []).find((x) => x.value === v);
+  if (m) return { name: shortModel(m), group: m.group };
+  const [p, ...rest] = String(v).split("::");
+  return p === "local" ? { name: "Modelo local", group: "Este equipo" } : { name: rest.join("::") || v, group: p };
+}
+function teamProposalCard(t, msgId) {
+  const card = h("div", { class: "team-prop", "data-id": t.id });
+  const draw = () => {
+    card.innerHTML = "";
+    const saved = t.saved_as;
+    card.append(h("div", { class: "tp-head" },
+      h("span", { class: "tp-ico" }, ico("users")),
+      h("div", { class: "grow" }, h("small", { class: "muted" }, "Propuesta de equipo"), h("b", {}, t.name),
+        t.purpose ? h("div", { class: "muted small" }, t.purpose) : null),
+      saved ? h("span", { class: "tp-saved" }, ico("check"), "Guardado") : null));
+    card.append(h("div", { class: "tp-dir" }, h("b", {}, "G3G3AI · director"), h("small", { class: "muted" }, t.director || "El modelo que elijas en el chat reparte el trabajo y revisa lo que le devuelven.")));
+    card.append(h("div", { class: "tp-members" }, t.members.map((m) => {
+      const ml = teamModelLabel(m.model);
+      return h("div", { class: "tp-mem" },
+        h("div", { class: "tp-mem-head" }, h("span", { class: "tp-mico" }, ico(m.model.startsWith("local::") ? "cpu" : "globe")), h("b", {}, m.name),
+          m.tools === "read" ? h("span", { class: "tp-badge", title: "Puede leer archivos, la web y el correo (sin modificar nada)" }, "lee") : null),
+        h("div", { class: "tp-model", title: m.model }, ml.name, h("small", { class: "muted" }, " · " + ml.group)),
+        h("div", { class: "tp-role" }, m.role || ""),
+        m.why ? h("div", { class: "tp-why muted" }, m.why) : null);
+    })));
+    const acts = h("div", { class: "tp-acts" });
+    const save = async (projectId) => {
+      try {
+        const r = await api("/api/teams/from-proposal", { method: "POST", body: { team: t, message_id: msgId || null, project_id: projectId || null } });
+        t.saved_as = r.team.id; if (projectId) t.project_id = projectId;
+        if (typeof TEAM !== "undefined") { TEAM.all = null; TEAM.data = null; TEAM.dirty = false; }
+        toast(projectId ? `Equipo «${r.team.name}» guardado y asignado al proyecto` : `Equipo «${r.team.name}» guardado. Asígnalo a un proyecto o úsalo desde Equipo.`, 6000);
+        draw();
+      } catch (e) { toast(e.message, 6000); }
+    };
+    if (!saved) acts.append(h("button", { class: "primary small", onclick: () => save() }, ico("check"), "Guardar equipo"));
+    const projs = (typeof PJ !== "undefined" && PJ.list) || [];
+    if (projs.length && !t.project_id) {
+      const sel = h("select", { class: "small", "aria-label": "Proyecto" }, h("option", { value: "" }, "Asignar a un proyecto…"), projs.map((p) => h("option", { value: p.id }, p.name)));
+      sel.value = S.projectId && projs.some((p) => p.id === S.projectId) ? S.projectId : "";
+      acts.append(sel, h("button", { class: "ghost small", onclick: () => sel.value ? save(sel.value) : toast("Elige un proyecto") }, saved ? "Asignar" : "Guardar y asignar"));
+    } else if (t.project_id) acts.append(h("span", { class: "muted small" }, "Asignado a «" + ((projs.find((p) => p.id === t.project_id) || {}).name || "un proyecto") + "»"));
+    acts.append(h("button", { class: "ghost small", onclick: () => openProposalInTeam(t) }, saved ? "Ver en Equipo" : "Retocar en Equipo"));
+    card.append(acts);
+  };
+  draw();
+  return card;
+}
+async function openProposalInTeam(t) {
+  if (TEAM.dirty && !confirm("Hay cambios sin guardar en la sección Equipo. ¿Descartarlos?")) return;
+  TEAM.dirty = false; TEAM.data = null;
+  setView("team");
+  await loadTeam();
+  if (t.saved_as && TEAM.all?.saved?.some((x) => x.id === t.saved_as)) { selectTeam(t.saved_as, true); return; }
+  selectTeam("new", true);
+  TEAM.data.name = t.name;
+  TEAM.data.members = t.members.map((m) => ({ id: m.id, name: m.name, role: m.role, model: m.model, tools: m.tools }));
+  drawTeamBar(); drawTeam();
+}

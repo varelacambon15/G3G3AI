@@ -833,3 +833,27 @@ code.path-link:hover { background: var(--hover); }
 .plugin-det summary { cursor: pointer; font-size: 12.5px; color: var(--muted); margin-top: 4px; }
 .plugin-det div { margin: 3px 0 0 4px; }
 .btn-link { text-decoration: none; display: inline-flex; align-items: center; padding: 4px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); }
+
+/* Propuesta de equipo (tarjeta tipo artefacto) */
+.team-prop { border: 1px solid var(--border-strong, var(--border)); border-radius: 14px; background: var(--panel); padding: 14px; margin: 10px 0;
+  display: flex; flex-direction: column; gap: 10px; }
+.tp-head { display: flex; gap: 10px; align-items: flex-start; }
+.tp-head .grow { display: flex; flex-direction: column; gap: 1px; }
+.tp-head b { font-size: 16px; }
+.tp-ico, .tp-mico { display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; background: var(--panel-2); flex: none; }
+.tp-ico { width: 34px; height: 34px; } .tp-ico svg { width: 18px; height: 18px; }
+.tp-mico { width: 24px; height: 24px; } .tp-mico svg { width: 14px; height: 14px; }
+.tp-saved { display: inline-flex; align-items: center; gap: 4px; color: #3f8f5b; font-size: 13px; } .tp-saved svg { width: 14px; height: 14px; }
+.tp-dir { align-self: center; text-align: center; border: 1px dashed var(--border); border-radius: 10px; padding: 7px 14px; display: flex; flex-direction: column;
+  max-width: 460px; position: relative; }
+.tp-dir::after { content: ""; position: absolute; left: 50%; bottom: -11px; height: 10px; border-left: 1px solid var(--border); }
+.tp-members { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+.tp-mem { border: 1px solid var(--border); border-radius: 11px; padding: 9px 10px; display: flex; flex-direction: column; gap: 4px; background: var(--bg); }
+.tp-mem-head { display: flex; align-items: center; gap: 7px; }
+.tp-badge { margin-left: auto; font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--panel-2); color: var(--muted); }
+.tp-model { font-size: 13px; font-weight: 500; }
+.tp-role { font-size: 13px; line-height: 1.4; }
+.tp-why { font-size: 12px; line-height: 1.35; }
+.tp-acts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tp-acts button { display: inline-flex; align-items: center; gap: 4px; }
+.tp-acts svg { width: 14px; height: 14px; }

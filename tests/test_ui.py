@@ -541,3 +541,32 @@ def test_connectors_and_plugins_view(live, tmp_path):
         assert page.evaluate("runSlash('/saluda a Marta')") == "Saluda a a Marta"
         browser.close()
     assert errors == [], errors
+
+
+def test_ai_suggests_a_team_card_and_saves_it(live):
+    base, cfg = live
+    errors: list[str] = []
+    with playwright_sync.sync_playwright() as p:
+        browser = launch(p)
+        page = browser.new_context(viewport={"width": 1280, "height": 860}).new_page()
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/?token={cfg['token']}")
+        _load_fake_model(page)
+        page.fill("#input", "sugiere un equipo para mi juego 3D")
+        page.click("#send-btn")
+        page.wait_for_function("document.querySelector('#send-btn').dataset.state === 'idle'", timeout=20000)
+        card = page.locator(".team-prop")
+        card.wait_for()
+        assert card.locator(".tp-mem").count() == 2 and "Juego 3D" in card.inner_text()
+        assert page.locator(".msg.assistant >> text=Te propongo este equipo").count() == 1
+        if os.environ.get("G3_SHOT"):
+            card.screenshot(path=os.environ["G3_SHOT"])
+        card.locator("button:has-text('Guardar equipo')").click()
+        page.wait_for_selector(".team-prop .tp-saved")
+        assert [t["name"] for t in cfg["teams"]] == ["Juego 3D"] and len(cfg["teams"][0]["members"]) == 2
+        page.reload()                                                               # la tarjeta recuerda que se guardó
+        page.wait_for_selector(".team-prop .tp-saved")
+        page.click(".team-prop button:has-text('Ver en Equipo')")
+        page.wait_for_function("document.querySelector('#team-pick') && document.querySelector('#team-pick').selectedOptions[0].text === 'Juego 3D'")
+        browser.close()
+    assert errors == [], errors

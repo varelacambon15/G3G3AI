@@ -231,6 +231,18 @@ class DB:
                     (cid, b["position"], b["born"], b["data"]))
         self._q("UPDATE conversations SET summary=NULL, summary_upto=NULL, updated=? WHERE id=?", (time.time(), cid))
 
+    def mark_proposal_saved(self, mid: int, prop_id: str | None, team_id: str, project_id: str | None) -> None:
+        row = self._q("SELECT meta FROM messages WHERE id=?", (mid,)).fetchone()
+        if not row:
+            return
+        meta = json.loads(row["meta"] or "{}")
+        for p in meta.get("team_proposals") or []:
+            if p.get("id") == prop_id:
+                p["saved_as"] = team_id
+                if project_id:
+                    p["project_id"] = project_id
+        self._q("UPDATE messages SET meta=? WHERE id=?", (json.dumps(meta, ensure_ascii=False), mid))
+
     def mark_conversation(self, cid: str, pinned: bool | None = None, favorite: bool | None = None) -> None:
         """Fijar / favorito: no cambia «updated» (la conversación no salta en la lista), pero sí «marked» para sincronizar."""
         sets, args = [], []

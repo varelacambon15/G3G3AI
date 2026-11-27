@@ -56,6 +56,18 @@ class H(BaseHTTPRequestHandler):
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "d1", "function": {
                 "name": "create_document", "arguments": json.dumps({"path": "nomina.xlsx", "content": content})}}]}}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        first_u = next((m for m in msgs if m["role"] == "user"), {})
+        if "suggest_team" in names and "sugiere un equipo" in str(first_u.get("content")):
+            if last["role"] == "user" or (last["role"] == "tool" and str(last["content"]).startswith("Error")):
+                good = last["role"] == "tool"
+                args = {"name": "Juego 3D", "purpose": "Programar y revisar el juego", "members": [
+                    {"name": "Programador", "role": "Escribe el código", "model": "local", "tools": "read", "why": "gratis"},
+                    {"name": "Revisor", "role": "Revisa la geometría", "model": "local" if good else "modelo-que-no-existe"}]}
+                self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "t%d" % len(msgs), "function": {
+                    "name": "suggest_team", "arguments": json.dumps(args)}}]}, "finish_reason": "tool_calls"}]})
+            else:
+                self.chunk({"choices": [{"delta": {"content": "Te propongo este equipo de dos miembros."}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "generate_image" in names and last["role"] == "user" and "dibuja" in str(last["content"]):
             self.chunk({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "g1", "function": {
                 "name": "generate_image", "arguments": json.dumps({"prompt": "a cat on a desk"})}}]}}]})

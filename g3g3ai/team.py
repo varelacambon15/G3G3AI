@@ -65,6 +65,58 @@ def for_project(cfg_team: dict | None, saved: list | None, project: dict | None)
     return g if g.get("enabled") and g.get("members") else None
 
 
+def resolve_model(text: str, choices: list[str]) -> str | None:
+    """«glm-5.3-flash», «OpenCode Go / glm-5.3-flash», «go::glm-5.3-flash» o «local» → «proveedor::modelo» de choices."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    low = t.lower()
+    if low in ("local", "local::local", "modelo local"):
+        return "local::local"
+    by_low = {c.lower(): c for c in choices}
+    if low in by_low:
+        return by_low[low]
+    tail = low.split("::")[-1].split("/")[-1].strip()
+    same = [c for c in choices if c.lower().split("::", 1)[-1] == tail or c.lower().split("::", 1)[-1].split("/")[-1] == tail]
+    if len(same) >= 1:
+        return same[0]
+    near = [c for c in choices if tail and tail in c.lower()]
+    return near[0] if len(near) == 1 else None
+
+
+def proposal(args: dict, choices: list[str]) -> tuple[dict | None, str | None]:
+    """Valida la propuesta de equipo de la IA. (propuesta, error para que la IA la corrija)."""
+    name = re.sub(r"\s+", " ", str(args.get("name") or "").strip())[:60]
+    if not name:
+        return None, "Falta el nombre del equipo (name)."
+    members, bad = [], []
+    for m in (args.get("members") or [])[:MAX_MEMBERS]:
+        if not isinstance(m, dict):
+            continue
+        model = resolve_model(str(m.get("model") or ""), choices)
+        if not model:
+            bad.append(f"{m.get('name') or '?'} → «{m.get('model')}»")
+            continue
+        members.append({"id": uuid.uuid4().hex[:8], "name": re.sub(r"\s+", " ", str(m.get("name") or "Miembro").strip())[:40],
+                        "role": str(m.get("role") or "").strip()[:600], "model": model,
+                        "tools": "read" if str(m.get("tools") or "") in ("read", "lectura", "leer") else "none",
+                        "why": str(m.get("why") or "").strip()[:200]})
+    if bad:
+        return None, ("Estos modelos no están disponibles: " + "; ".join(bad) + ". Usa uno de esta lista (escríbelo tal cual): "
+                      + ", ".join(choices[:80]))
+    if not members:
+        return None, "El equipo necesita al menos un miembro (members)."
+    seen = set()
+    for m in members:                                   # nombres únicos
+        base, i = m["name"], 2
+        while m["name"].lower() in seen:
+            m["name"] = f"{base} {i}"
+            i += 1
+        seen.add(m["name"].lower())
+    return {"id": uuid.uuid4().hex[:10], "name": name, "purpose": str(args.get("purpose") or "").strip()[:400],
+            "director": str(args.get("director") or "").strip()[:300], "members": members}, None
+
+
 def find(team: dict, who: str) -> dict | None:
     w = (who or "").strip().lower()
     for m in team.get("members", []):

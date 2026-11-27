@@ -144,6 +144,21 @@ def _schema(props: dict, required: list[str] | None = None) -> dict:
 ALL_SPECS = {
     "list_dir": ("Lista archivos y carpetas de una ruta. Sin ruta = carpeta personal.",
                  _schema({"path": {"type": "string", "description": "Ruta absoluta o relativa a la carpeta personal"}})),
+    "suggest_team": ("Propone al usuario un EQUIPO de IAs para una tarea: aparece en el chat como una tarjeta con el "
+                     "organigrama y un botón para guardarlo (y asignarlo a un proyecto). Úsala cuando te pidan sugerir, "
+                     "diseñar o recomendar un equipo. Cada miembro: nombre corto, papel concreto (qué hace y cuándo "
+                     "delegarle), modelo elegido de la lista de modelos disponibles y tools «read» si necesita leer "
+                     "archivos/web/correo o «none». Elige modelos por coste y capacidad (los potentes sólo donde hacen "
+                     "falta) y explica en why por qué. Después, resume la propuesta en 2-3 frases; no repitas la tarjeta.",
+                     _schema({"name": {"type": "string", "description": "Nombre del equipo, p. ej. «Juego 3D»"},
+                              "purpose": {"type": "string", "description": "Para qué sirve, en una frase"},
+                              "director": {"type": "string", "description": "Consejo sobre qué modelo usar como director (el del chat)"},
+                              "members": {"type": "array", "items": {"type": "object", "properties": {
+                                  "name": {"type": "string"}, "role": {"type": "string"},
+                                  "model": {"type": "string", "description": "Modelo de la lista de disponibles"},
+                                  "tools": {"type": "string", "enum": ["none", "read"]},
+                                  "why": {"type": "string", "description": "Por qué este modelo (coste/capacidad)"}},
+                                  "required": ["name", "role", "model"]}}}, ["name", "members"])),
     "skill": ("Carga una habilidad instalada (plugin): devuelve sus instrucciones para que las sigas. Úsala cuando la "
               "tarea encaje con la descripción de una habilidad de la lista del sistema. Con file lees uno de sus archivos de apoyo.",
               _schema({"name": {"type": "string", "description": "Nombre de la habilidad"},
@@ -409,6 +424,8 @@ class ToolContext:
         self.dirty = False  # se han modificado archivos y aún no se ha ejecutado nada para comprobarlo
         self.team: dict | None = None           # equipo activo (director = este modelo)
         self.plugins = None                      # plugins instalados (habilidades)
+        self.model_choices: list[str] = []       # modelos disponibles («proveedor::modelo») para proponer equipos
+        self.proposals: list[dict] = []          # equipos propuestos en este turno (tarjetas en el chat)
         self.team_runner: Callable[..., Awaitable[str]] | None = None
         self.diagnostics: Callable[[], Awaitable[dict]] | None = None  # «Comprobar todo» (lo fija el servidor)
         self.subagent: Callable[..., Awaitable[str]] | None = None  # lo fija el servidor: (tarea, write=False)
@@ -462,6 +479,7 @@ class ToolContext:
         ({"delegate", "delegate_edit", "apply_patch"}, r"ayudante|deleg|en paralelo|reparte|subagente|propuesta"),
         ({"scheduled_tasks"}, r"tarea|program|rutina|autom[aá]tic|cada (?:d[ií]a|ma[ñn]ana|tarde|noche|semana|mes|hora|lunes|"
                               r"martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|\d)|todos los|a las \d|recordatorio"),
+        ({"suggest_team"}, r"equipo|team|miembro|director|reparti|qu[eé] modelos?"),
         ({"attach_file"}, r"p[aá]sa(?:me|lo|la)|adj[uú]nt|m[aá]nda|env[ií]a|dame|archivo|fichero|descarg|abr[ei]"),
         ({"create_document"}, r"excel|word|\bpdf|docx|xlsx|pptx|power ?point|documento|informe|hoja de c[aá]lculo|"
                               r"presentaci[oó]n|diapositiva|tabla|gr[aá]fico|exporta|descarg|archivo|fichero"),
@@ -607,6 +625,8 @@ class ToolContext:
             out.append("scheduled_tasks")
         if self.plugins is not None and self.plugins.skills():
             out.append("skill")
+        if self.model_choices and not self.auto_all and not self.unattended:
+            out.append("suggest_team")
         if not self.auto_all:
             out.append("app_settings")
             if self.diagnostics:
@@ -627,6 +647,8 @@ class ToolContext:
 
     def _spec(self, n: str) -> tuple[str, dict]:
         desc, schema = ALL_SPECS[n] if n in ALL_SPECS else self.mcp.specs()[n]
+        if n == "suggest_team" and self.model_choices:   # los modelos que puede elegir, en la propia descripción
+            desc = desc + "\nModelos disponibles: " + ", ".join(self.model_choices[:120])
         if n == "team_delegate" and self.team:  # los miembros, en la propia descripción
             from . import team as TM
             names = [m["name"] for m in self.team["members"]]
@@ -1164,6 +1186,15 @@ class ToolContext:
                 self.tasks.delete(str(a.get("id")))
                 return "Tarea borrada."
             return "Error: action debe ser list, create o delete"
+        if name == "suggest_team":
+            from . import team as TM
+            prop, err = TM.proposal(a, self.model_choices)
+            if err:
+                return "Error: " + err
+            self.proposals.append(prop)
+            return (f"Propuesta «{prop['name']}» mostrada al usuario con {len(prop['members'])} miembros "
+                    f"({', '.join(m['name'] + ' · ' + m['model'].split('::', 1)[-1] for m in prop['members'])}). "
+                    "Puede guardarla con un botón. Resúmela brevemente.")
         if name == "skill":
             return self.plugins.skill_text(str(a.get("name") or ""), a.get("file") or None)
         if name == "attach_file":
@@ -1786,6 +1817,8 @@ async def tool_events(ctx: ToolContext, name: str, raw_args, sink: list[str]) ->
         yield {"type": "image", "path": ctx.generated.pop(0)}
     while ctx.files_out:
         yield {"type": "file", "path": ctx.files_out.pop(0)}
+    while ctx.proposals:
+        yield {"type": "team_proposal", "team": ctx.proposals.pop(0)}
     sink.append(result)
 
 
