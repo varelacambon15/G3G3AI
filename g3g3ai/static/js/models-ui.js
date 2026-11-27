@@ -235,10 +235,20 @@ function openModelPicker() {
     else if (e.key === "Escape") { e.preventDefault(); closeModelPicker(); $("#input").focus(); }
   });
   $(".composer").append(pop);
+  fitPicker(pop);
   draw();
   search.focus();
   setTimeout(() => document.addEventListener("mousedown", pickerOutside, true), 0);
 }
+// Que el selector quepa siempre en la ventana: hacia arriba si hay sitio; si no, hacia abajo; y nunca más alto que el hueco
+function fitPicker(pop) {
+  const r = $(".composer").getBoundingClientRect(), margin = 12;
+  const above = r.top - margin - 8, below = innerHeight - r.bottom - margin - 8;
+  const down = above < 320 && below > above;
+  pop.classList.toggle("down", down);
+  pop.style.maxHeight = Math.max(160, Math.min(520, down ? below : above)) + "px";
+}
+window.addEventListener("resize", () => { const p = $("#model-picker"); if (p) fitPicker(p); });
 $("#model-btn").addEventListener("click", openModelPicker);
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "m") { e.preventDefault(); openModelPicker(); }
