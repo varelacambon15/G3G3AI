@@ -2890,3 +2890,18 @@ def test_each_reply_keeps_a_log(env):
     meta = client.get(f"/api/conversations/{cid}", headers=h).json()["messages"][-1]["meta"]
     texts = [l["text"] for l in meta["log"]]
     assert texts[0].startswith("Modelo:") and any("descontroló" in t for t in texts) and meta["elapsed"] >= 0
+
+
+def test_read_file_reads_text_in_images(env):
+    pytest.importorskip("rapidocr")
+    import asyncio
+    from PIL import Image, ImageDraw, ImageFont
+    client, cfg, home, tmp = env
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    p = Path(cfg["write_roots"][0]) / "image001.png"
+    img = Image.new("RGB", (900, 200), "white")
+    ImageDraw.Draw(img).text((40, 60), "Beatriz Majestic 2 dias", font=ImageFont.load_default(size=48), fill="black")
+    img.save(p)
+    out = asyncio.run(ToolContext(Files(cfg), cfg, agent=True).run("read_file", {"path": str(p)}))
+    assert "Beatriz" in out and "OCR" in out

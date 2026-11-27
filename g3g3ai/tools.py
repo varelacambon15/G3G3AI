@@ -1018,8 +1018,19 @@ class ToolContext:
             path = f.resolve(a["path"])
             kind = D.kind_of(path)
             if kind == "image":
-                return (f"{path} es una imagen. Pide al usuario que la adjunte al chat (📎) para verla "
-                        "con un modelo con visión.")
+                from . import ocr
+                text = ""
+                if ocr.available():
+                    try:
+                        text = ocr.image_text(path)
+                    except Exception:  # noqa: BLE001
+                        text = ""
+                if text.strip():
+                    return (f"Imagen: {path}\nTexto que contiene (leído con OCR; columnas separadas por « | »; puede haber "
+                            f"errores en cifras sueltas):\n{text[:READ_LIMIT_FOR_AI]}\n[Si necesitas describir lo que se ve "
+                            "(no sólo el texto), usa attach_file para mostrársela al usuario o pídele que la adjunte.]")
+                return (f"{path} es una imagen sin texto legible. Para describirla hace falta un modelo con visión: "
+                        "muéstrasela al usuario con attach_file o pídele que la adjunte al chat (📎).")
             if kind == "document":
                 text = D.extract_text(path) or "(documento sin texto: puede ser un PDF escaneado; adjúntalo al chat)"
                 res = {"path": str(path), "content": text}
