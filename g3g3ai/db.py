@@ -71,6 +71,23 @@ def snippet(text: str, words: list[str], width: int = 160) -> str:
     return ("…" if start else "") + frag + ("…" if start + width < len(text) else "")
 
 
+class _Result:
+    """Resultado ya leído de una consulta (con la misma interfaz que el cursor que se usaba)."""
+    __slots__ = ("lastrowid", "rowcount", "_rows")
+
+    def __init__(self, cur, rows):
+        self.lastrowid, self.rowcount, self._rows = cur.lastrowid, cur.rowcount, rows or []
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
 class DB:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,10 +111,13 @@ class DB:
         self.lock = threading.Lock()
 
     def _q(self, sql, args=()):
+        # Todo, también leer las filas, dentro del candado: la conexión es compartida entre hilos y algunas consultas
+        # llaman a funciones de Python (norm); leer fuera del candado bloqueaba la app con dos búsquedas a la vez.
         with self.lock:
             cur = self.conn.execute(sql, args)
+            rows = cur.fetchall() if cur.description else None
             self.conn.commit()
-            return cur
+            return _Result(cur, rows)
 
     # Conversaciones ---------------------------------------------------------
     def list_conversations(self) -> list[dict]:

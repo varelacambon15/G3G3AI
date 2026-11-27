@@ -213,13 +213,21 @@ Cuando un modelo local tiene que leer mucho (un documento largo, una conversaci�
 - Las rutas que escribe la IA también se pueden pulsar.
 - Pedir «hazme un Excel» funciona siempre, incluso sin modo Agente (se guarda en `G3G3AI-documentos`).
 
+### ⓘ Detalles de cada respuesta
+
+Bajo cada respuesta, **ⓘ** muestra qué hizo la IA y cuándo: modelo, herramientas, reintentos, avisos, errores, tiempo y tokens. «Copiar» lo deja listo para pegarlo si quieres que alguien lo revise.
+
+### 📧 Adjuntos del correo
+
+La IA puede leer lo que dicen los adjuntos de un correo (PDF —también escaneados—, Word, Excel, imágenes con texto) sin guardarlos, y pasártelos al chat como tarjeta para abrirlos o descargarlos.
+
 ### 🔐 Permisos desde el chat
 
 Con el Agente activo, el botón junto al cuadro elige: **Manual** (pregunta todo), **Semi-auto** (lo habitual en tus carpetas sin preguntar) o **Auto**.
 
 ### 🕒 Tareas programadas
 
-Sección **Tareas** o pidiéndoselo a la IA («cada lunes a las 8 busca las incidencias de México y hazme un Excel»). Se puede elegir la hora y los días de la semana.
+Sección **Tareas** o pidiéndoselo a la IA («cada lunes a las 8 busca las incidencias de México y hazme un Excel»). Se puede elegir la hora, los días de la semana y **qué puede hacer sola** (Manual / Semi-auto / Auto), independientemente de cómo tengas el chat. Si usa un modelo local, lo carga ella sola.
 
 ### ☁️ Tus datos en la nube (OneDrive o Google Drive)
 
