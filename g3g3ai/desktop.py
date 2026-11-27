@@ -39,6 +39,8 @@ def main() -> None:
     ap.add_argument("--browser", action="store_true", help="Abrir en el navegador en vez de en ventana propia")
     ap.add_argument("--port", type=int)
     args = ap.parse_args()
+    from .updater import wait_for_previous
+    wait_for_previous()      # tras actualizarse: esperar a que la versión anterior se cierre
 
     cfg = Config()
     port = args.port or cfg["port"]

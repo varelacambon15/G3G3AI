@@ -26,6 +26,7 @@ def free_port() -> int:
 def live(tmp_path, monkeypatch):
     monkeypatch.setenv("G3G3AI_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setenv("G3G3AI_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("G3G3AI_NO_UPDATE_CHECK", "1")
     for m in [m for m in sys.modules if m.startswith("g3g3ai")]:
         del sys.modules[m]
     import uvicorn

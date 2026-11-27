@@ -813,6 +813,30 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                 db.update_project(p["id"], team_id=None)
         return _teams_payload()
 
+    # --- Actualizar la aplicación a la última versión publicada -------------------------------------
+    from .updater import UpdateError, Updater
+    updater = Updater(cfg, lambda: GH.token(cfg))
+    updater.request_exit = lambda: (getattr(app.state, "request_exit", None) or (lambda: None))()
+    app.state.updater = updater
+
+    @app.get("/api/update/check")
+    async def update_check(force: bool = False):
+        try:
+            return await asyncio.to_thread(updater.check, force)
+        except UpdateError as e:
+            raise HTTPException(502, str(e)) from e
+
+    @app.post("/api/update/install")
+    async def update_install():
+        try:
+            return await asyncio.to_thread(updater.start_install)
+        except UpdateError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.get("/api/update/status")
+    async def update_status():
+        return updater.state
+
     @app.get("/api/onboarding")
     async def onboarding():
         profs = await asyncio.to_thread(thunderbird_profiles)

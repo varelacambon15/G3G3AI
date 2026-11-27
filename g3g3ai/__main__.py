@@ -17,6 +17,8 @@ def main() -> None:
     ap.add_argument("--show-token", action="store_true", help="Muestra la contraseña de acceso y sale")
     ap.add_argument("--new-token", action="store_true", help="Genera una contraseña nueva y sale")
     args = ap.parse_args()
+    from .updater import wait_for_previous
+    wait_for_previous()      # tras actualizarse: esperar a que la versión anterior se cierre
 
     cfg = Config()
     if args.new_token:

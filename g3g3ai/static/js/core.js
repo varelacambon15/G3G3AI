@@ -234,7 +234,7 @@ function setView(v, keepConv = false) {
   if (real === "projects") renderProjects();
   if (real === "team") loadTeam();
   if (real === "connectors") loadConnectors();
-  if (real === "settings") loadSettings();
+  if (real === "settings") { loadSettings(); if (typeof drawUpdateCard === "function") { drawUpdateCard(); if (!UPD.info) checkUpdate(false, true); } }
   store.set("view", v);
 }
 // Abre la última conversación del apartado actual (o una nueva si no hay)

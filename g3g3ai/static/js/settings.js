@@ -614,3 +614,77 @@ async function renderCloud() {
       } catch (err) { toast(err.message, 7000); e.target.disabled = false; e.target.textContent = "Activar"; }
     } }, "Activar")));
 }
+
+// --- Actualizar G3G3AI a la última versión publicada -----------------------------------------------
+const UPD = { info: null };
+async function checkUpdate(force = false, quiet = true) {
+  try { UPD.info = await api("/api/update/check" + (force ? "?force=true" : "")); }
+  catch (e) { if (!quiet) toast(e.message, 7000); UPD.error = e.message; drawUpdateCard(); return null; }
+  UPD.error = null;
+  const i = UPD.info, btn = $("#update-btn");
+  btn.classList.toggle("hidden", !i.newer);
+  if (i.newer) {
+    btn.querySelector(".ub-text").textContent = `Actualizar a ${i.latest}`;
+    if (quiet && store.get("update_seen") !== i.latest) {
+      store.set("update_seen", i.latest);
+      toast(`Hay una versión nueva de G3G3AI (${i.latest}). Pulsa «Actualizar» abajo a la izquierda.`, 8000);
+    }
+  }
+  drawUpdateCard();
+  return i;
+}
+function drawUpdateCard() {
+  const box = $("#update-card"); if (!box) return;
+  box.innerHTML = "";
+  const i = UPD.info;
+  const head = h("div", { class: "row" }, h("span", { class: "conn-ico" }, ico("spark")),
+    h("div", { class: "grow" }, h("b", {}, `G3G3AI ${S.status?.version || i?.current || ""}`),
+      h("div", { class: "muted small" }, UPD.error ? UPD.error : !i ? "Comprobando si hay versión nueva…" : i.newer ? `Disponible la versión ${i.latest}` : "Tienes la última versión")),
+    i?.newer ? h("button", { class: "primary small", onclick: openUpdateDialog }, ico("download"), `Actualizar a ${i.latest}`)
+      : h("button", { class: "ghost small", onclick: async (e) => { e.currentTarget.disabled = true; await checkUpdate(true, false); } }, "Buscar actualizaciones"));
+  box.append(head);
+}
+function openUpdateDialog() {
+  const i = UPD.info; if (!i) return;
+  const notes = h("div", { class: "md update-notes" }); notes.innerHTML = md(i.notes || "Sin notas.");
+  const bar = h("div", { class: "meter-bar hidden" }, h("span", { style: "width:0%" }));
+  const state = h("p", { class: "muted small" }, i.can_install ? `Se descargará ${i.asset.name} (${(i.asset.size / 1048576).toFixed(0)} MB), se comprobará su huella y G3G3AI se reiniciará solo. Tus conversaciones y ajustes se conservan.`
+    : (i.reason || "No se puede actualizar automáticamente."));
+  const go = h("button", { class: "primary", disabled: !i.can_install }, ico("download"), "Actualizar y reiniciar");
+  const dlg = h("dialog", { class: "export-dialog update-dialog" },
+    h("h3", {}, `${i.name}`), h("p", { class: "muted small" }, `Tienes la ${i.current}` + (i.published ? ` · publicada el ${new Date(i.published).toLocaleDateString()}` : "")),
+    notes, bar, state,
+    h("div", { class: "row end" },
+      i.url ? h("a", { class: "ghost small btn-link", href: i.url, target: "_blank", rel: "noopener" }, "Ver en GitHub ↗") : null,
+      h("button", { class: "ghost", onclick: () => dlg.close() }, "Ahora no"), go));
+  go.onclick = async () => {
+    go.disabled = true; go.textContent = "Descargando…"; bar.classList.remove("hidden");
+    try { await api("/api/update/install", { method: "POST" }); } catch (e) { state.textContent = e.message; go.disabled = false; go.textContent = "Reintentar"; return; }
+    const poll = setInterval(async () => {
+      let st; try { st = await api("/api/update/status"); } catch { st = { phase: "restarting" }; }
+      if (st.total) bar.firstChild.style.width = Math.round(100 * st.done / st.total) + "%";
+      if (st.phase === "downloading") state.textContent = `Descargando… ${(st.done / 1048576).toFixed(0)} de ${(st.total / 1048576).toFixed(0)} MB`;
+      else if (st.phase === "installing") state.textContent = "Comprobando la descarga…";
+      else if (st.phase === "error") { clearInterval(poll); state.textContent = st.error; go.disabled = false; go.textContent = "Reintentar"; }
+      else if (st.phase === "restarting") { clearInterval(poll); dlg.close(); waitForRestart(i.latest); }
+    }, 700);
+  };
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg); dlg.showModal();
+}
+function waitForRestart(version) {
+  document.body.append(h("div", { class: "restart-veil" }, h("div", {}, h("span", { class: "dots" }, h("i"), h("i"), h("i")),
+    h("b", {}, `Instalando G3G3AI ${version}…`), h("small", { class: "muted" }, "La aplicación se cerrará y se volverá a abrir sola en unos segundos."))));
+  let tries = 0;
+  const t = setInterval(async () => {
+    tries++;
+    try {
+      const s = await (await fetch("/api/status", { cache: "no-store" })).json();
+      if (s.version === version) { clearInterval(t); location.reload(); }
+    } catch { /* aún reiniciando */ }
+    if (tries > 120) { clearInterval(t); location.reload(); }
+  }, 1500);
+}
+$("#update-btn").addEventListener("click", () => (UPD.info ? openUpdateDialog() : checkUpdate(true, false).then((i) => i?.newer && openUpdateDialog())));
+setTimeout(() => checkUpdate(false, true), 4000);
+setInterval(() => checkUpdate(false, true), 6 * 3600 * 1000);

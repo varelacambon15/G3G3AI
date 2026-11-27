@@ -17,6 +17,7 @@ def free_port():
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("G3G3AI_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setenv("G3G3AI_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("G3G3AI_NO_UPDATE_CHECK", "1")
     for m in [m for m in sys.modules if m.startswith("g3g3ai")]:
         del sys.modules[m]
     from fastapi.testclient import TestClient
@@ -3193,3 +3194,73 @@ def test_remote_mcp_over_http(monkeypatch):
     assert s.alive and s.tools[0]["name"] == "buscar"
     assert asyncio.run(s.call("buscar", {"q": "factura"})) == "hallado factura"
     assert calls[0] == ("initialize", "Bearer abc", None) and calls[-1][2] == "ses-1"
+
+
+def test_self_update_check_download_verify_and_swap(tmp_path, monkeypatch):
+    import hashlib
+    import httpx
+    from g3g3ai import updater as U
+    monkeypatch.delenv("G3G3AI_NO_UPDATE_CHECK", raising=False)
+    monkeypatch.setattr(U.sys, "platform", "linux")
+    new_bin = b"\x7fELF" + b"x" * 5000
+    asset = {"name": "G3G3AI-linux-x64", "id": 7, "size": len(new_bin),
+             "digest": "sha256:" + hashlib.sha256(new_bin).hexdigest(), "browser_download_url": "https://x/y"}
+
+    def handler(req):
+        if req.url.path.endswith("/releases/latest"):
+            return httpx.Response(200, json={"tag_name": "v99.0.0", "name": "G3G3AI 99.0.0", "body": "## Novedades\n- todo",
+                                             "assets": [asset], "html_url": "https://github.com/x"})
+        if req.url.path.endswith("/releases/assets/7"):
+            assert req.headers["accept"] == "application/octet-stream"
+            return httpx.Response(200, content=new_bin)
+        return httpx.Response(404)
+    t = httpx.MockTransport(handler)
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: httpx.Client(transport=t).get(url, **{k: v for k, v in kw.items() if k in ("headers",)}))
+    real_stream = httpx.stream
+
+    class _S:
+        def __init__(self, method, url, **kw):
+            self.c = httpx.Client(transport=t)
+            self.cm = self.c.stream(method, url, headers=kw.get("headers"))
+        def __enter__(self):
+            return self.cm.__enter__()
+        def __exit__(self, *a):
+            return self.cm.__exit__(*a)
+    monkeypatch.setattr(httpx, "stream", _S)
+    exe = tmp_path / "G3G3AI"
+    exe.write_bytes(b"\x7fELF-viejo")
+    monkeypatch.setattr(U, "installed_exe", lambda: exe)
+    launched = []
+    monkeypatch.setattr(U.subprocess, "Popen", lambda argv, **kw: launched.append((argv, kw.get("env", {}).get("G3G3AI_WAIT_PID"))))
+    up = U.Updater(cfg={}, token_fn=lambda: "")
+    monkeypatch.setattr(up, "_exit_soon", lambda: launched.append("exit"))
+    info = up.check(force=True)
+    assert info["newer"] and info["can_install"] and info["latest"] == "99.0.0" and "Novedades" in info["notes"]
+    up._install(info)
+    assert up.state["phase"] == "restarting", up.state
+    assert exe.read_bytes() == new_bin and launched[0][0] == [str(exe)] + U.sys.argv[1:] and launched[-1] == "exit"
+    # Huella distinta: no se instala
+    asset["digest"] = "sha256:" + "0" * 64
+    exe.write_bytes(b"\x7fELF-viejo")
+    up2 = U.Updater(cfg={}, token_fn=lambda: "")
+    monkeypatch.setattr(up2, "_exit_soon", lambda: None)
+    up2._install(up2.check(force=True))
+    assert up2.state["phase"] == "error" and "huella" in up2.state["error"] and exe.read_bytes() == b"\x7fELF-viejo"
+    assert U.parse_version("v0.42.0") < U.parse_version("0.42.1") < U.parse_version("1.0")
+
+
+def test_self_update_windows_swap_script(tmp_path, monkeypatch):
+    from g3g3ai import updater as U
+    monkeypatch.setattr(U.sys, "platform", "win32")
+    exe, new = tmp_path / "G3G3AI.exe", tmp_path / "G3G3AI.exe.new"
+    exe.write_bytes(b"MZ-old")
+    new.write_bytes(b"MZ-new")
+    started = []
+    monkeypatch.setattr(U.subprocess, "Popen", lambda argv, **kw: started.append(argv))
+    up = U.Updater(cfg={})
+    monkeypatch.setattr(up, "_exit_soon", lambda: started.append("exit"))
+    up._swap_and_restart(exe, new)
+    script = (tmp_path / "g3g3ai-actualizar.cmd").read_text(encoding="utf-8")
+    assert f'move /Y "{new}" "{exe}"' in script and f'start "" "{exe}"' in script and "tasklist" in script
+    assert started[0][:2] == ["cmd", "/c"] and started[-1] == "exit"
+    assert exe.read_bytes() == b"MZ-old"          # en Windows lo cambia el script cuando la app se cierra

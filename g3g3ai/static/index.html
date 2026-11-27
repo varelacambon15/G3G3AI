@@ -44,6 +44,7 @@
     <div class="side-search"><input id="conv-search" type="search" placeholder="Buscar conversaciones…">
       <button id="conv-favs" class="icon-btn conv-favs" title="Ver sólo las favoritas" aria-label="Ver sólo las favoritas" aria-pressed="false"><span class="ico" data-icon="star"></span></button></div>
     <div id="conv-list" class="conv-list"></div>
+    <button id="update-btn" class="update-btn hidden" title="Hay una versión nueva de G3G3AI"><span class="ico" data-icon="download"></span> <span class="ub-text">Nueva versión</span></button>
     <div class="side-foot">
       <button data-view="settings" class="foot-btn tabs-like"><span class="ico" data-icon="gear"></span> Ajustes</button>
       <span id="status-pill" class="pill" title="Estado del modelo local">—</span>
@@ -334,6 +335,7 @@
       <section id="view-settings" class="view">
         <div class="page">
           <div class="row settings-head"><h1 class="page-title grow">Ajustes</h1><button id="open-wizard" class="ghost small">Asistente inicial</button><button id="open-diag" class="primary small">Comprobar todo</button></div>
+          <div id="update-card" class="card update-card"></div>
           <div class="settings-search"><span data-icon="search"></span><input id="settings-search" type="search" placeholder="Buscar en ajustes… (p. ej. temperatura, correo, clave)" autocomplete="off"></div>
           <p id="settings-noresults" class="muted hidden">No hay ninguna opción que coincida.</p>
           <div class="settings-tabs" id="settings-tabs">

@@ -144,9 +144,12 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - id: v
         run: |
           echo "version=$(python3 -c 'import re;print(re.search(r"__version__ = \"([^\"]+)\"", open("g3g3ai/__init__.py").read()).group(1))')" >> "$GITHUB_OUTPUT"
+      - name: Notas de la versión (novedades desde la versión anterior)
+        run: python3 packaging/release_notes.py > notes.md && cat notes.md
       - uses: actions/download-artifact@v4
         with: { path: dist, merge-multiple: true }
       - run: ls -la dist
@@ -156,13 +159,5 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: G3G3AI ${{ steps.v.outputs.version }}
           make_latest: true
-          generate_release_notes: true
-          body: |
-            ## Descargas
-            - **G3G3AI-windows-completo.zip** — recomendado en Windows: descomprime y abre `G3G3AI.exe`. Incluye llama.cpp (CPU y gráfica), stable-diffusion.cpp, Python y Git portátiles; no hay que instalar nada más.
-            - **G3G3AI.exe** — versión ligera para Windows (descarga el motor local al usarlo).
-            - **G3G3AI-linux-x64-completo.tar.gz** / **G3G3AI-linux-x64** — Linux, completa o ligera.
-            - **G3G3AI-android.apk** — app de Android (chat directo con tus APIs y conexión con tu PC). Firmada con clave de prueba: Android puede avisar al instalarla.
-
-            Windows puede mostrar «SmartScreen» porque el programa no está firmado: *Más información → Ejecutar de todas formas*.
+          body_path: notes.md
           files: dist/*

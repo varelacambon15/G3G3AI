@@ -857,3 +857,16 @@ code.path-link:hover { background: var(--hover); }
 .tp-acts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .tp-acts button { display: inline-flex; align-items: center; gap: 4px; }
 .tp-acts svg { width: 14px; height: 14px; }
+
+/* Actualizaciones */
+.update-btn { margin: 6px 10px 0; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; border: 1px solid #d9775766;
+  background: #d977571a; color: var(--text); font-size: 13.5px; cursor: pointer; }
+.update-btn .ico, .update-btn svg { width: 15px; height: 15px; }
+.update-card { margin-bottom: 12px; }
+.update-card .row { gap: 10px; align-items: center; }
+.update-card button { display: inline-flex; align-items: center; gap: 4px; }
+.update-dialog { width: min(640px, calc(100vw - 32px)); }
+.update-notes { max-height: 45vh; overflow: auto; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 13.5px; }
+.restart-veil { position: fixed; inset: 0; z-index: 100; background: color-mix(in srgb, var(--bg) 88%, transparent); display: flex;
+  align-items: center; justify-content: center; text-align: center; }
+.restart-veil > div { display: flex; flex-direction: column; gap: 8px; align-items: center; }
