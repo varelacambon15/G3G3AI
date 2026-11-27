@@ -89,10 +89,15 @@ const SLASH = {
   "/review": () => "Revisa los cambios que acabas de hacer en esta conversación: relee los archivos modificados, busca errores, casos límite y cosas que falten, y ejecuta los tests si existen. Corrige lo que encuentres.",
   "/test": () => "Ejecuta los tests del proyecto y, si fallan, diagnostica la causa y corrígela.",
   "/export": () => { S.convId ? exportDialog(S.convId) : toast("No hay ninguna conversación abierta"); },
-  "/help": () => { toast("/plan · /clear · /undo · /compact · /export · /init · /review · /test", 6000); },
+  "/help": () => { toast("/plan · /clear · /undo · /compact · /export · /init · /review · /test" + (S.pluginCommands.length ? " · " + S.pluginCommands.map((c) => "/" + c.name).join(" · ") : ""), 8000); },
 };
+S.pluginCommands = [];
+function loadPluginCommands() { api("/api/plugins/commands").then((c) => { S.pluginCommands = c || []; }).catch(() => {}); }
+loadPluginCommands();
 function runSlash(text) {
   const cmd = text.split(/\s+/)[0].toLowerCase();
+  const pc = !SLASH[cmd] && S.pluginCommands.find((c) => "/" + c.name.toLowerCase() === cmd || "/" + c.name.split(":").pop().toLowerCase() === cmd);
+  if (pc) return pc.prompt.split("$ARGUMENTS").join(text.slice(cmd.length).trim());     // comando de un plugin
   if (!SLASH[cmd]) return null;
   const extra = text.slice(cmd.length).trim();
   const r = SLASH[cmd]();

@@ -379,3 +379,123 @@ async function compactNow() {
     await openConversation(S.convId);
   } catch (e) { toast(e.message, 6000); }
 }
+
+// --- Conectores: GitHub, servidores MCP (catálogo, remotos) y plugins -----------------------------------
+async function loadConnectors(refresh = false) {
+  drawGithub();
+  let d;
+  try { d = await api("/api/connectors" + (refresh ? "?refresh=true" : "")); } catch (e) { toast(e.message); return; }
+  const mine = $("#conn-mine"); mine.innerHTML = "";
+  if (!d.mine.length && !d.plugin_servers.length) mine.append(h("p", { class: "muted" }, "Aún no tienes conectores. Añade uno del catálogo de abajo."));
+  for (const c of d.mine) {
+    const state = !c.enabled ? ["off", "Apagado"] : c.ok ? ["ok", `Conectado · ${c.tools} herramienta${c.tools === 1 ? "" : "s"}`] : c.error ? ["err", c.error] : ["idle", "Se conecta al usarlo (o pulsa «Comprobar todos»)"];
+    mine.append(h("div", { class: "conn-row" },
+      h("span", { class: "conn-dot", "data-state": state[0] }),
+      h("div", { class: "grow conn-info" }, h("b", {}, c.name), h("small", { class: "muted", title: c.summary }, (c.remote ? "Remoto · " : "") + c.summary),
+        h("small", { class: "conn-state", "data-state": state[0] }, state[1])),
+      h("label", { class: "check", title: c.enabled ? "Apagar" : "Encender" }, h("input", { type: "checkbox", class: "switch", checked: c.enabled,
+        onchange: async (e) => { try { await api(`/api/connectors/${encodeURIComponent(c.name)}`, { method: "PATCH", body: { enabled: e.target.checked } }); loadConnectors(); } catch (er) { toast(er.message); } } })),
+      h("button", { class: "icon-btn", title: "Quitar", "aria-label": `Quitar ${c.name}`, onclick: async () => {
+        if (!confirm(`¿Quitar el conector «${c.name}»?`)) return;
+        await api(`/api/connectors/${encodeURIComponent(c.name)}`, { method: "DELETE" }); loadConnectors();
+      } }, ico("trash"))));
+  }
+  for (const c of d.plugin_servers) mine.append(h("div", { class: "conn-row" }, h("span", { class: "conn-dot", "data-state": c.ok ? "ok" : c.error ? "err" : "idle" }),
+    h("div", { class: "grow conn-info" }, h("b", {}, c.name), h("small", { class: "muted" }, "De un plugin" + (c.ok ? ` · ${c.tools} herramientas` : c.error ? ` · ${c.error}` : "")))));
+  const cat = $("#conn-catalog"); cat.innerHTML = "";
+  const have = new Set(d.mine.map((c) => c.name));
+  for (const it of d.catalog) {
+    const needsNode = it.kind === "npx" && !d.node;
+    cat.append(h("div", { class: "conn-card" },
+      h("div", { class: "row" }, h("span", { class: "conn-ico" }, ico(it.icon)), h("b", { class: "grow" }, it.name),
+        h("small", { class: "muted" }, it.kind === "remote" ? "Remoto" : "Local")),
+      h("p", { class: "muted small" }, it.desc),
+      needsNode ? h("p", { class: "small warn-text" }, "Necesita Node.js instalado (nodejs.org).") : null,
+      h("button", { class: "ghost small", onclick: () => connectorDialog(it) }, ico("plus"), "Conectar")));
+  }
+  loadPlugins();
+}
+function connectorDialog(it) {
+  const inputs = {};
+  const dlg = h("dialog", { class: "export-dialog" },
+    h("h3", {}, `Conectar ${it.name}`), h("p", { class: "muted" }, it.desc),
+    ...it.fields.map((f) => h("label", {}, f.label, inputs[f.key] = h("input", { type: f.type === "password" ? "password" : "text", autocomplete: "off",
+      placeholder: it.uses_github_token && f.key === "token" ? "Vacío = usar el token de GitHub de arriba" : "" }), h("small", { class: "muted" }, f.help))),
+    h("p", { class: "muted small" }, "La IA te pedirá permiso antes de usar sus herramientas (puedes marcar «permitir siempre aquí»)."),
+    h("div", { class: "row end" },
+      h("button", { class: "ghost", onclick: () => dlg.close() }, "Cancelar"),
+      h("button", { class: "primary", onclick: async (e) => {
+        const b = e.currentTarget; b.disabled = true; b.textContent = "Conectando…";
+        const values = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value]));
+        try {
+          const r = await api("/api/connectors", { method: "POST", body: { id: it.id, values } });
+          dlg.close();
+          toast(r.ok ? `«${r.name}» conectado: ${r.tools} herramientas` : `«${r.name}» añadido` + (r.error ? `, pero no responde: ${r.error}` : ""), 7000);
+          loadConnectors();
+        } catch (er) { toast(er.message, 6000); b.disabled = false; b.textContent = "Conectar"; }
+      } }, "Conectar")));
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg); dlg.showModal();
+  inputs[it.fields[0]?.key]?.focus();
+}
+async function drawGithub() {
+  const box = $("#conn-github"); box.innerHTML = "";
+  box.append(h("div", { class: "row" }, h("span", { class: "conn-ico" }, ico("git")), h("b", { class: "grow" }, "GitHub"), h("small", { class: "muted" }, "Comprobando…")));
+  let s = {}; try { s = await api("/api/github/status"); } catch { /* */ }
+  box.innerHTML = "";
+  const tok = h("input", { type: "password", placeholder: "github_pat_… o ghp_…", autocomplete: "off", "aria-label": "Token de GitHub" });
+  const save = async (value) => {
+    try { const r = await api("/api/github/token", { method: "PUT", body: { token: value } }); toast(r.connected ? `Conectado como ${r.login}` : (value ? r.error || "No se pudo conectar" : "GitHub desconectado"), 5000); drawGithub(); }
+    catch (e) { toast(e.message); }
+  };
+  box.append(h("div", { class: "row" }, h("span", { class: "conn-ico" }, ico("git")), h("b", { class: "grow" }, "GitHub"),
+    s.connected ? h("span", { class: "conn-state", "data-state": "ok" }, `Conectado como ${s.login}`) : h("span", { class: "conn-state", "data-state": s.error ? "err" : "off" }, s.error || "Sin conectar")));
+  box.append(h("p", { class: "muted small" }, "La IA puede leer tus repositorios, issues, pull requests y el estado de las Actions, y —pidiéndote permiso— crear issues, comentar y abrir pull requests. En Code, además, clona y sube cambios con git."));
+  if (s.connected && s.from_env) box.append(h("p", { class: "muted small" }, "El token viene de la variable de entorno GITHUB_TOKEN/GH_TOKEN."));
+  box.append(h("div", { class: "row" }, tok,
+    h("button", { class: "primary small", onclick: () => tok.value.trim() && save(tok.value.trim()) }, s.connected ? "Cambiar token" : "Conectar"),
+    s.connected && !s.from_env ? h("button", { class: "ghost small", onclick: () => confirm("¿Desconectar GitHub?") && save("") }, "Desconectar") : null,
+    h("a", { class: "ghost small btn-link", href: "https://github.com/settings/personal-access-tokens/new", target: "_blank", rel: "noopener" }, "Crear un token ↗")));
+  box.append(h("p", { class: "muted small" }, "Al crear el token elige los repositorios y da permiso de lectura y escritura a «Contents», «Issues» y «Pull requests» (y lectura de «Actions»)."));
+}
+async function loadPlugins() {
+  let d; try { d = await api("/api/plugins"); } catch { return; }
+  drawPlugins(d.plugins);
+}
+function drawPlugins(list) {
+  const box = $("#plugin-list"); box.innerHTML = "";
+  if (!list.length) { box.append(h("p", { class: "muted" }, "No hay plugins instalados.")); return; }
+  for (const p of list) {
+    const parts = [p.skills.length ? `${p.skills.length} habilidad${p.skills.length > 1 ? "es" : ""}` : null,
+      p.commands.length ? `${p.commands.length} comando${p.commands.length > 1 ? "s" : ""}` : null,
+      p.mcp.length ? `${p.mcp.length} conector${p.mcp.length > 1 ? "es" : ""}` : null].filter(Boolean).join(" · ");
+    const det = h("details", { class: "plugin-det" }, h("summary", {}, "Ver contenido"),
+      ...p.skills.map((s) => h("div", { class: "small" }, h("b", {}, "Habilidad · " + s.name), " — ", s.description || "")),
+      ...p.commands.map((c) => h("div", { class: "small" }, h("code", {}, "/" + c.name + (c.hint ? " " + c.hint : "")), " — ", c.description || "")),
+      ...p.mcp.map((m) => h("div", { class: "small" }, h("b", {}, "Conector · " + m))));
+    box.append(h("div", { class: "plugin-row" + (p.enabled ? "" : " off") },
+      h("div", { class: "grow" }, h("b", {}, p.name), p.version ? h("small", { class: "muted" }, " v" + p.version) : null,
+        h("div", { class: "muted small" }, p.description || ""), h("div", { class: "small" }, parts || "vacío"), det),
+      h("label", { class: "check", title: p.enabled ? "Apagar" : "Encender" }, h("input", { type: "checkbox", class: "switch", checked: p.enabled,
+        onchange: async (e) => { const r = await api(`/api/plugins/${encodeURIComponent(p.id)}`, { method: "PATCH", body: { enabled: e.target.checked } }); drawPlugins(r.plugins); loadPluginCommands(); } })),
+      h("button", { class: "icon-btn", title: "Desinstalar", "aria-label": `Desinstalar ${p.name}`, onclick: async () => {
+        if (!confirm(`¿Desinstalar «${p.name}»?`)) return;
+        const r = await api(`/api/plugins/${encodeURIComponent(p.id)}`, { method: "DELETE" }); drawPlugins(r.plugins); loadPluginCommands();
+      } }, ico("trash"))));
+  }
+}
+$("#plugin-install").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const src = $("#plugin-source").value.trim(); if (!src) return;
+  const b = e.target.querySelector("button"); b.disabled = true; b.textContent = "Instalando…";
+  try {
+    const r = await api("/api/plugins/install", { method: "POST", body: { source: src } });
+    $("#plugin-source").value = ""; drawPlugins(r.plugins); loadPluginCommands();
+    toast(`Instalado: ${r.installed.join(", ")}`, 5000);
+  } catch (er) { toast(er.message, 7000); }
+  finally { b.disabled = false; b.textContent = "Instalar"; }
+});
+$("#conn-refresh").addEventListener("click", async (e) => {
+  const b = e.currentTarget; b.disabled = true; b.textContent = "Comprobando…";
+  try { await loadConnectors(true); } finally { b.disabled = false; b.textContent = "Comprobar todos"; }
+});

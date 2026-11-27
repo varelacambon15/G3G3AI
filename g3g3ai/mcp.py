@@ -3,6 +3,8 @@
 Se configuran en Ajustes → «Servidores MCP», una línea por servidor:
     nombre = [VAR=valor …] comando arg1 arg2 …
 p. ej.  archivos = npx -y @modelcontextprotocol/server-filesystem C:\\Proyectos
+Conectores remotos (MCP por HTTP): «nombre = [TOKEN=clave] https://servidor/mcp» (la clave va como
+«Authorization: Bearer …»).
 Cada herramienta del servidor aparece al agente como `mcp__nombre__herramienta`. Cada llamada pide permiso al
 usuario (se puede marcar «Permitir siempre aquí»). Los servidores arrancan al usarlos y se cierran con la app.
 """
@@ -47,7 +49,11 @@ def parse_servers(lines) -> list[dict]:
         while parts and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", parts[0]):
             k, v = parts.pop(0).split("=", 1)
             env[k] = v
-        if parts:
+        if parts and re.match(r"^https?://", parts[0]):        # conector remoto
+            headers = {"Authorization": f"Bearer {env.pop('TOKEN')}"} if env.get("TOKEN") else {}
+            headers.update({k[7:].replace("_", "-"): v for k, v in env.items() if k.startswith("HEADER_")})
+            out.append({"name": m.group(1), "url": parts[0], "headers": headers})
+        elif parts:
             out.append({"name": m.group(1), "argv": parts, "env": env})
     return out
 
@@ -196,15 +202,138 @@ class MCPServer:
             self._reader.cancel()
 
 
+class MCPHttpServer:
+    """Conector MCP remoto (transporte «Streamable HTTP»): cada mensaje es un POST; la respuesta llega como JSON
+    o como un flujo SSE. Misma interfaz que MCPServer."""
+
+    def __init__(self, name: str, url: str, headers: dict):
+        self.name, self.url, self.headers = name, url, headers
+        self.argv, self.env = [url], {}
+        self.tools: list[dict] = []
+        self.error: str | None = None
+        self.session: str | None = None
+        self.last_try = 0.0
+        self._ok = False
+        self._id = 0
+        self._lock = asyncio.Lock()
+
+    @property
+    def alive(self) -> bool:
+        return self._ok
+
+    async def _post(self, obj: dict, timeout: float = CALL_TIMEOUT):
+        import httpx
+        h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+             "MCP-Protocol-Version": PROTOCOL, "User-Agent": f"G3G3AI/{__version__}", **self.headers}
+        if self.session:
+            h["Mcp-Session-Id"] = self.session
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=timeout), follow_redirects=True) as c:
+            async with c.stream("POST", self.url, json=obj, headers=h) as r:
+                if r.headers.get("mcp-session-id"):
+                    self.session = r.headers["mcp-session-id"]
+                if r.status_code in (401, 403):
+                    raise MCPError(f"el servidor pide autorización (HTTP {r.status_code}): revisa la clave del conector")
+                if r.status_code == 202 or "id" not in obj:
+                    return None
+                if r.status_code >= 400:
+                    body = (await r.aread()).decode("utf-8", "replace")[:300]
+                    raise MCPError(f"HTTP {r.status_code}: {body}")
+                if "text/event-stream" in r.headers.get("content-type", ""):
+                    data = []
+                    async for line in r.aiter_lines():
+                        if line.startswith("data:"):
+                            data.append(line[5:].strip())
+                        elif not line.strip() and data:
+                            try:
+                                msg = json.loads("\n".join(data))
+                            except ValueError:
+                                msg = None
+                            data = []
+                            if msg and msg.get("id") == obj["id"] and ("result" in msg or "error" in msg):
+                                return msg
+                    raise MCPError("el servidor cerró la respuesta sin contestar")
+                return json.loads(await r.aread())
+
+    async def request(self, method: str, params: dict | None = None, timeout: float = CALL_TIMEOUT):
+        self._id += 1
+        msg = await self._post({"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or {}}, timeout)
+        if not isinstance(msg, dict):
+            raise MCPError("respuesta no válida")
+        if "error" in msg:
+            raise MCPError(str((msg["error"] or {}).get("message", msg["error"])))
+        return msg.get("result") or {}
+
+    async def notify(self, method: str, params: dict | None = None) -> None:
+        await self._post({"jsonrpc": "2.0", "method": method, **({"params": params} if params else {})})
+
+    async def start(self) -> None:
+        async with self._lock:
+            if self._ok:
+                return
+            try:
+                self.session = None
+                await self.request("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
+                                                  "clientInfo": {"name": "g3g3ai", "version": __version__}}, START_TIMEOUT)
+                await self.notify("notifications/initialized")
+                tools, cursor = [], None
+                while True:
+                    r = await self.request("tools/list", {"cursor": cursor} if cursor else {}, START_TIMEOUT)
+                    tools += r.get("tools", [])
+                    cursor = r.get("nextCursor")
+                    if not cursor:
+                        break
+                self.tools, self.error, self._ok = tools, None, True
+            except Exception as e:  # noqa: BLE001
+                self._ok = False
+                self.error = str(e) or e.__class__.__name__
+                raise MCPError(self.error)
+
+    async def call(self, tool: str, args: dict) -> str:
+        if not self._ok:
+            await self.start()
+        try:
+            r = await self.request("tools/call", {"name": tool, "arguments": args})
+        except MCPError as e:
+            if "404" in str(e):                      # la sesión caducó en el servidor: se abre otra
+                self._ok = False
+                await self.start()
+                r = await self.request("tools/call", {"name": tool, "arguments": args})
+            else:
+                raise
+        return _content_text(r)
+
+    async def stop(self) -> None:
+        self._ok = False
+
+
+def _content_text(r: dict) -> str:
+    parts = []
+    for c in r.get("content", []):
+        if c.get("type") == "text":
+            parts.append(c.get("text", ""))
+        elif c.get("type") == "image":
+            parts.append("[imagen devuelta por la herramienta; no se muestra]")
+        elif c.get("type") == "resource":
+            res = c.get("resource", {})
+            parts.append(res.get("text") or f"[recurso {res.get('uri', '')}]")
+        else:
+            parts.append(f"[{c.get('type', 'contenido')}]")
+    text = "\n".join(p for p in parts if p) or "(sin contenido)"
+    if len(text) > MAX_RESULT:
+        text = text[:MAX_RESULT] + "\n[… recortado …]"
+    return ("Error de la herramienta: " + text) if r.get("isError") else text
+
+
 class MCPManager:
     def __init__(self, cfg):
         self.cfg = cfg
         self.servers: dict[str, MCPServer] = {}
         self.map: dict[str, tuple[str, str]] = {}   # nombre expuesto → (servidor, herramienta)
         self._sig = None
+        self.extra = lambda: []      # servidores que aportan los plugins instalados
 
     def _sync_servers(self) -> None:
-        conf = parse_servers(self.cfg["mcp_servers"])
+        conf = parse_servers(self.cfg["mcp_servers"]) + list(self.extra() or [])
         sig = json.dumps(conf, sort_keys=True)
         if sig == self._sig:
             return
@@ -214,11 +343,13 @@ class MCPManager:
             asyncio.ensure_future(self.servers.pop(n).stop())
         for c in conf:
             cur = self.servers.get(c["name"])
-            if cur and (cur.argv, cur.env) != (c["argv"], c["env"]):
+            want = (c.get("argv") or [c.get("url")], c.get("env") or c.get("headers") or {})
+            if cur and (cur.argv, getattr(cur, "headers", None) or cur.env) != want:
                 asyncio.ensure_future(cur.stop())
                 cur = None
             if cur is None:
-                self.servers[c["name"]] = MCPServer(c["name"], c["argv"], c["env"])
+                self.servers[c["name"]] = (MCPHttpServer(c["name"], c["url"], c["headers"]) if c.get("url")
+                                           else MCPServer(c["name"], c["argv"], c["env"]))
 
     async def refresh(self, force: bool = False) -> None:
         """Arranca los servidores configurados (los que aún no lo están) y reconstruye el mapa de herramientas."""
@@ -252,6 +383,7 @@ class MCPManager:
 
     def status(self) -> list[dict]:
         return [{"name": s.name, "command": " ".join(s.argv), "ok": s.alive, "error": s.error,
+                 "remote": isinstance(s, MCPHttpServer),
                  "tools": [{"name": t["name"], "description": (t.get("description") or "")[:200]} for t in s.tools]}
                 for s in self.servers.values()]
 

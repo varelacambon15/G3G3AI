@@ -505,3 +505,39 @@ def test_streaming_pins_favorites_and_project_teams(live):
         assert teams["saved"][0]["projects"][0]["name"] == "Juego"
         browser.close()
     assert errors == [], errors
+
+
+def test_connectors_and_plugins_view(live, tmp_path):
+    base, cfg = live
+    src = tmp_path / "plug"
+    (src / "commands").mkdir(parents=True)
+    (src / "commands" / "saluda.md").write_text("---\ndescription: Saluda\n---\nSaluda a $ARGUMENTS")
+    (src / "skills" / "tono").mkdir(parents=True)
+    (src / "skills" / "tono" / "SKILL.md").write_text("---\nname: tono\ndescription: Escribe con tono cercano\n---\nSé cercano.")
+    errors: list[str] = []
+    with playwright_sync.sync_playwright() as p:
+        browser = launch(p)
+        page = browser.new_context(viewport={"width": 1280, "height": 860}).new_page()
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/?token={cfg['token']}")
+        page.click("[data-view=connectors]")
+        page.wait_for_selector("#conn-github .conn-state", timeout=20000)
+        page.wait_for_selector("#conn-catalog .conn-card >> text=Navegador web")
+        # Un conector remoto desde el catálogo
+        page.locator(".conn-card", has_text="Conector remoto").locator("button").click()
+        inputs = page.locator("dialog[open] input")
+        inputs.nth(0).fill("crm")
+        inputs.nth(1).fill("http://127.0.0.1:9/mcp")
+        page.click("dialog[open] .primary")
+        page.wait_for_selector("#conn-mine .conn-row >> text=crm", timeout=15000)
+        assert cfg["mcp_servers"] == ["crm = http://127.0.0.1:9/mcp"]
+        # Plugin desde una carpeta
+        page.fill("#plugin-source", str(src))
+        page.click("#plugin-install button")
+        page.wait_for_selector("#plugin-list .plugin-row >> text=1 habilidad · 1 comando")
+        # Su comando funciona en el chat
+        page.evaluate("loadPluginCommands()")
+        page.wait_for_function("S.pluginCommands.length === 1")
+        assert page.evaluate("runSlash('/saluda a Marta')") == "Saluda a a Marta"
+        browser.close()
+    assert errors == [], errors

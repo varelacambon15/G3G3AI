@@ -225,7 +225,7 @@ function setView(v, keepConv = false) {
   if (wasCode !== S.code && typeof renderConvList === "function") renderConvList();
   $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
   $$(".view").forEach((s) => s.classList.toggle("active", s.id === "view-" + real));
-  $("#top-title").textContent = real === "chat" ? (S.conv?.title || (S.code ? "Code" : "")) : { models: "Modelos", team: "Equipo", tasks: "Tareas", files: "Archivos", settings: "Ajustes", projects: "Proyectos" }[real];
+  $("#top-title").textContent = real === "chat" ? (S.conv?.title || (S.code ? "Code" : "")) : { models: "Modelos", team: "Equipo", connectors: "Conectores", tasks: "Tareas", files: "Archivos", settings: "Ajustes", projects: "Proyectos" }[real];
   closeSide();
   if (S.code && !wasCode) enterCode();
   if (real === "models") refreshModels();
@@ -233,6 +233,7 @@ function setView(v, keepConv = false) {
   if (real === "tasks") loadTasks();
   if (real === "projects") renderProjects();
   if (real === "team") loadTeam();
+  if (real === "connectors") loadConnectors();
   if (real === "settings") loadSettings();
   store.set("view", v);
 }

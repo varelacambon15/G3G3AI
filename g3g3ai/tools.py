@@ -144,6 +144,10 @@ def _schema(props: dict, required: list[str] | None = None) -> dict:
 ALL_SPECS = {
     "list_dir": ("Lista archivos y carpetas de una ruta. Sin ruta = carpeta personal.",
                  _schema({"path": {"type": "string", "description": "Ruta absoluta o relativa a la carpeta personal"}})),
+    "skill": ("Carga una habilidad instalada (plugin): devuelve sus instrucciones para que las sigas. Úsala cuando la "
+              "tarea encaje con la descripción de una habilidad de la lista del sistema. Con file lees uno de sus archivos de apoyo.",
+              _schema({"name": {"type": "string", "description": "Nombre de la habilidad"},
+                       "file": {"type": "string", "description": "Archivo de apoyo de la habilidad (opcional)"}}, ["name"])),
     "read_file": ("Lee un archivo (texto, Word, Excel, PowerPoint o PDF). Cada línea sale con su número («12: texto»): "
                   "ese prefijo NO forma parte del archivo. En un Excel, el principio lista TODAS las hojas con sus líneas; "
                   "usa sheet para leer una hoja concreta. Si la salida dice que el archivo sigue, continúa con start_line: "
@@ -404,6 +408,7 @@ class ToolContext:
         self.todos_dirty = False
         self.dirty = False  # se han modificado archivos y aún no se ha ejecutado nada para comprobarlo
         self.team: dict | None = None           # equipo activo (director = este modelo)
+        self.plugins = None                      # plugins instalados (habilidades)
         self.team_runner: Callable[..., Awaitable[str]] | None = None
         self.diagnostics: Callable[[], Awaitable[dict]] | None = None  # «Comprobar todo» (lo fija el servidor)
         self.subagent: Callable[..., Awaitable[str]] | None = None  # lo fija el servidor: (tarea, write=False)
@@ -600,6 +605,8 @@ class ToolContext:
             out.append("team_delegate")
         if self.tasks is not None and not plan and not self.unattended and not self.auto_all:
             out.append("scheduled_tasks")
+        if self.plugins is not None and self.plugins.skills():
+            out.append("skill")
         if not self.auto_all:
             out.append("app_settings")
             if self.diagnostics:
@@ -1157,6 +1164,8 @@ class ToolContext:
                 self.tasks.delete(str(a.get("id")))
                 return "Tarea borrada."
             return "Error: action debe ser list, create o delete"
+        if name == "skill":
+            return self.plugins.skill_text(str(a.get("name") or ""), a.get("file") or None)
         if name == "attach_file":
             paths = a.get("paths") or ([a["path"]] if a.get("path") else [])
             done, bad = [], []

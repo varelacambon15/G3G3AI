@@ -10,8 +10,8 @@ android {
         applicationId "com.g3g3ai.client"
         minSdk 24
         targetSdk 35
-        versionCode 12
-        versionName "0.40.0"
+        versionCode 13
+        versionName "0.41.0"
     }
 
     buildTypes {

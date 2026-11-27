@@ -804,3 +804,32 @@ code.path-link:hover { background: var(--hover); }
 .mp-facts dt { color: var(--muted); white-space: nowrap; }
 .mp-facts dd { margin: 0; }
 .usage-pop.down { bottom: auto; top: calc(100% + 8px); }
+
+/* Conectores y plugins */
+.connectors-page { max-width: 980px; }
+.conn-h { font-size: 16px; margin: 22px 0 8px; }
+.conn-github { display: flex; flex-direction: column; gap: 8px; }
+.conn-github .row { gap: 8px; align-items: center; flex-wrap: wrap; }
+.conn-github input { flex: 1 1 240px; }
+.conn-ico { display: inline-flex; width: 28px; height: 28px; border-radius: 8px; background: var(--panel-2); align-items: center; justify-content: center; flex: none; }
+.conn-ico svg, .conn-ico .ico { width: 16px; height: 16px; }
+.conn-mine { display: flex; flex-direction: column; gap: 6px; }
+.conn-row, .plugin-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.conn-info { display: flex; flex-direction: column; min-width: 0; }
+.conn-info small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conn-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.conn-dot[data-state=ok] { background: #3f8f5b; } .conn-dot[data-state=err] { background: #c0392b; } .conn-dot[data-state=off] { background: transparent; border: 1px solid var(--muted); }
+.conn-state { font-size: 12.5px; color: var(--muted); }
+.conn-state[data-state=ok] { color: #3f8f5b; } .conn-state[data-state=err] { color: #c0392b; }
+.conn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.conn-card { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.conn-card .row { gap: 8px; align-items: center; }
+.conn-card p { margin: 0; flex: 1; }
+.conn-card button { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; }
+.plugin-install { gap: 8px; margin: 8px 0 10px; }
+.plugin-install input { flex: 1; }
+.plugin-list { display: flex; flex-direction: column; gap: 6px; }
+.plugin-row.off { opacity: .6; }
+.plugin-det summary { cursor: pointer; font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+.plugin-det div { margin: 3px 0 0 4px; }
+.btn-link { text-decoration: none; display: inline-flex; align-items: center; padding: 4px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); }

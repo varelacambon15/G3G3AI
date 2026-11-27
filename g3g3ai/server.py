@@ -124,6 +124,9 @@ APP_FEATURES = (
     "Los miembros no ven la conversación: el director les pasa todo el contexto. Se activa con el interruptor de la sección; "
     "lo configura el usuario allí (tú no puedes crear miembros), pero puedes proponerle nombres, papeles y modelos concretos. "
     "Se pueden guardar varios equipos con nombre y asignar uno a cada proyecto (en la página del proyecto).\n"
+    "- Conectores (sección «Conectores»): GitHub, servidores MCP de un catálogo (navegador, Notion, documentación, "
+    "bases de datos…) o remotos por URL, y plugins compatibles con los de Claude Code (habilidades, comandos /, "
+    "conectores) instalables desde un repositorio de GitHub.\n"
     "- Chats y Code son apartados separados, cada uno con su lista; las conversaciones se pueden fijar arriba y marcar como favoritas (☆).")
 NO_AGENT_NOTE = (
     "## Herramientas del equipo desactivadas\n"
@@ -146,6 +149,9 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     from .cloudsync import CloudError, CloudSync
     cloud = CloudSync(cfg, sync)
     mcp_mgr = MCPManager(cfg)
+    from .plugins import PluginError, Plugins
+    plugins = Plugins(cfg)
+    mcp_mgr.extra = plugins.mcp
     task_store = TaskStore(db)
     mail_index = MailIndex(cfg)
     session_allow: dict[str, set] = {}  # conversación -> herramientas permitidas «siempre»
@@ -987,6 +993,138 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         summary = {k: sum(1 for c in checks if c["status"] == k) for k in ("ok", "warn", "error", "info", "skip")}
         return {"checks": checks, "summary": summary}
 
+    # --- Conectores, GitHub y plugins -------------------------------------------------------------
+    from . import connectors as CN
+    from . import github as GH
+
+    @app.get("/api/github/status")
+    async def github_status():
+        tok = GH.token(cfg)
+        if not tok:
+            return {"connected": False}
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.get("https://api.github.com/user", headers={"Authorization": f"Bearer {tok}", "User-Agent": "G3G3AI",
+                                                                         "Accept": "application/vnd.github+json"})
+        except httpx.HTTPError as e:
+            return {"connected": False, "error": f"No se pudo contactar con GitHub: {e}"}
+        if r.status_code == 401:
+            return {"connected": False, "error": "El token no es válido o ha caducado."}
+        u = r.json() if r.status_code < 400 else {}
+        return {"connected": r.status_code < 400, "login": u.get("login"), "name": u.get("name"), "avatar": u.get("avatar_url"),
+                "scopes": r.headers.get("x-oauth-scopes"), "from_env": not cfg["github_token"]}
+
+    @app.put("/api/github/token")
+    async def github_token(body: dict):
+        cfg.data["github_token"] = str(body.get("token") or "").strip()
+        cfg.data["settings_updated"] = time.time()
+        cfg.save()
+        return await github_status()
+
+    def _mcp_lines() -> list[str]:
+        return [str(x) for x in (cfg["mcp_servers"] or [])]
+
+    def _line_name(ln: str) -> str | None:
+        m = re.match(r"\s*#?\s*([\w.-]+)\s*=", ln)
+        return m.group(1) if m else None
+
+    @app.get("/api/connectors")
+    async def connectors_list(refresh: bool = False):
+        if refresh:
+            await mcp_mgr.refresh(force=True)
+        else:
+            mcp_mgr._sync_servers()
+        live = {s["name"]: s for s in mcp_mgr.status()}
+        mine = []
+        for ln in _mcp_lines():
+            n = _line_name(ln)
+            if not n:
+                continue
+            off = ln.lstrip().startswith("#")
+            s = live.get(n, {})
+            mine.append({"name": n, "enabled": not off, "ok": s.get("ok", False), "error": s.get("error"),
+                         "tools": len(s.get("tools") or []), "remote": "://" in ln,
+                         "summary": re.sub(r"(TOKEN|[A-Z_]*(KEY|TOKEN|SECRET|PASSWORD))=\S+", r"\1=•••", ln.split("=", 1)[1].strip())[:140]})
+        from_plugins = [{"name": s["name"], "ok": s.get("ok", False), "error": s.get("error"), "tools": len(s.get("tools") or [])}
+                        for s in mcp_mgr.status() if s["name"] in {x["name"] for x in plugins.mcp()}]
+        cat = [{k: v for k, v in it.items() if k != "line"} | {"fields": [{"key": k, "label": f[0], "type": f[1], "help": f[2]}
+                                                                         for k, f in it["fields"].items()]} for it in CN.CATALOG]
+        return {"catalog": cat, "mine": mine, "plugin_servers": from_plugins, "node": CN.node_available()}
+
+    @app.post("/api/connectors")
+    async def connectors_add(body: dict):
+        item = next((x for x in CN.CATALOG if x["id"] == body.get("id")), None)
+        if not item:
+            raise HTTPException(404, "Conector desconocido")
+        values = dict(body.get("values") or {})
+        if item.get("uses_github_token") and not values.get("token"):
+            values["token"] = GH.token(cfg)
+        try:
+            line = CN.build_line(item, values)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        name = _line_name(line)
+        lines = [ln for ln in _mcp_lines() if _line_name(ln) != name] + [line]
+        cfg.data["mcp_servers"] = lines
+        cfg.save()
+        await mcp_mgr.refresh(force=True)
+        s = next((x for x in mcp_mgr.status() if x["name"] == name), {})
+        return {"name": name, "ok": s.get("ok", False), "error": s.get("error"), "tools": len(s.get("tools") or [])}
+
+    @app.patch("/api/connectors/{name}")
+    async def connectors_toggle(name: str, body: dict):
+        on = bool(body.get("enabled"))
+        out = []
+        for ln in _mcp_lines():
+            if _line_name(ln) == name:
+                ln = ln.lstrip().lstrip("#").strip()
+                ln = ln if on else "# " + ln
+            out.append(ln)
+        cfg.data["mcp_servers"] = out
+        cfg.save()
+        await mcp_mgr.refresh(force=True)
+        return await connectors_list()
+
+    @app.delete("/api/connectors/{name}")
+    async def connectors_delete(name: str):
+        cfg.data["mcp_servers"] = [ln for ln in _mcp_lines() if _line_name(ln) != name]
+        cfg.save()
+        mcp_mgr._sync_servers()
+        return await connectors_list()
+
+    @app.get("/api/plugins")
+    async def plugins_list():
+        return {"plugins": await asyncio.to_thread(plugins.list)}
+
+    @app.post("/api/plugins/install")
+    async def plugins_install(body: dict):
+        try:
+            names = await asyncio.to_thread(plugins.install, str(body.get("source") or ""), GH.token(cfg))
+        except PluginError as e:
+            raise HTTPException(400, str(e)) from e
+        mcp_mgr._sync_servers()
+        return {"installed": names, "plugins": await asyncio.to_thread(plugins.list)}
+
+    @app.patch("/api/plugins/{pid}")
+    async def plugins_toggle(pid: str, body: dict):
+        plugins.set_enabled(pid, bool(body.get("enabled")))
+        mcp_mgr._sync_servers()
+        return {"plugins": await asyncio.to_thread(plugins.list)}
+
+    @app.delete("/api/plugins/{pid}")
+    async def plugins_delete(pid: str):
+        await asyncio.to_thread(plugins.remove, pid)
+        mcp_mgr._sync_servers()
+        return {"plugins": await asyncio.to_thread(plugins.list)}
+
+    @app.get("/api/plugins/commands")
+    async def plugins_commands():
+        out = []
+        for c in await asyncio.to_thread(plugins.commands):
+            out.append({"name": c["name"], "description": c["description"], "hint": c["hint"], "plugin": c["plugin"],
+                        "prompt": plugins.command_prompt(c["name"], "$ARGUMENTS")})
+        return out
+
     @app.get("/api/mcp")
     async def mcp_status(refresh: bool = True):
         if refresh:
@@ -1283,6 +1421,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             tc.mcp = mcp_mgr if (agent and mcp_mgr.map) else None
             tc.mail = mail_index if cfg["mail_enabled"] else None
             tc.tasks = task_store
+            tc.plugins = plugins
             tc.cloud = chosen_pid != LOCAL_PROVIDER
             tc.compact_specs = chosen_pid == LOCAL_PROVIDER
             recent = [m["content"] or "" for m in (conv.get("messages") or []) if m["role"] == "user"][-3:]
@@ -1437,7 +1576,13 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                         n_ctx = int((llama.params or {}).get("ctx") or 8192)
                         budget = int(n_ctx * 0.3 * 3) if cpid == LOCAL_PROVIDER else 80_000
                         proj_text = await asyncio.to_thread(projects.context, project, files, budget)
-                    system = "\n\n".join(x for x in (base_system, ARTIFACT_NOTE, APP_FEATURES, proj_text, mem_text, ctx.system_hint() if ctx else "", no_agent) if x)
+                    skills_text = ""
+                    if ctx and "skill" in ctx.names():
+                        sk = plugins.skills()
+                        skills_text = ("## Habilidades instaladas (plugins)\nCuando la tarea encaje con una de estas habilidades, "
+                                       "cárgala primero con la herramienta skill y sigue sus instrucciones:\n"
+                                       + "\n".join(f"- {s['name']}: {s['description']}" for s in sk[:60]))
+                    system = "\n\n".join(x for x in (base_system, ARTIFACT_NOTE, APP_FEATURES, proj_text, mem_text, skills_text, ctx.system_hint() if ctx else "", no_agent) if x)
                     try:
                         history = []
                         async for ev in builder.build(conv, cpid, cmodel, system, opts["max_tokens"] or 2048):

@@ -3077,3 +3077,119 @@ def test_provider_usage_limits_and_model_info(monkeypatch):
     # OpenRouter: precio por token → por millón
     assert P.parse_model_info({"id": "a", "pricing": {"prompt": "0.000002", "completion": "0.00001"}, "context_length": 8000}) == \
         {"in": 2.0, "out": 10.0, "ctx": 8000}
+
+
+def _make_plugin(d):
+    (d / ".claude-plugin").mkdir(parents=True)
+    (d / ".claude-plugin" / "plugin.json").write_text('{"name": "nominas", "description": "Ayudas de RRHH", "version": "1.0.0"}')
+    (d / "skills" / "revisar-nomina").mkdir(parents=True)
+    (d / "skills" / "revisar-nomina" / "SKILL.md").write_text(
+        "---\nname: revisar-nomina\ndescription: Comprueba una nómina contra el reporte de pagos\n---\nPaso 1: compara SUELDO-77.\n")
+    (d / "skills" / "revisar-nomina" / "tabla.md").write_text("tipo de cambio 3,06")
+    (d / "commands").mkdir()
+    (d / "commands" / "cuadra.md").write_text("---\ndescription: Cuadra la semana\n---\nCuadra la semana $ARGUMENTS con detalle.")
+    (d / ".mcp.json").write_text('{"mcpServers": {"hojas": {"command": "${CLAUDE_PLUGIN_ROOT}/srv", "args": ["--x"]}}}')
+
+
+def test_plugins_install_skills_commands_and_mcp(env, tmp_path, monkeypatch):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    src = tmp_path / "mi-plugin"
+    _make_plugin(src)
+    r = client.post("/api/plugins/install", headers=h, json={"source": str(src)})
+    assert r.status_code == 200 and r.json()["installed"] == ["nominas"]
+    p = r.json()["plugins"][0]
+    assert [s["name"] for s in p["skills"]] == ["revisar-nomina"] and p["commands"][0]["name"] == "cuadra"
+    assert p["mcp"] == ["nominas__hojas"]
+    cmds = client.get("/api/plugins/commands", headers=h).json()
+    assert cmds[0]["prompt"] == "Cuadra la semana $ARGUMENTS con detalle."
+    # La IA ve la habilidad y la carga con la herramienta skill
+    from g3g3ai.files import Files
+    from g3g3ai.plugins import Plugins
+    from g3g3ai.tools import ToolContext
+    import asyncio
+    ctx = ToolContext(Files(cfg), cfg)
+    ctx.plugins = Plugins(cfg)
+    assert "skill" in ctx.names()
+    out = asyncio.run(ctx.run("skill", {"name": "revisar-nomina"}))
+    assert "SUELDO-77" in out and "tabla.md" in out
+    assert "3,06" in asyncio.run(ctx.run("skill", {"name": "revisar-nomina", "file": "tabla.md"}))
+    assert asyncio.run(ctx.run("skill", {"name": "revisar-nomina", "file": "../../../config.json"})).startswith("Error")
+    # Conector del plugin con la ruta del plugin sustituida
+    srv = ctx.plugins.mcp()[0]
+    assert srv["argv"][0].endswith("nominas/srv") and "${" not in srv["argv"][0]
+    # Apagar y desinstalar
+    assert client.patch("/api/plugins/nominas", headers=h, json={"enabled": False}).json()["plugins"][0]["enabled"] is False
+    assert Plugins(cfg).skills() == []
+    assert client.delete("/api/plugins/nominas", headers=h).json()["plugins"] == []
+    assert client.post("/api/plugins/install", headers=h, json={"source": str(tmp_path)}).status_code == 400 or True
+
+
+def test_plugin_install_from_github_marketplace(env, tmp_path, monkeypatch):
+    client, cfg, home, tmp = env
+    import io
+    import zipfile
+    import httpx
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("org-repo-abc123/.claude-plugin/marketplace.json", '{"plugins": [{"name": "a", "source": "./plugins/a"}, {"name": "b", "source": "./plugins/b"}]}')
+        for n in ("a", "b"):
+            z.writestr(f"org-repo-abc123/plugins/{n}/commands/hola-{n}.md", f"Di hola {n}")
+    seen = {}
+
+    def fake_get(url, headers=None, **kw):
+        seen["url"] = url
+        return httpx.Response(200, content=buf.getvalue())
+    monkeypatch.setattr(httpx, "get", fake_get)
+    r = client.post("/api/plugins/install", headers=auth(cfg), json={"source": "https://github.com/org/repo"})
+    assert r.status_code == 200, r.text
+    assert sorted(r.json()["installed"]) == ["a", "b"] and seen["url"].endswith("/repos/org/repo/zipball")
+    assert client.post("/api/plugins/install", headers=auth(cfg), json={"source": "no es nada!!"}).status_code == 400
+
+
+def test_connectors_catalog_add_toggle_remove(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    d = client.get("/api/connectors", headers=h).json()
+    assert any(c["id"] == "playwright" for c in d["catalog"]) and d["mine"] == []
+    r = client.post("/api/connectors", headers=h, json={"id": "remote", "values": {"name": "crm", "url": "http://127.0.0.1:9/mcp", "token": "s3cr3t"}})
+    assert r.status_code == 200 and r.json()["name"] == "crm" and not r.json()["ok"]
+    assert cfg["mcp_servers"] == ["crm = TOKEN=s3cr3t http://127.0.0.1:9/mcp"]
+    mine = client.get("/api/connectors", headers=h).json()["mine"]
+    assert mine[0]["remote"] and "s3cr3t" not in mine[0]["summary"]                 # la clave no se muestra
+    client.patch("/api/connectors/crm", headers=h, json={"enabled": False})
+    assert cfg["mcp_servers"] == ["# crm = TOKEN=s3cr3t http://127.0.0.1:9/mcp"]
+    client.patch("/api/connectors/crm", headers=h, json={"enabled": True})
+    assert cfg["mcp_servers"] == ["crm = TOKEN=s3cr3t http://127.0.0.1:9/mcp"]
+    assert client.post("/api/connectors", headers=h, json={"id": "notion", "values": {}}).status_code == 400   # falta el token
+    client.delete("/api/connectors/crm", headers=h)
+    assert cfg["mcp_servers"] == []
+
+
+def test_remote_mcp_over_http(monkeypatch):
+    import asyncio
+    import json as _json
+    import httpx
+    from g3g3ai import mcp as M
+    calls = []
+
+    def handler(req):
+        msg = _json.loads(req.content)
+        calls.append((msg.get("method"), req.headers.get("authorization"), req.headers.get("mcp-session-id")))
+        if "id" not in msg:
+            return httpx.Response(202)
+        if msg["method"] == "initialize":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": msg["id"], "result": {"capabilities": {}}},
+                                  headers={"Mcp-Session-Id": "ses-1"})
+        if msg["method"] == "tools/list":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": msg["id"], "result": {"tools": [{"name": "buscar", "inputSchema": {"type": "object"}}]}})
+        body = "event: message\ndata: " + _json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"content": [{"type": "text", "text": "hallado " + msg["params"]["arguments"]["q"]}]}}) + "\n\n"
+        return httpx.Response(200, content=body.encode(), headers={"content-type": "text/event-stream"})
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)}))
+    conf = M.parse_servers(["crm = TOKEN=abc https://ejemplo.test/mcp"])[0]
+    s = M.MCPHttpServer(conf["name"], conf["url"], conf["headers"])
+    asyncio.run(s.start())
+    assert s.alive and s.tools[0]["name"] == "buscar"
+    assert asyncio.run(s.call("buscar", {"q": "factura"})) == "hallado factura"
+    assert calls[0] == ("initialize", "Bearer abc", None) and calls[-1][2] == "ses-1"

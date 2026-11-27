@@ -36,6 +36,7 @@
       <button data-view="projects"><span class="ico" data-icon="project"></span> Proyectos</button>
       <button data-view="code"><span class="ico" data-icon="code"></span> Code</button>
       <button data-view="team"><span class="ico" data-icon="users"></span> Equipo</button>
+      <button data-view="connectors"><span class="ico" data-icon="plug"></span> Conectores</button>
       <button data-view="models"><span class="ico" data-icon="cube"></span> Modelos</button>
       <button data-view="tasks"><span class="ico" data-icon="clock"></span> Tareas</button>
       <button data-view="files"><span class="ico" data-icon="folder"></span> Archivos</button>
@@ -238,6 +239,25 @@
       </section>
 
       <!-- ARCHIVOS -->
+      <section id="view-connectors" class="view">
+        <div class="page connectors-page">
+          <div class="row settings-head"><h1 class="page-title grow">Conectores</h1>
+            <button id="conn-refresh" class="ghost small">Comprobar todos</button></div>
+          <p class="muted">Conecta G3G3AI con tus servicios: la IA los usa como herramientas (siempre pidiéndote permiso la primera vez). Compatible con los servidores MCP y los plugins de Claude Code.</p>
+          <div id="conn-github" class="card conn-github"></div>
+          <h2 class="conn-h">Tus conectores</h2>
+          <div id="conn-mine" class="conn-mine"></div>
+          <h2 class="conn-h">Añadir un conector</h2>
+          <div id="conn-catalog" class="conn-grid"></div>
+          <h2 class="conn-h">Plugins</h2>
+          <p class="muted small">Habilidades, comandos «/» y conectores empaquetados. Compatibles con los plugins de Claude Code: pega un repositorio de GitHub (<code>usuario/repo</code>, o el enlace a una carpeta) o la ruta de una carpeta.</p>
+          <form id="plugin-install" class="row plugin-install">
+            <input id="plugin-source" placeholder="p. ej. anthropics/skills o https://github.com/usuario/repo/tree/main/plugins/mi-plugin" aria-label="Origen del plugin">
+            <button class="primary small" type="submit">Instalar</button>
+          </form>
+          <div id="plugin-list" class="plugin-list"></div>
+        </div>
+      </section>
       <section id="view-team" class="view">
         <div class="page team-page">
           <div class="row settings-head"><h1 class="page-title grow">Equipo</h1>
