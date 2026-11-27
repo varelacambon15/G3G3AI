@@ -147,13 +147,40 @@ def create_docx(path: Path, markdown: str) -> None:
 
 
 # --- Excel --------------------------------------------------------------------------------
+class _Num(float):
+    """Número que recuerda el formato con el que se escribirá (p. ej. dos decimales)."""
+    fmt = None
+
+
+def _num(x: float, fmt: str | None):
+    n = _Num(x)
+    n.fmt = fmt
+    return n
+
+
 def _cell_value(v):
-    if isinstance(v, str):
-        s = v.strip()
-        if re.fullmatch(r"-?\d+", s):
-            return int(s)
-        if re.fullmatch(r"-?\d+[.,]\d+", s) and s.count(",") <= 1:
-            return float(s.replace(",", "."))
+    """Texto → número o fecha cuando lo es (también en formato español: 1.500,00 · 15,00 · 25/11/2026)."""
+    if not isinstance(v, str):
+        return v
+    s = v.strip()
+    if re.fullmatch(r"-?\d+", s) and not (len(s) > 1 and s.startswith("0")):   # «007» o un código se quedan como texto
+        return int(s)
+    m = re.fullmatch(r"(-?)(\d{1,3}(?:\.\d{3})+),(\d+)", s)             # 1.500,00
+    if m:
+        return _num(float(m.group(1) + m.group(2).replace(".", "") + "." + m.group(3)), "#,##0." + "0" * len(m.group(3)))
+    m = re.fullmatch(r"(-?)(\d{1,3}(?:,\d{3})+)\.(\d+)", s)              # 1,234.56
+    if m:
+        return _num(float(m.group(1) + m.group(2).replace(",", "") + "." + m.group(3)), "#,##0." + "0" * len(m.group(3)))
+    m = re.fullmatch(r"-?\d+[.,](\d+)", s)                                # 15,00 · 12.5
+    if m:
+        return _num(float(s.replace(",", ".")), "0." + "0" * len(m.group(1)))
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", s)                    # 25/11/2026 (día/mes/año)
+    if m:
+        import datetime as _dt
+        try:
+            return _dt.date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            return v
     return v
 
 
@@ -183,6 +210,13 @@ def create_xlsx(path: Path, spec) -> None:
         rows = sh.get("rows") or []
         for row in rows:
             ws.append([_cell_value(v) for v in row])
+        for row in ws.iter_rows():
+            for c in row:     # formatos: decimales como se escribieron y fechas dd/mm/aaaa
+                if isinstance(c.value, float) and getattr(c.value, "fmt", None):
+                    c.number_format = c.value.fmt
+                    c.value = float(c.value)
+                elif c.value is not None and type(c.value).__name__ == "date":
+                    c.number_format = "DD/MM/YYYY"
         header = sh.get("header", True)
         if header and rows:
             for c in ws[1]:
