@@ -122,7 +122,9 @@ APP_FEATURES = (
     "miembros; cada miembro tiene nombre, papel (instrucciones de hasta 600 caracteres), modelo (cualquier proveedor "
     "configurado o el local) y herramientas «ninguna» o «sólo lectura» (leer archivos, web, correo; nunca modifica). "
     "Los miembros no ven la conversación: el director les pasa todo el contexto. Se activa con el interruptor de la sección; "
-    "lo configura el usuario allí (tú no puedes crear miembros), pero puedes proponerle nombres, papeles y modelos concretos.")
+    "lo configura el usuario allí (tú no puedes crear miembros), pero puedes proponerle nombres, papeles y modelos concretos. "
+    "Se pueden guardar varios equipos con nombre y asignar uno a cada proyecto (en la página del proyecto).\n"
+    "- Chats y Code son apartados separados, cada uno con su lista; las conversaciones se pueden fijar arriba y marcar como favoritas (☆).")
 NO_AGENT_NOTE = (
     "## Herramientas del equipo desactivadas\n"
     "El modo Agente está desactivado en este chat: no puedes leer archivos, ejecutar comandos ni ver el hardware del "
@@ -1195,7 +1197,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         turn_mid = None
         if not conv:
             proj_id = body.get("project_id") if body.get("project_id") and db.get_project(body["project_id"]) else None
-            conv = db.create_conversation(provider=pid, model=model, system=body.get("system"), project_id=proj_id)
+            conv = db.create_conversation(provider=pid, model=model, system=body.get("system"), project_id=proj_id,
+                                          kind=body.get("kind"))
             cid = conv["id"]
         if text or attach_text:
             meta = ({"attachments": attach_meta, "expanded": f"{attach_text}\n\n{text}".strip() or text}

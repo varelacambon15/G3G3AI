@@ -116,18 +116,18 @@ function drawTeamBar() {
   const names = (ps) => ps.map((p) => `«${p.name}»`).join(", ");
   let info;
   if (TEAM.cur === "general") {
-    info = h("span", { class: "muted small grow" }, "Trabaja en las conversaciones sin proyecto y en los proyectos sin equipo propio"
+    info = h("span", { class: "muted small team-info" }, "Trabaja en las conversaciones sin proyecto y en los proyectos sin equipo propio"
       + (all.general_projects.length ? ` (${names(all.general_projects)})` : "") + ".");
   } else {
     const used = (all.saved.find((x) => x.id === TEAM.cur) || {}).projects || [];
-    info = h("span", { class: "muted small grow" }, used.length ? `Lo usan los proyectos ${names(used)}.` : "Aún no lo usa ningún proyecto: asígnalo desde la página del proyecto.");
+    info = h("span", { class: "muted small team-info" }, used.length ? `Lo usan los proyectos ${names(used)}.` : "Aún no lo usa ningún proyecto: asígnalo desde la página del proyecto.");
   }
   bar.append(h("label", { class: "team-pick" }, "Editando", pick));
   if (TEAM.cur !== "general") {
     bar.append(h("input", { class: "team-name", placeholder: "Nombre del equipo (p. ej. «Juego 3D»)", value: t.name || "",
       oninput: (e) => { t.name = e.target.value; TEAM.dirty = true; } }));
   }
-  bar.append(info,
+  bar.append(...[
     h("button", { class: "ghost small", title: "Guardar estos miembros como un equipo nuevo con nombre", onclick: () => {
       const copy = JSON.parse(JSON.stringify(TEAM.data.members)).map((m) => ({ ...m, id: Math.random().toString(36).slice(2, 10) }));
       selectTeam("new"); if (TEAM.cur !== "new") return;
@@ -138,7 +138,7 @@ function drawTeamBar() {
       if (!confirm(`¿Borrar el equipo «${t.name}»? Los proyectos que lo usan pasarán al equipo general.`)) return;
       try { TEAM.all = await api(`/api/teams/${TEAM.cur}`, { method: "DELETE" }); TEAM.dirty = false; selectTeam("general", true); toast("Equipo borrado", 2500); }
       catch (e) { toast(e.message, 6000); }
-    } }, ico("trash"), "Borrar") : null);
+    } }, ico("trash"), "Borrar") : null, info].filter(Boolean));
 }
 function addMember(name, role, tools) {
   let n = name, i = 2;

@@ -157,9 +157,9 @@ class Sync:
                 if old and (old["marked"] or 0) > (c.get("marked") or 0):
                     flags = (old["pinned"], old["favorite"], old["marked"])
                 conn.execute("INSERT OR REPLACE INTO conversations (id, title, provider, model, system, created, updated,"
-                             " summary, summary_upto, project_id, pinned, favorite, marked) VALUES (?,?,?,?,?,?,?,?,NULL,?,?,?,?)",
+                             " summary, summary_upto, project_id, pinned, favorite, marked, kind) VALUES (?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)",
                              (c["id"], c["title"], c.get("provider"), c.get("model"), c.get("system"), c["created"],
-                              c["updated"], c.get("summary"), c.get("project_id"), *flags))
+                              c["updated"], c.get("summary"), c.get("project_id"), *flags, c.get("kind")))
                 upto = None
                 for m in c["messages"]:
                     cur = conn.execute("INSERT INTO messages (conv_id, uid, role, content, reasoning, meta, created) "

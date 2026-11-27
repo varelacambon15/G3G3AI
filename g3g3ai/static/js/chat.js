@@ -207,10 +207,10 @@ function renderConvList() {
   const ul = $("#conv-list"), q = $("#conv-search").value.trim().toLowerCase();
   const frag = document.createDocumentFragment();
   let group = null;
-  if (q && CS.res && CS.res.q.toLowerCase() === q) { ul.innerHTML = ""; renderSearchResults(ul, CS.res.q, CS.res.items); return; }
-  const list = convCache.filter((c) => (!q || norm(c.title).includes(norm(q))) && (!favOnly || c.favorite));
+  if (q && CS.res && CS.res.q.toLowerCase() === q) { ul.innerHTML = ""; renderSearchResults(ul, CS.res.q, CS.res.items.filter((c) => convSpace(c) === space())); return; }
+  const list = convCache.filter((c) => convSpace(c) === space() && (!q || norm(c.title).includes(norm(q))) && (!favOnly || c.favorite));
   const pinned = list.filter((c) => c.pinned).sort((a, b) => b.pinned - a.pinned);
-  if (!list.length) frag.append(h("div", { class: "conv-group" }, q ? "Sin resultados" : favOnly ? "Aún no hay favoritas: pulsa ☆ en una conversación" : "Aún no hay conversaciones"));
+  if (!list.length) frag.append(h("div", { class: "conv-group" }, q ? "Sin resultados" : favOnly ? "Aún no hay favoritas: pulsa ☆ en una conversación" : S.code ? "Aún no hay sesiones de Code: elige una carpeta y pide lo que quieras" : "Aún no hay conversaciones"));
   if (pinned.length) frag.append(h("div", { class: "conv-group" }, "Fijadas"), ...pinned.map(convItem));
   for (const c of list) {
     if (c.pinned) continue;
@@ -223,7 +223,8 @@ function renderConvList() {
 function convItem(c) {
   return h("div", { class: "conv-item" + (c.id === S.convId ? " active" : "") + (c.pinned ? " pinned" : ""), "data-id": c.id, onclick: () => { setView("chat"); openConversation(c.id); } },
       c.favorite ? h("span", { class: "conv-star", title: "Favorita" }, ico("star")) : null,
-      h("span", { class: "t", title: c.title }, c.title),
+      h("span", { class: "t", title: c.title + (c.workdir ? `\n${c.workdir}` : "") }, c.title,
+        c.kind === "code" && c.workdir ? h("small", { class: "conv-dir" }, baseName(c.workdir)) : null),
       h("span", { class: "acts" },
         h("button", { title: c.pinned ? "Desfijar" : "Fijar arriba", "aria-label": c.pinned ? "Desfijar" : "Fijar arriba", class: c.pinned ? "on" : "",
           onclick: (e) => { e.stopPropagation(); markConv(c, { pinned: !c.pinned }); } }, ico("pin")),
@@ -258,8 +259,12 @@ function convMenu(c, anchor) {
   }), 0);
 }
 async function openConversation(id, focusMsg, q) {
-  S.conv = await api(`/api/conversations/${id}`);
-  S.convId = id; S.system = undefined; store.set("conv", id);
+  const seq = S.openSeq = (S.openSeq || 0) + 1;
+  const conv = await api(`/api/conversations/${id}`);
+  if (seq !== S.openSeq) return;                         // se pidió abrir otra entretanto: gana la última
+  S.conv = conv;
+  if ((S.view === "chat" || S.view === "code") && convSpace(conv) !== S.view) setView(convSpace(conv), true);  // es del otro apartado
+  S.convId = id; S.system = undefined; store.set(convKey(convSpace(conv)), id);
   if (S.conv.provider) {
     const v = `${S.conv.provider}::${S.conv.model}`;  // las conversaciones en Auto no cambian el selector
     if ([...$("#model-select").options].some((o) => o.value === v)) { $("#model-select").value = v; updateFavButton(); }
@@ -280,11 +285,12 @@ async function openConversation(id, focusMsg, q) {
 function newChat() {
   if (S.code) queueMicrotask(() => { S.workdir = store.get("code_dir", "") || undefined; renderCodePanel(); });
   if (S.live) S.live.isNew = false;
-  S.convId = null; S.conv = null; S.system = undefined; S.projectId = null; store.set("conv", null); renderProjectChip();
+  S.openSeq = (S.openSeq || 0) + 1;                     // una apertura pendiente ya no debe pisar la nueva
+  S.convId = null; S.conv = null; S.system = undefined; S.projectId = null; store.set(convKey(), null); renderProjectChip();
   renderMessages(); loadConversations(); closeSide(); $("#top-title").textContent = "";
   if (!isMobile()) $("#input").focus();
 }
-$("#new-chat").addEventListener("click", () => { setView("chat"); newChat(); });
+$("#new-chat").addEventListener("click", () => { setView(S.code ? "code" : "chat", true); newChat(); });
 
 // --- Mensajes -----------------------------------------------------------------------
 function renderMessages() {
@@ -962,7 +968,7 @@ async function send(text, attachments, isContinue = false) {
   el.append(h("div", { class: "bubble cursor" }));
   box.append(el); box.scrollTop = box.scrollHeight;
   // Respuesta en curso: si te vas a otra conversación y vuelves, se vuelve a mostrar y sigue escribiéndose
-  const live = S.live = { el, conv: S.convId || null, isNew: !S.convId };
+  const live = S.live = { el, conv: S.convId || null, isNew: !S.convId, space: space() };
 
   const ctrl = new AbortController(); S.streaming = ctrl;
   setSending(true);
@@ -990,6 +996,7 @@ async function send(text, attachments, isContinue = false) {
     if (S.workdir !== undefined) body.workdir = S.workdir;
     if (S.system !== undefined) body.system = S.system;
     if (!S.convId && S.projectId) body.project_id = S.projectId;
+    if (!S.convId) body.kind = space();
     const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body), signal: ctrl.signal });
     if (r.status === 401) { showLogin(); throw new Error("No autorizado"); }
@@ -1007,7 +1014,7 @@ async function send(text, attachments, isContinue = false) {
         const ev = JSON.parse(chunk.slice(5));
         if (ev.type === "start") {
           live.conv = ev.conversation_id; extra.reading = 0;
-          if (!S.convId && live.isNew) { S.convId = ev.conversation_id; store.set("conv", S.convId); }
+          if (!S.convId && live.isNew) { S.convId = ev.conversation_id; store.set(convKey(live.space), S.convId); }
           loadConversations();
         }
         else if (ev.type === "content") { content += ev.text; extra.status = null; extra.progress = null; }

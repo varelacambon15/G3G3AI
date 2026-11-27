@@ -7,10 +7,13 @@ async function init() {
   await loadProviders();
   await loadConversations();
   loadProjects().then(renderProjectChip);
-  const last = store.get("conv", null);
-  if (last) await openConversation(last).catch(newChat); else newChat();
+  const v = store.get("view", "chat");
+  setView(v, true);
+  S.code = v === "code";
+  const last = store.get(convKey(), null);
+  const lc = last && convCache.find((x) => x.id === last);
+  if (lc && convSpace(lc) === space()) await openConversation(last).catch(newChat); else newChat();
   api("/api/onboarding").then((o) => { if (o.needed) openWizard(); }).catch(() => {});
-  setView(store.get("view", "chat"));
   renderActiveTools(); setSending(false);
   setInterval(refreshStatus, 8000);
 }

@@ -101,9 +101,11 @@ class DB:
                            ("messages", "uid TEXT"), ("conversations", "workdir TEXT"),
                            ("conversations", "project_id TEXT"), ("projects", "team_id TEXT"),
                            ("conversations", "pinned REAL"), ("conversations", "favorite INTEGER"),
-                           ("conversations", "marked REAL")):  # columnas añadidas en versiones posteriores
+                           ("conversations", "marked REAL"), ("conversations", "kind TEXT")):  # columnas añadidas después
             try:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
+                if col == "kind TEXT":   # las conversaciones que ya tenían carpeta de trabajo se crearon en Code
+                    self.conn.execute("UPDATE conversations SET kind='code' WHERE workdir IS NOT NULL AND workdir != ''")
             except sqlite3.OperationalError:
                 pass
         # Identificador global de cada mensaje (para sincronizar entre equipos)
@@ -124,7 +126,7 @@ class DB:
     # Conversaciones ---------------------------------------------------------
     def list_conversations(self) -> list[dict]:
         rows = self._q(
-            "SELECT id, title, provider, model, updated, project_id, pinned, favorite FROM conversations ORDER BY updated DESC"
+            "SELECT id, title, provider, model, updated, project_id, pinned, favorite, kind, workdir FROM conversations ORDER BY updated DESC"
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -136,28 +138,28 @@ class DB:
         like = [f"%{w.replace('%', '').replace('_', '')}%" for w in words]
         where = " AND ".join("norm(m.content) LIKE ?" for _ in words)
         rows = self._q(
-            f"SELECT m.id, m.conv_id, m.role, m.content, c.title, c.updated FROM messages m "
+            f"SELECT m.id, m.conv_id, m.role, m.content, c.title, c.updated, c.kind FROM messages m "
             f"JOIN conversations c ON c.id = m.conv_id WHERE m.role IN ('user','assistant') AND {where} "
             f"ORDER BY c.updated DESC, m.id LIMIT 400", like).fetchall()
         out: dict[str, dict] = {}
         for r in rows:
-            o = out.setdefault(r["conv_id"], {"id": r["conv_id"], "title": r["title"], "updated": r["updated"],
+            o = out.setdefault(r["conv_id"], {"id": r["conv_id"], "title": r["title"], "updated": r["updated"], "kind": r["kind"],
                                               "hits": 0, "message_id": r["id"], "role": r["role"],
                                               "snippet": snippet(r["content"], words)})
             o["hits"] += 1
         twhere = " AND ".join("norm(title) LIKE ?" for _ in words)
-        for r in self._q(f"SELECT id, title, updated FROM conversations WHERE {twhere} ORDER BY updated DESC LIMIT 50", like):
-            out.setdefault(r["id"], {"id": r["id"], "title": r["title"], "updated": r["updated"], "hits": 0,
+        for r in self._q(f"SELECT id, title, updated, kind FROM conversations WHERE {twhere} ORDER BY updated DESC LIMIT 50", like):
+            out.setdefault(r["id"], {"id": r["id"], "title": r["title"], "updated": r["updated"], "kind": r["kind"], "hits": 0,
                                      "message_id": None, "role": None, "snippet": ""})
         return sorted(out.values(), key=lambda o: -o["updated"])[:limit]
 
     def create_conversation(self, title="Nueva conversación", provider=None, model=None, system=None,
-                            project_id=None) -> dict:
+                            project_id=None, kind: str | None = None) -> dict:
         cid = uuid.uuid4().hex[:12]
         now = time.time()
         self._q(
-            "INSERT INTO conversations (id, title, provider, model, system, created, updated, project_id) VALUES (?,?,?,?,?,?,?,?)",
-            (cid, title, provider, model, system, now, now, project_id),
+            "INSERT INTO conversations (id, title, provider, model, system, created, updated, project_id, kind) VALUES (?,?,?,?,?,?,?,?,?)",
+            (cid, title, provider, model, system, now, now, project_id, "code" if kind == "code" else None),
         )
         return self.get_conversation(cid)
 

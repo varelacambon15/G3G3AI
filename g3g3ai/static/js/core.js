@@ -207,12 +207,22 @@ $("#login-form").addEventListener("submit", async (e) => {
 // --- Navegación ----------------------------------------------------------------------
 const isMobile = () => matchMedia("(max-width: 860px)").matches;
 function closeSide() { document.body.classList.remove("side-open"); }
-function setView(v) {
+// Chats y Code son apartados distintos (como en Claude): cada uno con su lista y su última conversación abierta
+const space = () => (S.code ? "code" : "chat");
+const convSpace = (c) => (c && c.kind === "code" ? "code" : "chat");
+const convKey = (sp = space()) => (sp === "code" ? "conv_code" : "conv");
+function setView(v, keepConv = false) {
   S.view = v;
   const real = v === "code" ? "chat" : v;
   const wasCode = !!S.code;
-  S.code = v === "code";
+  if (v === "chat" || v === "code") S.code = v === "code";
+  else S.code = false;
   document.body.classList.toggle("code-mode", S.code);
+  $("#new-chat").lastChild.textContent = S.code ? " Nueva sesión de Code" : " Nueva conversación";
+  $("#conv-search").placeholder = S.code ? "Buscar sesiones de Code…" : "Buscar conversaciones…";
+  if (!keepConv && (v === "chat" || v === "code") && S.conv && convSpace(S.conv) !== v) openSpaceConv();
+  else if (!keepConv && (v === "chat" || v === "code") && !S.conv && wasCode !== S.code) openSpaceConv();
+  if (wasCode !== S.code && typeof renderConvList === "function") renderConvList();
   $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
   $$(".view").forEach((s) => s.classList.toggle("active", s.id === "view-" + real));
   $("#top-title").textContent = real === "chat" ? (S.conv?.title || (S.code ? "Code" : "")) : { models: "Modelos", team: "Equipo", tasks: "Tareas", files: "Archivos", settings: "Ajustes", projects: "Proyectos" }[real];
@@ -226,6 +236,12 @@ function setView(v) {
   if (real === "settings") loadSettings();
   store.set("view", v);
 }
+// Abre la última conversación del apartado actual (o una nueva si no hay)
+function openSpaceConv() {
+  const last = store.get(convKey(), null);
+  const c = last && convCache.find((x) => x.id === last);
+  if (c && convSpace(c) === space()) openConversation(last).catch(newChat); else newChat();
+}
 $$("[data-view]").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
 $("#menu-btn").addEventListener("click", () => {
   if (isMobile()) document.body.classList.toggle("side-open");
@@ -233,6 +249,6 @@ $("#menu-btn").addEventListener("click", () => {
 });
 $("#side-collapse").addEventListener("click", () => { document.body.classList.add("side-collapsed"); store.set("collapsed", true); });
 $("#scrim").addEventListener("click", closeSide);
-$("#top-new").addEventListener("click", () => { setView("chat"); newChat(); });
+$("#top-new").addEventListener("click", () => { setView(S.code ? "code" : "chat", true); newChat(); });
 if (store.get("collapsed", false)) document.body.classList.add("side-collapsed");
 $$("dialog [data-close]").forEach((b) => b.addEventListener("click", () => b.closest("dialog").close()));

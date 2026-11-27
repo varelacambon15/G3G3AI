@@ -446,6 +446,24 @@ def test_streaming_pins_favorites_and_project_teams(live):
         conv = page.evaluate("async () => (await (await fetch('/api/conversations')).json())")
         assert sum(1 for c in conv if c["pinned"]) == 1 and sum(1 for c in conv if c["favorite"]) == 1
 
+        # 2b) Code es un apartado distinto: su propia lista y su última sesión
+        page.click("[data-view=code]")
+        page.wait_for_selector("#conv-list >> text=Aún no hay sesiones de Code")
+        assert page.inner_text("#new-chat").strip() == "Nueva sesión de Code"
+        page.fill("#input", "hola code")
+        page.click("#send-btn")
+        page.wait_for_function("document.querySelector('#send-btn').dataset.state === 'idle'", timeout=15000)
+        assert page.locator("#conv-list .conv-item").count() == 1
+        code_id = page.evaluate("S.convId")
+        page.click("[data-view=chat]")
+        page.wait_for_function(f"S.convId !== '{code_id}'")
+        assert page.locator("#conv-list .conv-item").count() == 3                  # los chats, sin la sesión de Code
+        page.click("[data-view=code]")
+        page.wait_for_function(f"S.convId === '{code_id}'")                        # vuelve a su última sesión
+        conv = page.evaluate("async () => (await (await fetch('/api/conversations')).json())")
+        assert [c["kind"] for c in conv if c["id"] == code_id] == ["code"]
+        page.click("[data-view=chat]")
+
         # 3) Equipos guardados y asignados a un proyecto
         page.click("[data-view=team]")
         page.wait_for_selector("#team-pick")
