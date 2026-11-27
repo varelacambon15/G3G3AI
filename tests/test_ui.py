@@ -421,6 +421,24 @@ def test_streaming_pins_favorites_and_project_teams(live):
         assert page.locator('.msg.assistant ol[start="3"]').count() == 1      # «3.» tras un hueco sigue siendo el 3
         assert page.locator(".msg.user").count() == 1 and page.locator('.msg[data-id="0"]').count() == 0
 
+        # 1b) Cola de mensajes: se ven, se envían solos al terminar y «Enviar ahora» corta lo que está escribiendo
+        page.click("#new-chat")
+        page.fill("#input", "respuesta lenta")
+        page.click("#send-btn")
+        page.wait_for_selector(".msg.assistant >> text=Esta", timeout=8000)
+        page.fill("#input", "primero en cola")
+        page.press("#input", "Enter")
+        page.fill("#input", "segundo en cola")
+        page.click("#send-btn")                                                   # con texto escrito, el botón encola
+        page.wait_for_selector("#queue .queue-item >> nth=1")
+        assert page.locator("#queue .queue-item").count() == 2 and page.input_value("#input") == ""
+        page.locator("#queue .queue-item", has_text="segundo en cola").locator(".q-now").click()
+        page.wait_for_selector(".msg.user >> text=segundo en cola", timeout=8000)
+        page.wait_for_selector(".msg.user >> text=primero en cola", timeout=20000)  # el resto sale solo después
+        page.wait_for_function("document.querySelector('#send-btn').dataset.state === 'idle' && !document.querySelector('#queue .queue-item')", timeout=20000)
+        users = page.locator(".msg.user").all_inner_texts()
+        assert [u for u in users if "cola" in u] == ["segundo en cola", "primero en cola"], users
+
         # 2) Dos conversaciones más; fijar una y marcar otra como favorita
         for txt in ("hola uno", "hola dos"):
             page.click("#new-chat")
@@ -428,10 +446,10 @@ def test_streaming_pins_favorites_and_project_teams(live):
             page.click("#send-btn")
             page.wait_for_function("document.querySelector('#send-btn').dataset.state === 'idle'", timeout=15000)
         items = page.locator("#conv-list .conv-item")
-        assert items.count() == 3
-        first_title = page.locator("#conv-list .conv-item").nth(2).inner_text()   # la más antigua
-        page.locator("#conv-list .conv-item").nth(2).hover()
-        page.locator("#conv-list .conv-item").nth(2).locator("button[aria-label='Fijar arriba']").click()
+        assert items.count() == 4
+        first_title = page.locator("#conv-list .conv-item").nth(3).inner_text()   # la más antigua
+        page.locator("#conv-list .conv-item").nth(3).hover()
+        page.locator("#conv-list .conv-item").nth(3).locator("button[aria-label='Fijar arriba']").click()
         page.wait_for_selector("#conv-list .conv-group:first-child >> text=Fijadas")
         assert page.locator("#conv-list .conv-item").first.inner_text() == first_title
         page.locator("#conv-list .conv-item").nth(1).hover()
@@ -442,7 +460,7 @@ def test_streaming_pins_favorites_and_project_teams(live):
         page.wait_for_selector("#conv-list .conv-item .conv-star")
         assert page.locator("#conv-list .conv-item").count() == 1
         page.click("#conv-favs")
-        page.wait_for_function("document.querySelectorAll('#conv-list .conv-item').length === 3")
+        page.wait_for_function("document.querySelectorAll('#conv-list .conv-item').length === 4")
         conv = page.evaluate("async () => (await (await fetch('/api/conversations')).json())")
         assert sum(1 for c in conv if c["pinned"]) == 1 and sum(1 for c in conv if c["favorite"]) == 1
 
@@ -457,7 +475,7 @@ def test_streaming_pins_favorites_and_project_teams(live):
         code_id = page.evaluate("S.convId")
         page.click("[data-view=chat]")
         page.wait_for_function(f"S.convId !== '{code_id}'")
-        assert page.locator("#conv-list .conv-item").count() == 3                  # los chats, sin la sesión de Code
+        assert page.locator("#conv-list .conv-item").count() == 4                  # los chats, sin la sesión de Code
         page.click("[data-view=code]")
         page.wait_for_function(f"S.convId === '{code_id}'")                        # vuelve a su última sesión
         conv = page.evaluate("async () => (await (await fetch('/api/conversations')).json())")

@@ -340,6 +340,85 @@ def auth_headers(p: dict) -> dict:
     return h
 
 
+def _billed(u: dict) -> dict:
+    """Lo que el propio proveedor dice que costó (si lo dice): coste cobrado, valor a precio de lista y, en
+    OpenCode Go, cuánto descontó del cupo del plan (en dólares del límite mensual)."""
+    out = {}
+    if isinstance(u.get("cost"), (int, float)):
+        out["cost"] = float(u["cost"])
+    oc = u.get("opencode") if isinstance(u.get("opencode"), dict) else {}
+    if isinstance(oc.get("allowance"), (int, float)):
+        out["allowance"] = float(oc["allowance"])
+    if isinstance(oc.get("list_cost"), (int, float)):
+        out["list_cost"] = float(oc["list_cost"])
+    if oc.get("billing_source"):
+        out["billing"] = str(oc["billing_source"])[:20]
+    return out
+
+
+# --- Saldo y límites del proveedor ------------------------------------------------
+_LIMITS_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def limits_kind(p: dict) -> str | None:
+    b = (p.get("base_url") or "").lower()
+    if "opencode.ai" in b and "/go" in b:
+        return "opencode-go"
+    if "openrouter.ai" in b:
+        return "openrouter"
+    if "api.deepseek.com" in b:
+        return "deepseek"
+    return None
+
+
+async def provider_limits(p: dict, fresh: bool = False) -> dict:
+    """Uso del plan o saldo de la cuenta, preguntando al proveedor. {"kind", "meters": [...]} o {"kind", "credits"}."""
+    import time as _time
+    kind = limits_kind(p)
+    if not kind:
+        return {"kind": None}
+    key = f"{p.get('id')}|{p.get('base_url')}"
+    hit = _LIMITS_CACHE.get(key)
+    if hit and not fresh and _time.time() - hit[0] < 60:
+        return hit[1]
+    h = {k: v for k, v in auth_headers(p).items() if k != "x-opencode-session"}
+    async with httpx.AsyncClient(timeout=15) as c:
+        if kind == "opencode-go":
+            base = p["base_url"].rstrip("/")
+            urls = [base + "/usage", "https://opencode.ai/inference/go/v1/usage"]
+            r = None
+            for url in dict.fromkeys(urls):
+                r = await c.get(url, headers=h)
+                if r.status_code != 404:
+                    break
+            if r.status_code in (401, 403):
+                try:
+                    msg = r.json()["error"]["message"]
+                except Exception:  # noqa: BLE001
+                    msg = "La clave no tiene una suscripción de OpenCode Go activa."
+                raise ProviderError(msg)
+            r.raise_for_status()
+            u = (r.json() or {}).get("usage") or {}
+            names = {"rolling": "5 horas", "weekly": "Semana", "monthly": "Mes"}
+            out = {"kind": kind, "meters": [{"id": k, "name": names[k], "percent": int((u.get(k) or {}).get("percent") or 0),
+                                             "status": (u.get(k) or {}).get("status") or "ok",
+                                             "resets_at": (u.get(k) or {}).get("resetsAt")} for k in names if k in u]}
+        elif kind == "openrouter":
+            r = await c.get("https://openrouter.ai/api/v1/key", headers=h)
+            r.raise_for_status()
+            d = (r.json() or {}).get("data") or {}
+            out = {"kind": kind, "credits": {"used": d.get("usage"), "limit": d.get("limit"),
+                                              "remaining": d.get("limit_remaining"), "currency": "USD"}}
+        else:
+            r = await c.get("https://api.deepseek.com/user/balance", headers=h)
+            r.raise_for_status()
+            infos = (r.json() or {}).get("balance_infos") or [{}]
+            b = infos[0]
+            out = {"kind": kind, "credits": {"remaining": float(b.get("total_balance") or 0), "currency": b.get("currency") or "USD"}}
+    _LIMITS_CACHE[key] = (_time.time(), out)
+    return out
+
+
 # --- Listado de modelos ---------------------------------------------------------
 async def list_models(p: dict) -> list[str]:
     async with httpx.AsyncClient(timeout=15) as c:
@@ -351,6 +430,90 @@ async def list_models(p: dict) -> list[str]:
         if r.status_code >= 400:
             raise ProviderError(f"HTTP {r.status_code}: {r.text[:300]}")
         return sorted(m["id"] for m in r.json().get("data", []))
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_model_info(m: dict) -> dict:
+    """Datos útiles de un modelo según lo que publique el proveedor: OpenCode/models.dev (cost, limit, go…),
+    OpenRouter (pricing por token, context_length, description) u otros. Precios en $ por millón de tokens."""
+    info: dict = {}
+    if m.get("name") and m.get("name") != m.get("id"):
+        info["name"] = str(m["name"])[:80]
+    desc = m.get("description")
+    if isinstance(desc, str) and desc.strip():
+        info["desc"] = " ".join(desc.split())[:400]
+    cost = (m.get("cost") or {}).get("text") if isinstance(m.get("cost"), dict) else None
+    if isinstance(cost, dict):                                   # OpenCode / models.dev v2
+        i, o = cost.get("input") or {}, cost.get("output") or {}
+        info["in"], info["out"] = _num(i.get("price")), _num(o.get("price"))
+        if isinstance(i.get("cache"), dict):
+            info["cache_read"] = _num(i["cache"].get("read"))
+        if (m.get("cost") or {}).get("multipliers"):
+            info["peak"] = True
+    elif isinstance(m.get("cost"), dict) and ("input" in m["cost"] or "output" in m["cost"]):   # models.dev v1
+        info["in"], info["out"] = _num(m["cost"].get("input")), _num(m["cost"].get("output"))
+        info["cache_read"] = _num(m["cost"].get("cache_read"))
+    elif isinstance(m.get("pricing"), dict):                     # OpenRouter: $ por token
+        pr = m["pricing"]
+        for k, src in (("in", "prompt"), ("out", "completion"), ("cache_read", "input_cache_read")):
+            v = _num(pr.get(src))
+            if v is not None:
+                info[k] = round(v * 1_000_000, 4)
+    lim = m.get("limit") if isinstance(m.get("limit"), dict) else {}
+    ctx = lim.get("context") or m.get("context_length") or (m.get("top_provider") or {}).get("context_length")
+    if ctx:
+        info["ctx"] = int(ctx)
+    if lim.get("output"):
+        info["out_max"] = int(lim["output"])
+    mods = m.get("modalities") or {}
+    inputs = mods.get("input") if isinstance(mods, dict) else None
+    inputs = inputs or (m.get("architecture") or {}).get("input_modalities") or []
+    if inputs:
+        info["vision"] = any(str(x).startswith("image") for x in inputs)
+        info["pdf"] = any("pdf" in str(x) for x in inputs)
+    caps = m.get("capabilities") or {}
+    if isinstance(caps, dict):
+        if isinstance(caps.get("tools"), dict):
+            info["tools"] = bool(caps["tools"].get("supported"))
+        if isinstance(caps.get("reasoning"), dict):
+            info["reasoning"] = bool(caps["reasoning"].get("supported"))
+    elif isinstance(m.get("supported_parameters"), list):
+        info["tools"] = "tools" in m["supported_parameters"]
+        info["reasoning"] = "reasoning" in m["supported_parameters"]
+    for k in ("release_date", "knowledge"):
+        if m.get(k):
+            info[k] = str(m[k])[:20]
+    if m.get("open_weights") is not None:
+        info["open_weights"] = bool(m["open_weights"])
+    go = m.get("go") if isinstance(m.get("go"), dict) else None
+    if go:                                                       # OpenCode Go: cupo del plan
+        mu = go.get("monthly_usage")
+        info["go"] = {"monthly": mu if isinstance(mu, (dict, int, float)) else None, "training": go.get("training"),
+                      "zdr": go.get("zdr"), "limited_regions": go.get("limited_regions")}
+    return {k: v for k, v in info.items() if v is not None}
+
+
+async def model_details(p: dict) -> dict[str, dict]:
+    """{modelo: datos} con lo que el proveedor publique en su lista de modelos ({} si no publica nada útil)."""
+    if p["type"] == "anthropic":
+        return {}
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.get(p["base_url"].rstrip("/") + "/models", headers=auth_headers(p))
+        if r.status_code >= 400:
+            raise ProviderError(f"HTTP {r.status_code}")
+        out = {}
+        for m in (r.json() or {}).get("data", []) or []:
+            if isinstance(m, dict) and m.get("id"):
+                info = parse_model_info(m)
+                if info:
+                    out[m["id"]] = info
+        return out
 
 
 # --- OpenAI compatible (incluye llama-server local) -----------------------------------
@@ -365,6 +528,7 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
         from .context import local_reply_tokens
         max_tokens = local_reply_tokens(int(opts["n_ctx"]), int(opts.get("max_tokens") or 2048))
     continuations = nudges = verifies = empties = thinking_retries = degen_retries = 0
+    billing_seen: dict = {}
     reasoning_seen = False
     cjk_ok = any(_CJK.search(str(m.get("content") or "")) for m in messages if m.get("role") == "user")
     used_tools = False
@@ -415,6 +579,10 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                                 yield {"type": "stats", "tokens": u.get("completion_tokens"),
                                        "prompt_tokens": u.get("prompt_tokens")}
                             u = j.get("usage") or {}
+                            if u:
+                                billed = _billed(u)
+                                if billed:
+                                    billing_seen.update(billed)
                             tin, tout = u.get("prompt_tokens"), u.get("completion_tokens")
                             if tin is None and j.get("timings"):
                                 tin, tout = j["timings"].get("prompt_n"), j["timings"].get("predicted_n")
@@ -471,7 +639,8 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
                         return
                     raise
             if usage_seen:
-                yield {"type": "usage", "input": usage_seen[0], "output": usage_seen[1]}
+                yield {"type": "usage", "input": usage_seen[0], "output": usage_seen[1], **billing_seen}
+            billing_seen = {}
             if ctx and not calls and content:
                 found, cleaned = extract_text_tool_calls(content, set(ctx.names()))
                 if found:  # el modelo escribió la llamada como texto: se retira del chat y se ejecuta de verdad
@@ -621,7 +790,8 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
                         stop_reason = j.get("delta", {}).get("stop_reason")
                         if j.get("usage"):
                             yield {"type": "stats", "tokens": j["usage"].get("output_tokens"), "prompt_tokens": a_in or None}
-                            yield {"type": "usage", "input": a_in, "output": j["usage"].get("output_tokens") or 0}
+                            yield {"type": "usage", "input": a_in, "output": j["usage"].get("output_tokens") or 0,
+                                   **_billed(j["usage"])}
                     elif t == "error":
                         raise ProviderError(j.get("error", {}).get("message", "error"))
             uses = [b for _, b in sorted(blocks.items()) if b.get("type") == "tool_use"]

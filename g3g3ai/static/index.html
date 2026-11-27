@@ -65,6 +65,7 @@
         <div class="chat-main">
           <div id="messages"></div>
           <div class="composer-wrap">
+            <div id="queue" class="queue hidden" aria-live="polite"></div>
             <div class="composer">
               <div id="attachments" class="chips"></div>
               <textarea id="input" rows="1" placeholder="¿En qué puedo ayudarte?"></textarea>
@@ -111,6 +112,7 @@
                 <div class="right-tools">
                   <button id="fav-btn" class="fav-btn" title="Marcar este modelo como favorito" aria-label="Favorito">☆</button>
                   <select id="model-select" title="Modelo" aria-label="Modelo"></select>
+                  <button id="usage-chip" class="usage-chip hidden" title="Uso del plan y gasto" aria-label="Uso del plan y gasto"></button>
                   <button id="model-btn" class="model-btn" title="Elegir modelo (Ctrl+Mayús+M)" aria-haspopup="listbox"><span class="mb-name">Modelo</span><span class="mb-caret">▾</span></button>
                   <button id="mic-btn" class="icon-btn mic-btn" title="Dictar (Ctrl+Mayús+Espacio)" aria-label="Dictar" data-icon="mic"></button>
                   <button id="send-btn" class="send-btn" title="Enviar" aria-label="Enviar">↑</button>

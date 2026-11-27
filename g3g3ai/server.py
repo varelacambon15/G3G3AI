@@ -995,6 +995,47 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             mcp_mgr._sync_servers()
         return {"servers": mcp_mgr.status()}
 
+    model_info_cache: dict[str, tuple[float, dict]] = {}
+
+    @app.get("/api/models/info")
+    async def models_info(fresh: bool = False):
+        """Descripción, precios, contexto y cupos de los modelos de cada proveedor activo (lo que publique)."""
+        from .providers import model_details
+        out: dict[str, dict] = {}
+
+        async def one(p):
+            hit = model_info_cache.get(p["id"])
+            if hit and not fresh and time.time() - hit[0] < 3600:
+                return p["id"], hit[1]
+            try:
+                d = await asyncio.wait_for(model_details(provider_for(p["id"])), 20)
+            except Exception:  # noqa: BLE001  (un proveedor que no responde no impide ver los demás)
+                d = hit[1] if hit else {}
+            model_info_cache[p["id"]] = (time.time(), d)
+            return p["id"], d
+        ps = [p for p in cfg["providers"] if p.get("enabled") and (p.get("api_key") or p.get("base_url", "").startswith("http://"))]
+        for pid, d in await asyncio.gather(*(one(p) for p in ps)):
+            for mid, info in d.items():
+                out[f"{pid}::{mid}"] = info
+                if info.get("in") is not None and info.get("out") is not None:
+                    costs.KNOWN_PRICES[(pid, mid)] = (info["in"], info["out"])
+        return out
+
+    @app.get("/api/providers/{pid}/limits")
+    async def provider_limits_api(pid: str, fresh: bool = False):
+        from .providers import provider_limits
+        p = provider_for(pid) if pid != LOCAL_PROVIDER else None
+        if not p:
+            raise HTTPException(404, "Proveedor no configurado")
+        try:
+            return await provider_limits(p, fresh)
+        except ProviderError as e:
+            raise HTTPException(400, str(e)) from e
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(502, f"El proveedor respondió {e.response.status_code} al consultar el uso") from e
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"No se pudo consultar el uso: {e}") from e
+
     @app.get("/api/usage")
     async def usage(days: int = 0):
         """Tokens y coste estimado: este mes por defecto, o los últimos `days` días."""
@@ -1349,6 +1390,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             todos: list = []
             finish = None
             used_in = used_out = 0
+            billed: dict = {}
             providers_mod.SESSION.set(cid)      # cabecera de sesión de OpenCode Go (también en títulos y resúmenes)
             yield sse({"type": "start", "conversation_id": cid})
             if pid == LOCAL_PROVIDER and not llama.ready:   # se escribió sin modelo cargado: se carga solo
@@ -1436,6 +1478,11 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             if ev["type"] == "usage":
                                 used_in += ev["input"] or 0
                                 used_out += ev["output"] or 0
+                                for k in ("cost", "allowance", "list_cost"):
+                                    if ev.get(k) is not None:
+                                        billed[k] = billed.get(k, 0.0) + ev[k]
+                                if ev.get("billing"):
+                                    billed["billing"] = ev["billing"]
                                 continue
                             if ev["type"] == "finish":
                                 finish = ev["reason"]
@@ -1485,8 +1532,12 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             "files": [f for f in dict.fromkeys(out_files) if Path(f).is_file()] or None, "todos": todos or None, "mode": perm_mode,
                             "finish": finish, "log": gen_log or None, "elapsed": round(time.time() - t_start, 1),
                             "usage": ({"in": used_in, "out": used_out,
-                                       "cost": costs.cost_of(cfg, route["provider"] if route else pid,
-                                                             route["model"] if route else model, used_in, used_out)}
+                                       # lo que cobró el proveedor si lo dice; si no, la estimación con los precios
+                                       "cost": billed["cost"] if "cost" in billed else costs.cost_of(
+                                           cfg, route["provider"] if route else pid, route["model"] if route else model,
+                                           used_in, used_out),
+                                       **({"reported": True} if "cost" in billed else {}),
+                                       **{k: round(v, 6) if isinstance(v, float) else v for k, v in billed.items() if k != "cost"}}
                                       if (used_in or used_out) else None)}
                     # el modelo a veces imita el registro automático del historial: no se guarda como texto suyo
                     content = re.sub(r"\s*<registro_de_herramientas>.*?(?:</registro_de_herramientas>|$)", "", content, flags=re.S).rstrip()

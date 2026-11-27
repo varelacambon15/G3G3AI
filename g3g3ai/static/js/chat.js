@@ -272,7 +272,7 @@ async function openConversation(id, focusMsg, q) {
   S.workdir = undefined;
   S.projectId = S.conv.project_id || null;
   if (focusMsg) { const k = S.conv.messages.findIndex((m) => String(m.id) === String(focusMsg)); if (k >= 0) S.focusIndex = k; }
-  renderMessages(); renderConvList(); refreshChanges(); refreshContext(); renderProjectChip();
+  renderMessages(); renderConvList(); refreshChanges(); refreshContext(); renderProjectChip(); renderQueue();
   if (focusMsg) requestAnimationFrame(() => {      // desde la búsqueda: ir al mensaje y resaltarlo
     const el = $(`#messages .msg[data-id="${focusMsg}"]`); if (!el) return;
     el.scrollIntoView({ block: "center" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2400);
@@ -287,7 +287,7 @@ function newChat() {
   if (S.live) S.live.isNew = false;
   S.openSeq = (S.openSeq || 0) + 1;                     // una apertura pendiente ya no debe pisar la nueva
   S.convId = null; S.conv = null; S.system = undefined; S.projectId = null; store.set(convKey(), null); renderProjectChip();
-  renderMessages(); loadConversations(); closeSide(); $("#top-title").textContent = "";
+  renderMessages(); loadConversations(); closeSide(); $("#top-title").textContent = ""; renderQueue();
   if (!isMobile()) $("#input").focus();
 }
 $("#new-chat").addEventListener("click", () => { setView(S.code ? "code" : "chat", true); newChat(); });
@@ -675,6 +675,8 @@ function setSending(on) {
   const b = $("#send-btn");
   b.innerHTML = ""; b.append(ico(on ? "stop" : "arrowUp")); b.classList.toggle("stop", on);
   b.title = on ? "Detener" : "Enviar"; b.dataset.state = on ? "sending" : "idle";
+  if (on && typeof syncSendButton === "function") syncSendButton();
+  if (typeof renderQueue === "function" && S.queue) renderQueue();
 }
 const input = $("#input");
 input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; });
@@ -813,16 +815,14 @@ document.addEventListener("keydown", (e) => {
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !matchMedia("(pointer: coarse)").matches) {
     e.preventDefault();
-    if (S.streaming) {  // mientras trabaja se puede ir escribiendo: el mensaje se envía al terminar
-      const t = input.value.trim();
-      if (t) { S.queued = t; input.value = ""; input.style.height = "auto"; toast("En cola: se enviará cuando termine (Esc para detener)", 3500); }
-      return;
-    }
+    if (S.streaming) { enqueueComposer(); return; }   // mientras trabaja se puede seguir escribiendo: va a la cola
     $("#send-btn").click();
   }
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && S.streaming && !document.querySelector("dialog[open]")) { S.queued = null; S.streaming.abort(); toast("Detenido"); }
+  if (e.key === "Escape" && S.streaming && !document.querySelector("dialog[open]")) {
+    S.stopped = true; S.streaming.abort(); toast(queueFor().length ? "Detenido. Lo que está en cola espera a que lo envíes" : "Detenido");
+  }
   if (e.key === "Tab" && e.shiftKey && document.activeElement === input) {  // Mayús+Tab: cambia el modo de permisos
     e.preventDefault();
     const m = $("#mode-select"), order = ["normal", "edits", "plan"];
@@ -832,18 +832,81 @@ document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); setView(S.code ? "code" : "chat"); newChat(); }
 });
 $("#send-btn").addEventListener("click", () => {
-  if (S.streaming) { S.streaming.abort(); return; }
+  if (S.streaming) {
+    if (input.value.trim() || S.attachments.length) { enqueueComposer(); return; }   // hay algo escrito: a la cola
+    S.stopped = true; S.streaming.abort(); return;
+  }
   const text = input.value.trim();
   if (!text && !S.attachments.length) return;
   const att = S.attachments.map((a) => a.path);
+  input.value = ""; input.style.height = "auto"; S.attachments = []; renderAttachments(); syncSendButton();
+  dispatchMessage(text, att);
+});
+// Envía un texto (con /comandos) y adjuntos
+function dispatchMessage(text, att) {
   let outgoing = text;
   if (text.startsWith("/")) {
     const r = runSlash(text);
-    if (r !== null) { input.value = ""; input.style.height = "auto"; if (!r) return; outgoing = r; }
+    if (r !== null) { if (!r) return; outgoing = r; }
   }
-  input.value = ""; input.style.height = "auto"; S.attachments = []; renderAttachments();
   send(outgoing, att);
-});
+}
+
+// --- Cola de mensajes (como en Claude Code) ------------------------------------------------------
+// Mientras la IA responde puedes seguir escribiendo: cada mensaje queda en la cola, a la vista, y se envía
+// solo al terminar. «Enviar ahora» corta la respuesta en curso y lo manda ya; también se puede editar o quitar.
+S.queue = [];
+const qConv = (q) => q.conv || q.live?.conv || null;
+function queueFor(cid = S.convId) { return S.queue.filter((q) => qConv(q) === (cid || null) || (!qConv(q) && q.live && q.live === S.live && !cid)); }
+function enqueueComposer() {
+  const text = input.value.trim(), att = S.attachments.map((a) => a.path);
+  if (!text && !att.length) return;
+  S.queue.push({ id: Math.random().toString(36).slice(2), text, att, conv: S.convId || null, live: S.live });
+  input.value = ""; input.style.height = "auto"; S.attachments = []; renderAttachments();
+  renderQueue(); syncSendButton();
+}
+function renderQueue() {
+  const box = $("#queue"), items = queueFor();
+  box.classList.toggle("hidden", !items.length);
+  box.replaceChildren(...items.map((q, i) => h("div", { class: "queue-item", "data-id": q.id },
+    h("span", { class: "q-badge", title: "En cola" }, String(i + 1)),
+    h("span", { class: "q-text", title: q.text }, q.text || "(sólo adjuntos)",
+      q.att.length ? h("small", { class: "muted" }, ` · ${q.att.length} adjunto${q.att.length > 1 ? "s" : ""}`) : null),
+    h("span", { class: "q-acts" },
+      h("button", { class: "ghost small q-now", title: S.streaming ? "Detener la respuesta actual y enviar este mensaje ya" : "Enviar este mensaje",
+        onclick: () => sendQueuedNow(q.id) }, ico("arrowUp"), S.streaming ? "Enviar ahora" : "Enviar"),
+      h("button", { class: "icon-btn", title: "Editar (vuelve al cuadro de texto)", "aria-label": "Editar", onclick: () => {
+        S.queue = S.queue.filter((x) => x !== q);
+        input.value = q.text + (input.value ? "\n" + input.value : ""); input.dispatchEvent(new Event("input")); input.focus();
+        for (const p of q.att) addAttachment(p);
+        renderQueue(); syncSendButton();
+      } }, ico("pencil")),
+      h("button", { class: "icon-btn", title: "Quitar de la cola", "aria-label": "Quitar de la cola", onclick: () => { S.queue = S.queue.filter((x) => x !== q); renderQueue(); } }, ico("x"))))));
+}
+function sendQueuedNow(id) {
+  const q = S.queue.find((x) => x.id === id); if (!q) return;
+  S.queue = [q, ...S.queue.filter((x) => x !== q)];            // pasa la primera
+  if (S.streaming) { S.sendNow = true; S.streaming.abort(); }  // al cortarse, el final de send() la manda
+  else { S.queue.shift(); renderQueue(); dispatchMessage(q.text, q.att); }
+}
+// Al acabar una respuesta: si no la paraste tú, se envía lo siguiente de la cola de esa conversación
+function nextFromQueue(conv) {
+  const stopped = S.stopped && !S.sendNow; S.stopped = false; S.sendNow = false;
+  renderQueue();
+  if (stopped || S.streaming || S.convId !== conv) return;
+  const q = queueFor(conv)[0]; if (!q) return;
+  S.queue = S.queue.filter((x) => x !== q); renderQueue();
+  setTimeout(() => dispatchMessage(q.text, q.att), 150);
+}
+// El botón: ■ para detener; ↑ si hay algo escrito (se pone en cola)
+function syncSendButton() {
+  const b = $("#send-btn");
+  if (!S.streaming) return;
+  const typed = !!(input.value.trim() || S.attachments.length);
+  b.innerHTML = ""; b.append(ico(typed ? "arrowUp" : "stop")); b.classList.toggle("stop", !typed);
+  b.title = typed ? "Poner en cola (se envía al terminar)" : "Detener";
+}
+input.addEventListener("input", syncSendButton);
 
 // --- Leer en voz alta (voces del sistema) --------------------------------------------------------
 function plainForSpeech(md) {
@@ -1014,6 +1077,7 @@ async function send(text, attachments, isContinue = false) {
         const ev = JSON.parse(chunk.slice(5));
         if (ev.type === "start") {
           live.conv = ev.conversation_id; extra.reading = 0;
+          for (const q of S.queue) if (!q.conv && q.live === live) q.conv = live.conv;
           if (!S.convId && live.isNew) { S.convId = ev.conversation_id; store.set(convKey(live.space), S.convId); }
           loadConversations();
         }
@@ -1067,8 +1131,9 @@ async function send(text, attachments, isContinue = false) {
     if (errorMsg && (here || !live.conv)) showChatError(errorMsg);
     if (document.hidden) systemNotify(errorMsg ? "G3G3AI: no se pudo responder" : "G3G3AI ha respondido",
       errorMsg || plainForSpeech(content).slice(0, 180) || "La respuesta está lista");
-    refreshContext();
-    if (S.queued) { const q = S.queued; S.queued = null; setTimeout(() => send(q, []), 200); }
+    refreshContext(); refreshUsage(true);
+    for (const q of S.queue) if (!q.conv && q.live === live) q.conv = live.conv;   // la conversación ya tiene id
+    nextFromQueue(live.conv);
   }
 }
 

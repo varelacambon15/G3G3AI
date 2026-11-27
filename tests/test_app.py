@@ -3041,3 +3041,39 @@ def test_pins_sync_and_team_per_project(tmp_path):
     assert TM.for_project(general, saved, {"team_id": "none"}) is None
     assert TM.for_project(general, saved, None) is general
     assert TM.for_project({"enabled": False, "members": []}, saved, {}) is None
+
+
+def test_provider_usage_limits_and_model_info(monkeypatch):
+    import asyncio
+    import httpx
+    from g3g3ai import providers as P
+
+    def handler(req):
+        if req.url.path.endswith("/usage"):
+            assert req.headers["authorization"] == "Bearer k"
+            return httpx.Response(200, json={"usage": {
+                "rolling": {"status": "ok", "percent": 30, "resetsAt": "2026-11-21T15:00:00.000Z"},
+                "weekly": {"status": "rate-limited", "percent": 100, "resetsAt": "2026-11-23T00:00:00.000Z"},
+                "monthly": {"status": "ok", "percent": 50, "resetsAt": "2026-12-01T00:00:00.000Z"}}})
+        if req.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "glm-5.3-flash", "name": "GLM-5.3-Flash", "description": "Rápido",
+                "limit": {"context": 1000000}, "modalities": {"input": ["text", "image/png"]},
+                "cost": {"text": {"input": {"price": 0.15, "cache": {"read": 0.03}}, "output": {"price": 0.5}}},
+                "go": {"monthly_usage": {"go": 60, "go-plus": 240}, "training": False, "zdr": True}}]})
+        return httpx.Response(404)
+    real = httpx.AsyncClient
+    monkeypatch.setattr(P.httpx, "AsyncClient", lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)}))
+    p = {"id": "go", "type": "openai", "base_url": "https://opencode.ai/zen/go/v1", "api_key": "k"}
+    r = asyncio.run(P.provider_limits(p, fresh=True))
+    assert r["kind"] == "opencode-go" and [m["percent"] for m in r["meters"]] == [30, 100, 50]
+    assert r["meters"][1]["status"] == "rate-limited" and r["meters"][0]["name"] == "5 horas"
+    info = asyncio.run(P.model_details(p))["glm-5.3-flash"]
+    assert info["in"] == 0.15 and info["out"] == 0.5 and info["cache_read"] == 0.03 and info["ctx"] == 1000000
+    assert info["vision"] and info["go"]["monthly"]["go"] == 60 and info["desc"] == "Rápido"
+    assert asyncio.run(P.provider_limits({"id": "x", "type": "openai", "base_url": "https://api.groq.com/openai/v1"}))["kind"] is None
+    # Lo que cobra el proveedor viene en usage.cost / usage.opencode
+    b = P._billed({"cost": 0, "opencode": {"billing_source": "go", "allowance": 0.012, "list_cost": 0.02}})
+    assert b == {"cost": 0.0, "allowance": 0.012, "list_cost": 0.02, "billing": "go"}
+    # OpenRouter: precio por token → por millón
+    assert P.parse_model_info({"id": "a", "pricing": {"prompt": "0.000002", "completion": "0.00001"}, "context_length": 8000}) == \
+        {"in": 2.0, "out": 10.0, "ctx": 8000}

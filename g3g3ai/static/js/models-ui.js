@@ -167,6 +167,7 @@ function updateModelBtn() {
   b.disabled = auto;
 }
 function pickModel(value) {
+  setTimeout(() => refreshUsage(), 0);
   const sel = $("#model-select");
   if (![...sel.options].some((o) => o.value === value)) renderModelSelect(value);   // un modelo oculto también se puede elegir
   sel.value = value; sel.dispatchEvent(new Event("change"));
@@ -174,7 +175,7 @@ function pickModel(value) {
   store.set("recent_models", rec);
   updateModelBtn(); closeModelPicker();
 }
-function closeModelPicker() { $("#model-picker")?.remove(); document.removeEventListener("mousedown", pickerOutside, true); }
+function closeModelPicker() { const c = $("#mp-card"); if (c) c.remove(); $("#model-picker")?.remove(); document.removeEventListener("mousedown", pickerOutside, true); }
 function pickerOutside(e) { if (!e.target.closest("#model-picker") && !e.target.closest("#model-btn")) closeModelPicker(); }
 function openModelPicker() {
   if ($("#model-picker")) { closeModelPicker(); return; }
@@ -189,7 +190,8 @@ function openModelPicker() {
   let rows = [], hi = 0;
   const row = (m) => {
     const fav = MS.favs.includes(m.value);
-    const el = h("div", { class: "mp-row" + (m.value === cur ? " cur" : ""), role: "option", onclick: () => pickModel(m.value) },
+    const el = h("div", { class: "mp-row" + (m.value === cur ? " cur" : ""), role: "option", onclick: () => pickModel(m.value),
+      onmouseenter: () => showModelInfo(m, el, pop) },
       h("span", { class: "mp-ico" }, ico(m.pid === "local" ? "cpu" : "globe")),
       h("span", { class: "mp-name" }, h("b", {}, shortModel(m)), h("small", {}, m.group)),
       m.value === cur ? h("span", { class: "mp-check" }, ico("check")) : null,
@@ -226,7 +228,11 @@ function openModelPicker() {
     hi = Math.max(0, rows.findIndex((r) => r.value === cur)); if (q) hi = 0;
     mark();
   };
-  const mark = () => rows.forEach((r, i) => { r.el.classList.toggle("hi", i === hi); if (i === hi) r.el.scrollIntoView({ block: "nearest" }); });
+  const mark = () => rows.forEach((r, i) => {
+    r.el.classList.toggle("hi", i === hi);
+    if (i === hi) { r.el.scrollIntoView({ block: "nearest" }); const m = MS.catalog.find((x) => x.value === r.value); if (m) showModelInfo(m, r.el, pop); }
+  });
+  loadModelInfo().then(() => { if ($("#model-picker") === pop) mark(); });
   search.addEventListener("input", draw);
   search.addEventListener("keydown", (e) => {
     if (e.key === "ArrowDown") { e.preventDefault(); hi = Math.min(rows.length - 1, hi + 1); mark(); }
@@ -427,3 +433,146 @@ $("#undo-btn").addEventListener("click", async () => {
   } catch (e) { toast(e.message); }
   refreshChanges();
 });
+
+// --- Uso del plan y gasto (OpenCode Go, OpenRouter, DeepSeek…) -------------------------------------------
+// Junto al selector de modelo: lo consumido del plan (5 h, semana, mes) o el saldo, según lo que diga el proveedor.
+const USAGE = { pid: null, data: null, ticket: 0 };
+const until = (iso) => {
+  if (!iso) return "";
+  const ms = new Date(iso) - Date.now(); if (!(ms > 0)) return "ya";
+  const m = Math.round(ms / 60000), hh = Math.floor(m / 60), dd = Math.floor(hh / 24);
+  return dd >= 1 ? `en ${dd} d ${hh % 24} h` : hh >= 1 ? `en ${hh} h ${m % 60} min` : `en ${m} min`;
+};
+const money = (v) => v == null ? "—" : v < 0.01 && v > 0 ? `$${v.toFixed(4)}` : `$${v.toFixed(2)}`;
+async function refreshUsage(fresh = false) {
+  const chip = $("#usage-chip"); if (!chip) return;
+  const { provider } = currentModel();
+  if (!provider || provider === "local" || provider === "auto") { chip.classList.add("hidden"); USAGE.pid = null; return; }
+  const t = ++USAGE.ticket;
+  let d = null;
+  try { d = await api(`/api/providers/${encodeURIComponent(provider)}/limits` + (fresh ? "?fresh=true" : "")); } catch { d = null; }
+  if (t !== USAGE.ticket) return;
+  USAGE.pid = provider; USAGE.data = d;
+  if (!d || !d.kind) { chip.classList.add("hidden"); return; }
+  chip.classList.remove("hidden");
+  if (d.meters?.length) {
+    const top = d.meters.reduce((a, b) => (b.percent > a.percent ? b : a));
+    chip.textContent = `${top.percent} %`;
+    chip.dataset.level = top.status === "rate-limited" || top.percent >= 90 ? "full" : top.percent >= 70 ? "high" : "ok";
+    chip.title = d.meters.map((m) => `${m.name}: ${m.percent} % (se reinicia ${until(m.resets_at)})`).join("\n");
+  } else if (d.credits) {
+    const c = d.credits;
+    chip.textContent = c.remaining != null ? money(c.remaining) : money(c.used);
+    chip.dataset.level = c.remaining != null && c.remaining < 1 ? "high" : "ok";
+    chip.title = c.remaining != null ? `Saldo que queda: ${money(c.remaining)}` : `Gastado: ${money(c.used)}`;
+  }
+}
+function closeUsagePanel() { const p = document.querySelector(".usage-pop"); if (p) p.remove(); }
+async function openUsagePanel() {
+  closeUsagePanel();
+  const { provider } = currentModel();
+  const pop = h("div", { class: "usage-pop", role: "dialog", "aria-label": "Uso y gasto" }, h("p", { class: "muted" }, "Consultando…"));
+  $(".composer").append(pop); fitPicker(pop);
+  const close = (ev) => { if (!pop.contains(ev.target) && ev.target !== $("#usage-chip")) { closeUsagePanel(); document.removeEventListener("mousedown", close, true); } };
+  setTimeout(() => document.addEventListener("mousedown", close, true), 0);
+  let lim = null, err = null, month = null;
+  try { lim = await api(`/api/providers/${encodeURIComponent(provider)}/limits?fresh=true`); } catch (e) { err = e.message; }
+  try { month = await api("/api/usage"); } catch { /* */ }
+  const pname = (S.providers || []).find((p) => p.id === provider)?.name || provider;
+  pop.innerHTML = "";
+  pop.append(h("div", { class: "dialog-head" }, h("b", {}, `Uso · ${pname}`),
+    h("button", { class: "icon-btn", "aria-label": "Cerrar", onclick: closeUsagePanel }, ico("x"))));
+  if (err) pop.append(h("p", { class: "warn-text" }, err));
+  for (const m of lim?.meters || []) {
+    const lvl = m.status === "rate-limited" || m.percent >= 90 ? "full" : m.percent >= 70 ? "high" : "ok";
+    pop.append(h("div", { class: "meter" },
+      h("div", { class: "meter-head" }, h("span", {}, m.name), h("b", {}, m.status === "rate-limited" ? "Agotado" : `${m.percent} %`)),
+      h("div", { class: "meter-bar", "data-level": lvl }, h("span", { style: `width:${Math.min(100, m.percent)}%` })),
+      h("small", { class: "muted" }, `Se reinicia ${until(m.resets_at)}` + (m.resets_at ? ` (${new Date(m.resets_at).toLocaleString()})` : ""))));
+  }
+  if (lim?.kind === "opencode-go") pop.append(h("p", { class: "muted small" },
+    "El límite de 5 horas es el 20 % del cupo mensual y el semanal el 50 % (se reinicia los lunes a las 00:00 UTC). Todos los modelos de Go comparten el mismo cupo; los gratuitos no lo gastan."));
+  if (lim?.credits) {
+    const c = lim.credits;
+    pop.append(h("div", { class: "meter" }, ...[
+      c.remaining != null ? h("div", { class: "meter-head" }, h("span", {}, "Saldo disponible"), h("b", {}, money(c.remaining))) : null,
+      c.used != null ? h("div", { class: "meter-head" }, h("span", {}, "Gastado en la cuenta"), h("b", {}, money(c.used))) : null,
+      c.limit != null ? h("div", { class: "meter-head" }, h("span", {}, "Límite de la clave"), h("b", {}, money(c.limit))) : null].filter(Boolean)));
+  }
+  const pm = month?.providers?.[provider];
+  if (pm) {
+    const rows = [["Respuestas este mes", String(pm.calls)]];
+    if (pm.allowance) rows.push(["Descontado del cupo del plan", money(pm.allowance)]);
+    rows.push(["Cobrado (fuera del plan)", money(pm.cost)]);
+    if (pm.list_cost) rows.push(["Valor a precio normal", money(pm.list_cost)]);
+    pop.append(h("div", { class: "usage-month" }, h("b", {}, "Desde G3G3AI este mes"),
+      ...rows.map(([k, v]) => h("div", { class: "meter-head" }, h("span", {}, k), h("span", {}, v)))));
+  }
+  if (month?.budget) pop.append(h("p", { class: "muted small" }, `Gasto total del mes: ${money(month.total.cost)} de tu límite de ${money(month.budget)}.`));
+  fitPicker(pop);
+  refreshUsage();
+}
+$("#usage-chip").addEventListener("click", openUsagePanel);
+$("#model-select").addEventListener("change", () => refreshUsage());
+setInterval(() => { if (!document.hidden && USAGE.pid) refreshUsage(); }, 120000);
+
+// --- Ficha de cada modelo (descripción, precios, contexto, cupo del plan) ----------------------------
+MS.info = MS.info || null;
+let modelInfoLoading = null;
+function loadModelInfo() {
+  if (MS.info) return Promise.resolve(MS.info);
+  if (!modelInfoLoading) modelInfoLoading = api("/api/models/info").then((d) => (MS.info = d || {})).catch(() => (MS.info = {}));
+  return modelInfoLoading;
+}
+const fmtTok = (n) => n >= 1e6 ? `${+(n / 1e6).toFixed(n % 1e6 ? 1 : 0)} M` : n >= 1000 ? `${Math.round(n / 1000)} k` : String(n);
+const fmtPrice = (v) => v == null ? "?" : v === 0 ? "gratis" : `$${v < 0.1 ? v.toFixed(3) : v < 10 ? v.toFixed(2) : v.toFixed(0)}`;
+function modelInfoCard(m) {
+  const i = (MS.info || {})[m.value] || {};
+  const card = h("div", { class: "mp-card-in" });
+  card.append(h("b", {}, i.name || shortModel(m)), h("small", { class: "muted" }, m.group));
+  if (m.pid === "local") {
+    card.append(h("p", {}, "Se ejecuta en tu equipo con llama.cpp: gratis, sin Internet y privado (nada sale del ordenador)."),
+      h("p", { class: "muted small" }, "Más lento y menos capaz que los grandes modelos por API; ideal para lo privado o sin conexión. Se cambia en «Modelos»."));
+    return card;
+  }
+  if (i.desc) card.append(h("p", {}, i.desc));
+  const facts = [];
+  if (i.in != null || i.out != null) {
+    facts.push(["Precio", i.in === 0 && i.out === 0 ? "Gratis" : `${fmtPrice(i.in)} entrada · ${fmtPrice(i.out)} salida (por millón de tokens)`]);
+    if (i.cache_read != null) facts.push(["Caché", `${fmtPrice(i.cache_read)} por millón al releer contexto repetido`]);
+    if (i.peak) facts.push(["Horas punta", "puede costar más en ciertas franjas"]);
+  }
+  if (i.ctx) facts.push(["Contexto", `${fmtTok(i.ctx)} tokens` + (i.out_max ? ` · respuesta hasta ${fmtTok(i.out_max)}` : "")]);
+  const can = [i.vision ? "imágenes" : null, i.pdf ? "PDF" : null, i.tools ? "herramientas" : null, i.reasoning ? "razona" : null].filter(Boolean);
+  if (can.length) facts.push(["Admite", can.join(" · ")]);
+  if (i.go) {
+    const mu = i.go.monthly;
+    const val = typeof mu === "number" ? mu : mu && typeof mu === "object" ? (mu.go ?? Object.values(mu)[0]) : null;
+    if (typeof val === "number") facts.push(["Cupo en Go", `$${val}/mes si sólo usas este modelo (≈ $${(val / 5).toFixed(0)} cada 5 h)` + (mu && typeof mu === "object" && mu["go-plus"] ? ` · Go Plus $${mu["go-plus"]}` : "")]);
+    if (i.go.training) facts.push(["⚠ Privacidad", "entrena con tus peticiones"]);
+    else if (i.go.zdr) facts.push(["Privacidad", "no guarda tus datos"]);
+    if (i.go.limited_regions) facts.push(["Regiones", "no disponible en algunos países"]);
+  }
+  if (i.knowledge) facts.push(["Conocimiento hasta", i.knowledge]);
+  if (i.open_weights) facts.push(["Pesos abiertos", "sí"]);
+  if (facts.length) card.append(h("dl", { class: "mp-facts" }, ...facts.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])));
+  if (!i.desc && !facts.length) card.append(h("p", { class: "muted small" }, MS.info ? "Este proveedor no publica descripción ni precios de sus modelos." : "Cargando información…"));
+  return card;
+}
+function showModelInfo(m, row, pop) {
+  if (!pop || !pop.isConnected) return;
+  let card = $("#mp-card");
+  if (!card) { card = h("div", { id: "mp-card", class: "mp-card", role: "tooltip" }); document.body.append(card); }
+  card.replaceChildren(modelInfoCard(m));
+  const pr = pop.getBoundingClientRect(), rr = row.getBoundingClientRect(), w = 300;
+  card.style.width = w + "px";
+  if (pr.left > w + 16) {                         // a la izquierda del selector, a la altura de la fila
+    card.style.left = (pr.left - w - 10) + "px";
+    card.style.top = Math.max(8, Math.min(rr.top - 8, innerHeight - card.offsetHeight - 8)) + "px";
+  } else {                                        // pantalla estrecha: encima o debajo del selector
+    card.style.left = Math.max(8, pr.left) + "px";
+    card.style.width = Math.min(w, innerWidth - 16) + "px";
+    const above = pr.top - card.offsetHeight - 8;
+    card.style.top = (above > 8 ? above : Math.min(innerHeight - card.offsetHeight - 8, pr.bottom + 8)) + "px";
+  }
+}

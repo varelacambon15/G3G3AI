@@ -33,6 +33,9 @@ def parse_prices(lines) -> dict[str, tuple[float, float]]:
     return out
 
 
+KNOWN_PRICES: dict[tuple[str, str], tuple[float, float]] = {}   # los que publica el proveedor en su lista de modelos
+
+
 def price_for(cfg, provider: str, model: str) -> tuple[float, float] | None:
     if provider in ("local", "ollama") or not model:
         return (0.0, 0.0)
@@ -41,6 +44,8 @@ def price_for(cfg, provider: str, model: str) -> tuple[float, float] | None:
     for key, pr in custom.items():
         if key in name:
             return pr
+    if (provider, model) in KNOWN_PRICES:
+        return KNOWN_PRICES[(provider, model)]
     for pat, pin, pout in DEFAULT_PRICES:
         if re.search(pat, name):
             return (pin, pout)
@@ -69,7 +74,10 @@ def summary(db, cfg, since: float | None = None) -> dict:
         if not u:
             continue
         key = f"{r['meta'].get('provider', '?')} · {r['meta'].get('model', '?')}"
-        m = models.setdefault(key, {"input": 0, "output": 0, "cost": 0.0, "unpriced": False, "calls": 0})
+        m = models.setdefault(key, {"input": 0, "output": 0, "cost": 0.0, "unpriced": False, "calls": 0,
+                                    "allowance": 0.0, "list_cost": 0.0, "provider": r["meta"].get("provider")})
+        m["allowance"] += u.get("allowance") or 0
+        m["list_cost"] += u.get("list_cost") or 0
         m["input"] += u.get("in", 0)
         m["output"] += u.get("out", 0)
         m["calls"] += 1
@@ -78,7 +86,14 @@ def summary(db, cfg, since: float | None = None) -> dict:
         else:
             m["cost"] += u["cost"]
     total = {"input": sum(m["input"] for m in models.values()), "output": sum(m["output"] for m in models.values()),
-             "cost": sum(m["cost"] for m in models.values())}
+             "cost": sum(m["cost"] for m in models.values()),
+             "allowance": sum(m["allowance"] for m in models.values()),
+             "list_cost": sum(m["list_cost"] for m in models.values())}
+    by_provider: dict[str, dict] = {}
+    for m in models.values():
+        b = by_provider.setdefault(m["provider"] or "?", {"cost": 0.0, "allowance": 0.0, "list_cost": 0.0, "calls": 0})
+        for k in ("cost", "allowance", "list_cost", "calls"):
+            b[k] += m[k]
     limit = float(cfg["monthly_budget_usd"] or 0)
-    return {"since": since, "models": models, "total": total, "budget": limit,
+    return {"since": since, "models": models, "total": total, "providers": by_provider, "budget": limit,
             "budget_pct": round(100 * total["cost"] / limit) if limit else None}
