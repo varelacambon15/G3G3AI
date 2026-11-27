@@ -1276,6 +1276,11 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
 
         async def gen():
             content, reasoning, trace, stats, route = "", "", [], {}, None
+            t_start, gen_log = time.time(), []     # registro de la respuesta (botón «Detalles»): qué pasó y cuándo
+
+            def log_note(text: str):
+                if len(gen_log) < 200:
+                    gen_log.append({"t": round(time.time() - t_start, 1), "text": str(text)[:300]})
             made: list[str] = []
             out_files: list[str] = []
             todos: list = []
@@ -1315,6 +1320,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                     p = provider_for(cpid)
                     shown = (llama.status()["model"] or "local") if cpid == LOCAL_PROVIDER else cmodel
                     route = {"provider": cpid, "model": shown, "reason": why}
+                    log_note(f"Modelo: {shown} ({'local' if cpid == LOCAL_PROVIDER else cpid})" + (f" — {why}" if why else ""))
                     if why:
                         yield sse({"type": "route", **route})
                     ctx = make_ctx(cpid, cmodel)
@@ -1387,10 +1393,22 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                                 out_files.append(ev["path"])
                             elif ev["type"] == "stats":
                                 stats.update({k: v for k, v in ev.items() if v is not None and k != "type"})
+                            if ev["type"] == "status":
+                                log_note(ev["text"])
+                            elif ev["type"] == "tool_call":
+                                log_note("Herramienta: " + str(ev.get("name")))
+                            elif ev["type"] == "tool_result" and str(ev.get("result", "")).startswith(("Error", "Denegado", "El usuario")):
+                                log_note(f"{ev.get('name')} → {str(ev.get('result'))[:160]}")
+                            elif ev["type"] == "retract":
+                                log_note("Se retiró texto del modelo (llamada escrita como texto o respuesta descontrolada)")
+                            elif ev["type"] == "approval":
+                                log_note("Pide permiso: " + str(ev.get("name")))
                             yield sse(ev)
+                        log_note("Respuesta terminada" + (f" ({finish})" if finish and finish != "stop" else ""))
                         break
                     except (ProviderError, httpx.HTTPError, RuntimeError) as e:
                         msg = str(e) or type(e).__name__
+                        log_note("Error: " + msg)
                         if content or trace or i == len(candidates) - 1:
                             yield sse({"type": "error", "message": msg})
                             break
@@ -1402,7 +1420,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             "route": route.get("reason") if route else None,
                             "stats": stats, "tools": trace or None, "images": made or None,
                             "files": out_files or None, "todos": todos or None, "mode": perm_mode,
-                            "finish": finish,
+                            "finish": finish, "log": gen_log or None, "elapsed": round(time.time() - t_start, 1),
                             "usage": ({"in": used_in, "out": used_out,
                                        "cost": costs.cost_of(cfg, route["provider"] if route else pid,
                                                              route["model"] if route else model, used_in, used_out)}

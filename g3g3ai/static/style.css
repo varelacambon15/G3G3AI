@@ -724,3 +724,8 @@ code.path-link:hover { background: var(--hover); }
 .perm-menu button.on { background: var(--hover); }
 .perm-menu .pm-ico { width: 22px; text-align: center; font-size: 16px; }
 .perm-menu .pm-text { display: flex; flex-direction: column; gap: 2px; } .perm-menu .pm-text small { color: var(--muted); font-size: 12px; line-height: 1.35; }
+
+.log-dialog { width: min(620px, calc(100vw - 32px)); }
+.log-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 12px; max-height: 50vh; display: block; overflow-y: auto; }
+.log-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.log-table td:first-child { white-space: nowrap; font-variant-numeric: tabular-nums; width: 60px; }

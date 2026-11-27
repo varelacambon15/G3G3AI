@@ -2879,3 +2879,14 @@ def test_task_keeps_its_own_permission_level(env):
                                                    "level": "auto"}).json()
     assert t["level"] == "auto"
     assert client.patch(f"/api/tasks/{t['id']}", headers=h, json={"level": "manual"}).json()["level"] == "manual"
+
+
+def test_each_reply_keeps_a_log(env):
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    load_model(client, h)
+    evs = sse(client.post("/api/chat", headers=h, json={"message": "desbocate"}))
+    cid = next(e["conversation_id"] for e in evs if e["type"] == "start")
+    meta = client.get(f"/api/conversations/{cid}", headers=h).json()["messages"][-1]["meta"]
+    texts = [l["text"] for l in meta["log"]]
+    assert texts[0].startswith("Modelo:") and any("descontroló" in t for t in texts) and meta["elapsed"] >= 0

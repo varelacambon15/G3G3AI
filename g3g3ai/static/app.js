@@ -1421,6 +1421,7 @@ function messageEl(m, pos = -1) {
     el.append(h("div", { class: "meta" },
       h("button", { class: "act", title: "Copiar", onclick: () => { copyText(m.content); } }, ico("copy")),
       h("button", { class: "act", title: "Volver a generar (la respuesta actual se conserva)", onclick: () => regenerate(m) }, ico("retry")),
+      m.meta?.log ? h("button", { class: "act", title: "Detalles: qué hizo la IA, avisos y tiempos", onclick: () => showGenLog(m) }, ico("info")) : null,
       "speechSynthesis" in window ? h("button", { class: "act speak", title: "Leer en voz alta", onclick: (e) => speak(m.content, e.currentTarget) }, ico("speaker")) : null,
       branchNav(pos),
       m.meta?.finish ? h("button", { class: "act continue", title: "La respuesta quedó incompleta",
@@ -1761,6 +1762,26 @@ function speak(text, btn) {
   u.onend = u.onerror = () => { btn.classList.remove("on"); if (speakingBtn === btn) speakingBtn = null; };
   speakingBtn = btn; btn.classList.add("on"); btn.title = "Detener lectura";
   synth.speak(u);
+}
+
+// Registro de una respuesta: modelo, pasos, reintentos, avisos y tiempos (para entender qué pasó)
+function showGenLog(m) {
+  const meta = m.meta || {}, u = meta.usage || {}, st = meta.stats || {};
+  const rows = (meta.log || []).map((l) => h("tr", {}, h("td", { class: "muted" }, `${l.t.toFixed(1)} s`), h("td", {}, l.text)));
+  const text = [`Modelo: ${meta.model || "?"} (${meta.provider || "?"})`, `Tiempo total: ${meta.elapsed ?? "?"} s`,
+    u.in || u.out ? `Tokens: ↑${u.in || 0} ↓${u.out || 0}` + (u.cost ? ` · ~$${u.cost.toFixed(4)}` : "") : "",
+    st.tokens_per_second ? `Velocidad: ${st.tokens_per_second.toFixed(1)} tok/s` : "",
+    ...(meta.log || []).map((l) => `${l.t.toFixed(1)} s  ${l.text}`)].filter(Boolean).join("\n");
+  const dlg = h("dialog", { class: "export-dialog log-dialog" },
+    h("h3", {}, "Detalles de la respuesta"),
+    h("p", { class: "muted" }, `${meta.model || ""} · ${meta.elapsed ?? "?"} s` + (u.in || u.out ? ` · ↑${u.in || 0} ↓${u.out || 0} tokens` : "")
+      + (st.tokens_per_second ? ` · ${st.tokens_per_second.toFixed(1)} tok/s` : "")),
+    h("table", { class: "log-table" }, rows),
+    h("div", { class: "row end" },
+      h("button", { class: "ghost", onclick: () => copyText(text, "Registro copiado: pégalo donde quieras para revisarlo") }, ico("copy"), "Copiar"),
+      h("button", { class: "primary", onclick: () => dlg.close() }, "Cerrar")));
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg); dlg.showModal();
 }
 
 // Un error no debe dejar la respuesta en blanco: queda en la conversación con su causa y un botón para reintentar
