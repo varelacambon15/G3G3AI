@@ -117,7 +117,12 @@ APP_FEATURES = (
     "create_document crea Word, Excel, PowerPoint o PDF.\n"
     "- Proyectos (instrucciones y documentos compartidos), Code, Equipo de IAs, Modelos locales, búsqueda en las "
     "conversaciones, exportar una conversación (Markdown/Word/PDF), dictado por voz, Ctrl+K, copia cifrada en OneDrive/Google Drive.\n"
-    "- Los PDF escaneados y las imágenes se leen con OCR en el propio equipo.")
+    "- Los PDF escaneados y las imágenes se leen con OCR en el propio equipo.\n"
+    "- Equipo de IAs (sección «Equipo»): el modelo del chat hace de director y delega con team_delegate en hasta 8 "
+    "miembros; cada miembro tiene nombre, papel (instrucciones de hasta 600 caracteres), modelo (cualquier proveedor "
+    "configurado o el local) y herramientas «ninguna» o «sólo lectura» (leer archivos, web, correo; nunca modifica). "
+    "Los miembros no ven la conversación: el director les pasa todo el contexto. Se activa con el interruptor de la sección; "
+    "lo configura el usuario allí (tú no puedes crear miembros), pero puedes proponerle nombres, papeles y modelos concretos.")
 NO_AGENT_NOTE = (
     "## Herramientas del equipo desactivadas\n"
     "El modo Agente está desactivado en este chat: no puedes leer archivos, ejecutar comandos ni ver el hardware del "
@@ -1425,7 +1430,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             "model": route["model"] if route else model,
                             "route": route.get("reason") if route else None,
                             "stats": stats, "tools": trace or None, "images": made or None,
-                            "files": out_files or None, "todos": todos or None, "mode": perm_mode,
+                            "files": [f for f in dict.fromkeys(out_files) if Path(f).is_file()] or None, "todos": todos or None, "mode": perm_mode,
                             "finish": finish, "log": gen_log or None, "elapsed": round(time.time() - t_start, 1),
                             "usage": ({"in": used_in, "out": used_out,
                                        "cost": costs.cost_of(cfg, route["provider"] if route else pid,

@@ -196,26 +196,61 @@ def _merge_reasoning_details(acc: list, items: list) -> None:
                 cur[k] += v
             else:
                 cur[k] = v
-KEEP_TOOL_OUTPUTS = 4          # resultados de herramientas recientes que se envían completos
-TOOL_BUDGET_CHARS = 120_000    # por encima, se recortan los resultados antiguos
-OMITTED = "[Salida anterior omitida para ahorrar contexto; vuelve a ejecutar la herramienta si la necesitas.]"
+KEEP_STEPS = 2                 # los resultados de los 2 últimos pasos se envían siempre completos
+TOOL_BUDGET_CHARS = 400_000    # ~100k tokens de resultados de herramientas antes de recortar los antiguos
+TRIM_TO = 0.6                  # al recortar se baja hasta el 60 %: así se recorta pocas veces (la caché del proveedor se conserva)
+TRIM_HEAD = 800                # lo que se conserva del principio de un resultado recortado
+TRIMMED_MARK = "[… resto recortado para ahorrar contexto"
 
 
-def _trim_openai(msgs: list[dict]) -> None:
-    tool_idx = [i for i, m in enumerate(msgs) if m.get("role") == "tool"]
-    if sum(len(str(m.get("content") or "")) for m in msgs) <= TOOL_BUDGET_CHARS:
+def _trimmed(text: str) -> str:
+    return (text[:TRIM_HEAD].rstrip() + f"\n{TRIMMED_MARK} ({len(text) - TRIM_HEAD} caracteres). Ya lo usaste en un paso "
+            "anterior; si vuelves a necesitar ese detalle, léelo de nuevo (por ejemplo con start_line/max_lines).]")
+
+
+def _trim_results(holders: list[tuple[int, object, object]], budget: int) -> None:
+    """holders: (paso, contenedor, clave) de cada resultado de herramienta, en orden. Recorta los más antiguos
+    (nunca los de los últimos KEEP_STEPS pasos) sólo si los resultados superan el presupuesto."""
+    def size(h):
+        return len(str(h[1][h[2]] or ""))
+    if sum(size(h) for h in holders) <= budget:
         return
-    for i in tool_idx[:-KEEP_TOOL_OUTPUTS]:
-        msgs[i]["content"] = OMITTED
+    last = max((h[0] for h in holders), default=0)
+    total = sum(size(h) for h in holders)
+    for step, box, key in holders:
+        if total <= budget * TRIM_TO or step > last - KEEP_STEPS:
+            break
+        text = box[key]
+        if not isinstance(text, str) or len(text) <= TRIM_HEAD + 200 or TRIMMED_MARK in text:
+            continue
+        box[key] = _trimmed(text)
+        total -= len(text) - len(box[key])
 
 
-def _trim_anthropic(msgs: list[dict]) -> None:
-    if sum(len(json.dumps(m.get("content"), ensure_ascii=False)) for m in msgs) <= TOOL_BUDGET_CHARS:
-        return
-    results = [b for m in msgs if isinstance(m.get("content"), list)
-               for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
-    for b in results[:-KEEP_TOOL_OUTPUTS]:
-        b["content"] = OMITTED
+def _budget(opts: dict | None) -> int:
+    n_ctx = int((opts or {}).get("n_ctx") or 0)
+    return min(TOOL_BUDGET_CHARS, int(n_ctx * 3 * 0.5)) if n_ctx else TOOL_BUDGET_CHARS
+
+
+def _trim_openai(msgs: list[dict], budget: int = TOOL_BUDGET_CHARS) -> None:
+    holders, step = [], 0
+    for m in msgs:
+        if m.get("role") == "assistant":
+            step += 1
+        elif m.get("role") == "tool":
+            holders.append((step, m, "content"))
+    _trim_results(holders, budget)
+
+
+def _trim_anthropic(msgs: list[dict], budget: int = TOOL_BUDGET_CHARS) -> None:
+    holders, step = [], 0
+    for m in msgs:
+        if m.get("role") == "assistant":
+            step += 1
+        if isinstance(m.get("content"), list):
+            holders += [(step, blk, "content") for blk in m["content"]
+                        if isinstance(blk, dict) and blk.get("type") == "tool_result" and isinstance(blk.get("content"), str)]
+    _trim_results(holders, budget)
 
 
 def _anthropic_content(content):
@@ -338,7 +373,7 @@ async def _openai_chat(p: dict, model: str, messages: list[dict], opts: dict,
         for _ in range(steps_for(ctx)):
             # Un paso nuevo (tras herramientas o un aviso) empieza párrafo; una continuación por longitud, no.
             sep_pending, after_length = bool(tail) and not after_length, False
-            _trim_openai(msgs)
+            _trim_openai(msgs, _budget(opts))
             body = {"model": model, "messages": msgs, "stream": True,
                     "temperature": opts.get("temperature"), "max_tokens": max_tokens,
                     "stream_options": {"include_usage": True}}
@@ -543,7 +578,7 @@ async def _anthropic_chat(p: dict, model: str, messages: list[dict], opts: dict,
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=600)) as c:
         for _ in range(steps_for(ctx)):
             sep_pending, after_length = bool(tail) and not after_length, False
-            _trim_anthropic(msgs)
+            _trim_anthropic(msgs, _budget(opts))
             # Los modelos actuales de Claude piensan antes de responder y ese razonamiento cuenta en
             # max_tokens: se deja margen suficiente. Tampoco admiten temperature (devuelven 400).
             body = {"model": model, "messages": msgs, "stream": True,

@@ -2944,3 +2944,71 @@ def test_pdf_tables_respect_time_budget(tmp_path, monkeypatch):
     monkeypatch.setattr(D, "TABLES_BUDGET", -1)          # sin tiempo: se usa el lector sencillo, sin bloquear
     text = D.extract_text(p)
     assert "Calle Mayor 3" in text and "| A | B |" not in text
+
+
+def test_old_tool_results_trimmed_only_when_needed():
+    from g3g3ai import providers as P
+    big = "x" * 150_000
+    msgs = [{"role": "user", "content": "hola"}]
+    for k in range(4):
+        msgs += [{"role": "assistant", "content": "", "tool_calls": [{"id": str(k)}]},
+                 {"role": "tool", "content": f"R{k}" + big}, {"role": "tool", "content": f"S{k}" + big}]
+    P._trim_openai(msgs)
+    tools = [m["content"] for m in msgs if m["role"] == "tool"]
+    assert all(P.TRIMMED_MARK not in t for t in tools[-4:])          # los 2 últimos pasos, enteros
+    assert P.TRIMMED_MARK in tools[0] and tools[0].startswith("R0x")  # lo antiguo conserva el principio
+    small = [{"role": "assistant", "content": ""}] + [{"role": "tool", "content": "y" * 1000} for _ in range(10)]
+    P._trim_openai(small)
+    assert all(P.TRIMMED_MARK not in m["content"] for m in small[1:])    # por debajo del presupuesto no se toca nada
+
+
+def test_big_workbook_sheets_grep_and_paging(env):
+    client, cfg, home, tmp = env
+    import asyncio
+    import openpyxl
+    from g3g3ai import documents as D
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    for w in range(7, 48):
+        ws = wb.create_sheet(f"SEM {w:02d}")
+        for r in range(120):
+            ws.append([f"Trabajador {r}", 15000 + w, "obra 26227", "relleno " * 4])
+    ws["A1"] = "ROMAN MINERO LAZARO"
+    p = home / "pagos.xlsx"
+    wb.save(p)
+    text = D.extract_text(p)                     # adjunto: se recorta, pero avisando de las hojas que faltan
+    assert "DOCUMENTO RECORTADO" in text and "«SEM 47»" in text
+    ctx = ToolContext(Files(cfg), cfg)
+    r = asyncio.run(ctx.run("read_file", {"path": str(p)}))
+    assert "Hojas del libro (41)" in r and "«SEM 47»" in r and "El archivo SIGUE" in r
+    r = asyncio.run(ctx.run("read_file", {"path": str(p), "sheet": "sem 47"}))
+    assert "hoja «sem 47»" in r and "15047" in r and "15046" not in r
+    r = asyncio.run(ctx.run("grep_files", {"pattern": "MINERO", "path": str(home)}))
+    assert "pagos.xlsx" in r and "hoja «SEM 47»" in r
+
+
+def test_command_output_utf8_and_empty(env):
+    client, cfg, home, tmp = env
+    import sys
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    ctx = ToolContext(Files(cfg), cfg)
+    py = sys.executable.replace("\\", "/")
+    out = ctx._run_command({"command": f'"{py}" -c "print(\'Peña → 15.000,00 €\')"', "cwd": str(home), "unsandboxed": True})
+    assert "Peña → 15.000,00 €" in out
+    out = ctx._run_command({"command": f'"{py}" -c "pass"', "cwd": str(home), "unsandboxed": True})
+    assert "no imprimió nada" in out
+
+
+def test_scratch_scripts_are_not_offered_as_files(env):
+    client, cfg, home, tmp = env
+    import asyncio
+    from g3g3ai.files import Files
+    from g3g3ai.tools import ToolContext
+    cfg.data.update(ai_write="auto")
+    ctx = ToolContext(Files(cfg), cfg)
+    asyncio.run(ctx.run("write_file", {"path": str(home / "calc.py"), "content": "print(1)"}))
+    asyncio.run(ctx.run("write_file", {"path": str(home / "informe.md"), "content": "# hola"}))
+    assert ctx.files_out == [str(home / "informe.md")]

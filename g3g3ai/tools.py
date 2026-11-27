@@ -34,6 +34,7 @@ from .undo import UndoJournal
 
 READ_LIMIT_FOR_AI = 30_000
 OUTPUT_LIMIT = 20_000
+SCRATCH_EXT = {".py", ".js", ".ts", ".ps1", ".bat", ".cmd", ".sh", ".json", ".log", ".tmp", ".pyc", ".mjs", ".cjs"}
 TOOL_RESULT_PREVIEW = 800
 APPROVAL_TIMEOUT = 900
 
@@ -144,15 +145,20 @@ ALL_SPECS = {
     "list_dir": ("Lista archivos y carpetas de una ruta. Sin ruta = carpeta personal.",
                  _schema({"path": {"type": "string", "description": "Ruta absoluta o relativa a la carpeta personal"}})),
     "read_file": ("Lee un archivo (texto, Word, Excel, PowerPoint o PDF). Cada línea sale con su número («12: texto»): "
-                  "ese prefijo NO forma parte del archivo. Usa start_line/max_lines para archivos grandes.",
+                  "ese prefijo NO forma parte del archivo. En un Excel, el principio lista TODAS las hojas con sus líneas; "
+                  "usa sheet para leer una hoja concreta. Si la salida dice que el archivo sigue, continúa con start_line: "
+                  "no des por hecho que acaba donde se cortó.",
                   _schema({"path": {"type": "string"}, "start_line": {"type": "integer", "description": "Primera línea (desde 1)"},
-                           "max_lines": {"type": "integer", "description": "Cuántas líneas leer"}}, ["path"])),
+                           "max_lines": {"type": "integer", "description": "Cuántas líneas leer"},
+                           "sheet": {"type": "string", "description": "Excel: nombre de la hoja que quieres leer (p.ej. «SEM 47»)"}},
+                          ["path"])),
     "search_files": ("Busca archivos o carpetas por NOMBRE (admite comodines * y ?). Para buscar texto dentro de "
                      "los archivos usa grep_files.",
                      _schema({"query": {"type": "string", "description": "Texto o patrón, p.ej. '*.pdf'"},
                               "path": {"type": "string", "description": "Carpeta donde buscar (opcional)"}}, ["query"])),
     "grep_files": ("Busca un texto o una expresión regular DENTRO de los archivos de una carpeta (como grep). "
-                   "Devuelve ruta:línea: texto. Úsalo para localizar dónde se define o se usa algo antes de leer archivos enteros.",
+                   "Devuelve ruta:línea: texto. Úsalo para localizar dónde se define o se usa algo antes de leer archivos enteros. "
+                   "También busca dentro de Excel (indica la hoja), Word, PowerPoint y PDF; el número de línea es el mismo que da read_file.",
                    _schema({"pattern": {"type": "string", "description": "Texto o expresión regular"},
                             "path": {"type": "string", "description": "Carpeta o archivo donde buscar (opcional)"},
                             "glob": {"type": "string", "description": "Filtrar por nombre de archivo, p.ej. '*.py' o '*.js,*.html'"},
@@ -341,6 +347,31 @@ ALL_SPECS = {
                         "en el modelo local gratuito. Devuelve su respuesta.",
                         _schema({"prompt": {"type": "string"}}, ["prompt"])),
 }
+
+
+_DOC_CACHE: dict[tuple, str] = {}
+DOC_READ_LIMIT = 4_000_000     # read_file pagina con start_line: el documento entero se extrae una vez y se guarda
+
+
+def _doc_text(path: Path, sheet: str | None = None) -> str:
+    """Texto completo de un documento (con caché por fecha de modificación: paginar no vuelve a extraerlo)."""
+    from . import documents as D
+    key = (str(path), path.stat().st_mtime, sheet)
+    if key not in _DOC_CACHE:
+        if len(_DOC_CACHE) > 16:
+            _DOC_CACHE.clear()
+        _DOC_CACHE[key] = D.extract_text(path, DOC_READ_LIMIT, sheet)
+    return _DOC_CACHE[key]
+
+
+def _sheet_index(text: str) -> str:
+    """Índice de hojas de un Excel con sus líneas, para que la IA vaya directa a la que necesita."""
+    marks = [(i, m.group(1)) for i, l in enumerate(text.splitlines(), 1) for m in [re.match(r"--- Hoja (.+?) ---$", l)] if m]
+    if len(marks) < 2:
+        return ""
+    total = text.count("\n") + 1
+    parts = [f"«{n}» {i}–{(marks[k + 1][0] - 1) if k + 1 < len(marks) else total}" for k, (i, n) in enumerate(marks[:300])]
+    return f"Hojas del libro ({len(marks)}), con sus líneas: " + "; ".join(parts) + "\n\n"
 
 
 class ToolContext:
@@ -1034,9 +1065,13 @@ class ToolContext:
                             "(no sólo el texto), usa attach_file para mostrársela al usuario o pídele que la adjunte.]")
                 return (f"{path} es una imagen sin texto legible. Para describirla hace falta un modelo con visión: "
                         "muéstrasela al usuario con attach_file o pídele que la adjunte al chat (📎).")
+            sheet = str(a["sheet"]) if a.get("sheet") not in (None, "") else None
+            index = ""
             if kind == "document":
-                text = D.extract_text(path) or "(documento sin texto: puede ser un PDF escaneado; adjúntalo al chat)"
+                text = _doc_text(path, sheet) or "(documento sin texto: puede ser un PDF escaneado; adjúntalo al chat)"
                 res = {"path": str(path), "content": text}
+                if sheet is None:
+                    index = _sheet_index(text)
             else:
                 res = f.read_text(a["path"], 2_000_000)
                 self._mark_read(path)
@@ -1044,12 +1079,20 @@ class ToolContext:
             start = max(int(a.get("start_line") or 1), 1)
             maxl = int(a.get("max_lines") or 0)
             chunk = lines[start - 1:start - 1 + maxl] if maxl else lines[start - 1:]
-            text = "\n".join(f"{i}: {l}" for i, l in enumerate(chunk, start))
+            out, size, last = [], 0, start - 1
+            for i, l in enumerate(chunk, start):
+                row = f"{i}: {l}"
+                if size + len(row) > READ_LIMIT_FOR_AI and out:
+                    break
+                out.append(row[:READ_LIMIT_FOR_AI])
+                size += len(row) + 1
+                last = i
             note = ""
-            if len(text) > READ_LIMIT_FOR_AI:
-                text = text[:READ_LIMIT_FOR_AI]
-                note = "\n[... truncado: usa start_line/max_lines para leer el resto ...]"
-            return f"Archivo: {res['path']} ({len(lines)} líneas)\n{text}{note}"
+            if last < min(len(lines), start - 1 + maxl if maxl else len(lines)):
+                note = (f"\n[… mostradas las líneas {start}–{last} de {len(lines)}. El archivo SIGUE: para continuar, "
+                        f"read_file con start_line={last + 1}" + (" (o sheet=«nombre» para una hoja concreta)" if index else "") + ".]")
+            what = f", hoja «{sheet}»" if sheet else ""
+            return f"Archivo: {res['path']}{what} ({len(lines)} líneas)\n{index}" + "\n".join(out) + note
         if name == "search_files":
             res = f.search(a["query"], a.get("path"))
             return "\n".join(("[D] " if r["is_dir"] else "") + r["path"] for r in res) or "Sin resultados."
@@ -1088,7 +1131,8 @@ class ToolContext:
             p.parent.mkdir(parents=True, exist_ok=True)
             n = write_text_exact(p, str(a.get("content", "")), eol, bom)
             self._mark_read(p)
-            self.files_out.append(str(p))
+            if p.suffix.lower() not in SCRATCH_EXT:   # los scripts de trabajo de la IA no se ofrecen como tarjeta en el chat
+                self.files_out.append(str(p))
             return f"Guardado {p} ({n} bytes)"
         if name == "scheduled_tasks":
             from . import tasks as TK
@@ -1474,8 +1518,11 @@ class ToolContext:
         cwd = self.files.resolve(a["cwd"]) if a.get("cwd") else self.workdir()
         timeout = min(int(a.get("timeout") or 120), 1800)
         from . import extras
-        kw = dict(cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", env=extras.command_env(),
-                  creationflags=NO_WINDOW, stdin=subprocess.DEVNULL, bufsize=1)
+        env = extras.command_env() or dict(os.environ)
+        env.setdefault("PYTHONIOENCODING", "utf-8")    # Python en Windows: sin esto, tildes y «→» rompen el print al ir a una tubería
+        env.setdefault("PYTHONUNBUFFERED", "1")        # la salida llega en vivo y no se pierde si el comando se corta
+        kw = dict(cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+                  creationflags=NO_WINDOW, stdin=subprocess.DEVNULL)
         if sys.platform != "win32":
             kw["start_new_session"] = True  # para poder matar el comando y sus hijos
         sandboxed = self.sandboxed and not a.get("unsandboxed")
@@ -1492,7 +1539,8 @@ class ToolContext:
 
         def reader():
             assert proc.stdout
-            for line in proc.stdout:
+            for raw in proc.stdout:
+                line = _decode_output(raw).replace("\r\n", "\n")
                 chunks.append(line)
                 if self.live:
                     self.live(line)
@@ -1516,7 +1564,25 @@ class ToolContext:
         if reason:
             return f"{reason}\n{out}"
         tag = " (aislado)" if sandboxed else ""
+        if not out.strip():
+            out = "(el comando no imprimió nada)"
         return f"Código de salida{tag}: {proc.returncode}\n{out}"
+
+
+def _decode_output(raw: bytes) -> str:
+    """UTF-8 si lo es; si no, la página de códigos de la consola de Windows (cp850) o la del sistema."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    if sys.platform == "win32":
+        import ctypes
+        try:
+            return raw.decode(f"cp{ctypes.windll.kernel32.GetOEMCP()}", errors="replace")
+        except (LookupError, AttributeError, OSError):
+            pass
+    import locale
+    return raw.decode(locale.getpreferredencoding(False) or "latin-1", errors="replace")
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:

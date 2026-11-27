@@ -15,6 +15,19 @@ from pathlib import Path
 TEXT_LIMIT = 200_000  # caracteres máximos leídos de un archivo de texto
 
 
+DOC_SEARCH_EXT = {".xlsx", ".xlsm", ".xltx", ".xltm", ".xls", ".docx", ".docm", ".dotx", ".pptx", ".pptm", ".pdf",
+                  ".odt", ".ods", ".odp"}
+
+
+def _doc_search_text(fp: Path) -> str:
+    """Texto de un documento para buscar en él (sin OCR: un PDF escaneado no se lee aquí, sería muy lento)."""
+    from . import documents as D
+    if fp.suffix.lower() == ".pdf":
+        return D._pdf_text(fp)
+    from .tools import _doc_text
+    return _doc_text(fp)
+
+
 class FileAccessError(Exception):
     pass
 
@@ -211,23 +224,31 @@ class Files:
             if scanned >= 20000 or time.time() > deadline:
                 truncated = True
                 break
+            doc = fp.suffix.lower() in DOC_SEARCH_EXT
             try:
-                if fp.stat().st_size > 2_000_000:
+                if fp.stat().st_size > (40_000_000 if doc else 2_000_000):
                     continue
-                with open(fp, "rb") as fh:
-                    head = fh.read(4096)
-                    if b"\x00" in head:
-                        continue
-                    data = head + fh.read()
-            except OSError:
+                if doc:                       # Excel, Word, PowerPoint, PDF: se busca en su texto (mismas líneas que read_file)
+                    text = _doc_search_text(fp)
+                else:
+                    with open(fp, "rb") as fh:
+                        head = fh.read(4096)
+                        if b"\x00" in head:
+                            continue
+                        text = (head + fh.read()).decode("utf-8", errors="replace")
+            except Exception:  # noqa: BLE001  (un archivo ilegible no detiene la búsqueda)
                 continue
             scanned += 1
-            lines = data.decode("utf-8", errors="replace").split("\n")
+            lines = text.split("\n")
+            sheet = None
             for i, line in enumerate(lines):
+                if doc and line.startswith("--- Hoja ") and line.endswith(" ---"):
+                    sheet = line[9:-4]
                 if rx.search(line):
                     files_with.add(str(fp))
                     block = [(j + 1, lines[j]) for j in range(max(0, i - context), min(len(lines), i + context + 1))]
-                    results.append({"path": str(fp), "line": i + 1, "text": line, "block": block})
+                    shown = f"[hoja «{sheet}»] {line}" if sheet and not line.startswith("--- Hoja ") else line
+                    results.append({"path": str(fp), "line": i + 1, "text": shown, "block": block})
                     if len(results) >= max_results:
                         truncated = True
                         break
