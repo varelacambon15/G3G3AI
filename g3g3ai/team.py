@@ -36,6 +36,35 @@ def clean(team) -> dict:
     return out
 
 
+MAX_TEAMS = 30
+
+
+def clean_saved(t) -> dict:
+    """Un equipo guardado (con nombre): mismos miembros que el general, sin interruptor de activado."""
+    if not isinstance(t, dict):
+        raise ValueError("Equipo no válido")
+    name = re.sub(r"\s+", " ", str(t.get("name") or "").strip())[:60]
+    if not name:
+        raise ValueError("Ponle un nombre al equipo")
+    base = clean({**t, "enabled": True})
+    return {"id": re.sub(r"[^a-z0-9]", "", str(t.get("id") or "").lower())[:16] or uuid.uuid4().hex[:10],
+            "name": name, "members": base["members"]}
+
+
+def for_project(cfg_team: dict | None, saved: list | None, project: dict | None) -> dict | None:
+    """Equipo que trabaja en una conversación: el que tenga asignado su proyecto, ninguno si el proyecto lo
+    indica («none») o, si no, el equipo general cuando está activo."""
+    tid = (project or {}).get("team_id") or ""
+    if tid == "none":
+        return None
+    if tid:
+        t = next((x for x in saved or [] if x.get("id") == tid), None)
+        if t and t.get("members"):
+            return {"enabled": True, "name": t["name"], "members": t["members"]}
+    g = cfg_team or {}
+    return g if g.get("enabled") and g.get("members") else None
+
+
 def find(team: dict, who: str) -> dict | None:
     w = (who or "").strip().lower()
     for m in team.get("members", []):

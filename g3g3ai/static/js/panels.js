@@ -68,7 +68,7 @@ setInterval(async () => {
 }, 30000);
 
 // --- Equipo: organigrama visual (director y miembros) ---------------------------------------------
-const TEAM = { data: null, sel: null, dirty: false };
+const TEAM = { data: null, sel: null, dirty: false, cur: "general", all: null };
 const TEAM_TEMPLATES = [
   ["Investigador", "Busca información en la web y en los archivos, contrasta fuentes y resume lo importante con enlaces.", "read"],
   ["Programador", "Escribe y revisa código: propone el cambio exacto y explica cómo probarlo.", "none"],
@@ -81,16 +81,64 @@ const modelKind = (v) => (v || "").startsWith("local::") ? "cpu" : "globe";
 async function loadTeam() {
   if (TEAM.data && TEAM.dirty) { drawTeam(); return; }      // hay cambios sin guardar: no se pisan
   const ticket = TEAM.ticket = (TEAM.ticket || 0) + 1;
-  const data = await api("/api/team");
+  const all = await api("/api/teams");
   if (ticket !== TEAM.ticket || TEAM.dirty) return;          // llegó tarde: ya hay otra carga o cambios nuevos
-  TEAM.data = data;
-  TEAM.sel = null; TEAM.dirty = false;
+  TEAM.all = all;
+  if (TEAM.cur !== "general" && TEAM.cur !== "new" && !all.saved.some((t) => t.id === TEAM.cur)) TEAM.cur = "general";
+  selectTeam(TEAM.cur, true);
+}
+// Equipo que se está editando: el general (el de siempre, con interruptor) o uno guardado (se asigna a proyectos)
+function selectTeam(id, force = false) {
+  if (!force && TEAM.dirty && !confirm("Hay cambios sin guardar en este equipo. ¿Descartarlos?")) { drawTeamBar(); return; }
+  const all = TEAM.all, g = all.general;
+  TEAM.cur = id;
+  if (id === "general") TEAM.data = JSON.parse(JSON.stringify(g));
+  else if (id === "new") TEAM.data = { id: Math.random().toString(36).slice(2, 10), name: "", members: [], enabled: true, show_claude: g.show_claude, isNew: true };
+  else { const t = all.saved.find((x) => x.id === id); TEAM.data = { ...JSON.parse(JSON.stringify(t)), enabled: true, show_claude: g.show_claude }; }
+  TEAM.sel = null; TEAM.dirty = id === "new";
   $("#team-enabled").checked = TEAM.data.enabled;
+  $(".team-switch").classList.toggle("hidden", id !== "general");
   $("#team-templates").innerHTML = "";
   $("#team-templates").append(h("span", { class: "muted small" }, "Añadir:"),
     ...TEAM_TEMPLATES.map(([n, role, tools]) => h("button", { class: "ghost small", onclick: () => addMember(n, role, tools) }, ico("plus"), n)),
     h("button", { class: "ghost small", onclick: () => addMember("Nuevo miembro", "", "none") }, ico("plus"), "Personalizado"));
+  drawTeamBar();
   drawTeam();
+}
+function drawTeamBar() {
+  const bar = $("#team-bar"), all = TEAM.all, t = TEAM.data;
+  bar.innerHTML = "";
+  const pick = h("select", { id: "team-pick", "aria-label": "Equipo que estás editando", onchange: (e) => selectTeam(e.target.value) },
+    h("option", { value: "general" }, "Equipo general"),
+    all.saved.length ? h("optgroup", { label: "Equipos guardados" }, all.saved.map((x) => h("option", { value: x.id }, x.name))) : null,
+    TEAM.cur === "new" ? h("option", { value: "new" }, "Equipo nuevo (sin guardar)") : null);
+  pick.value = TEAM.cur;
+  const names = (ps) => ps.map((p) => `«${p.name}»`).join(", ");
+  let info;
+  if (TEAM.cur === "general") {
+    info = h("span", { class: "muted small grow" }, "Trabaja en las conversaciones sin proyecto y en los proyectos sin equipo propio"
+      + (all.general_projects.length ? ` (${names(all.general_projects)})` : "") + ".");
+  } else {
+    const used = (all.saved.find((x) => x.id === TEAM.cur) || {}).projects || [];
+    info = h("span", { class: "muted small grow" }, used.length ? `Lo usan los proyectos ${names(used)}.` : "Aún no lo usa ningún proyecto: asígnalo desde la página del proyecto.");
+  }
+  bar.append(h("label", { class: "team-pick" }, "Editando", pick));
+  if (TEAM.cur !== "general") {
+    bar.append(h("input", { class: "team-name", placeholder: "Nombre del equipo (p. ej. «Juego 3D»)", value: t.name || "",
+      oninput: (e) => { t.name = e.target.value; TEAM.dirty = true; } }));
+  }
+  bar.append(info,
+    h("button", { class: "ghost small", title: "Guardar estos miembros como un equipo nuevo con nombre", onclick: () => {
+      const copy = JSON.parse(JSON.stringify(TEAM.data.members)).map((m) => ({ ...m, id: Math.random().toString(36).slice(2, 10) }));
+      selectTeam("new"); if (TEAM.cur !== "new") return;
+      TEAM.data.members = copy; TEAM.data.name = ""; drawTeamBar(); drawTeam(); $(".team-name")?.focus();
+    } }, ico("copy"), TEAM.cur === "general" ? "Guardar como equipo…" : "Duplicar"),
+    h("button", { class: "ghost small", onclick: () => { selectTeam("new"); if (TEAM.cur === "new") { drawTeamBar(); drawTeam(); $(".team-name")?.focus(); } } }, ico("plus"), "Nuevo equipo"),
+    TEAM.cur !== "general" && TEAM.cur !== "new" ? h("button", { class: "ghost small danger", onclick: async () => {
+      if (!confirm(`¿Borrar el equipo «${t.name}»? Los proyectos que lo usan pasarán al equipo general.`)) return;
+      try { TEAM.all = await api(`/api/teams/${TEAM.cur}`, { method: "DELETE" }); TEAM.dirty = false; selectTeam("general", true); toast("Equipo borrado", 2500); }
+      catch (e) { toast(e.message, 6000); }
+    } }, ico("trash"), "Borrar") : null);
 }
 function addMember(name, role, tools) {
   let n = name, i = 2;
@@ -132,7 +180,7 @@ function drawTeam(withEditor = true) {
     c.append(teamNode("ext", "Claude Code", "director externo (MCP)", "puede delegar en G3G3AI", { icon: "terminal", style: `left:${cx - NW / 2}px;top:${yClaude}px`,
       selected: TEAM.sel === "claude", onclick: () => { TEAM.sel = "claude"; drawTeam(); } }));
   }
-  c.append(teamNode("dir", "G3G3AI", "director · el modelo del chat", t.enabled ? `${members.length} miembro(s)` : "equipo desactivado",
+  c.append(teamNode("dir", "G3G3AI", "director · el modelo del chat", t.enabled ? `${members.length} miembro(s)` + (t.name ? ` · ${t.name}` : "") : "equipo desactivado",
     { icon: "spark", dim: !t.enabled, style: `left:${cx - NW / 2}px;top:${yDir}px`, selected: TEAM.sel === "dir", onclick: () => { TEAM.sel = "dir"; drawTeam(); } }));
   rows.forEach((row, r) => {
     const gap = W / (row.length + 1), y = yMem + r * 150;
@@ -188,8 +236,17 @@ let teamTimer = 0;
 function drawTeamSoon() { clearTimeout(teamTimer); teamTimer = setTimeout(() => drawTeam(false), 200); }  // sólo el esquema: el editor conserva el foco
 $("#team-enabled").addEventListener("change", (e) => { if (TEAM.data) { TEAM.data.enabled = e.target.checked; TEAM.dirty = true; drawTeam(); } });
 $("#team-save").addEventListener("click", async () => {
-  try { TEAM.data = await api("/api/team", { method: "PUT", body: TEAM.data }); TEAM.dirty = false; toast("Equipo guardado", 2500); drawTeam(); }
-  catch (e) { toast(e.message, 6000); }
+  try {
+    if (TEAM.cur === "general") {
+      await api("/api/team", { method: "PUT", body: TEAM.data });
+      TEAM.all = await api("/api/teams");
+    } else {
+      if (!(TEAM.data.name || "").trim()) { toast("Ponle un nombre al equipo"); $(".team-name")?.focus(); return; }
+      TEAM.all = await api(`/api/teams/${TEAM.data.id}`, { method: "PUT", body: { name: TEAM.data.name, members: TEAM.data.members } });
+      TEAM.cur = TEAM.data.id;
+    }
+    TEAM.dirty = false; selectTeam(TEAM.cur, true); toast("Equipo guardado", 2500);
+  } catch (e) { toast(e.message, 6000); }
 });
 window.addEventListener("resize", () => { if (S.view === "team" && TEAM.data) drawTeam(); });
 

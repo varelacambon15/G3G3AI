@@ -382,3 +382,90 @@ def test_voice_dictation_with_fake_microphone(live, tmp_path):
         page.wait_for_selector("dialog >> text=Dictado por voz")
         assert page.is_visible("text=Listo: se transcribe en este equipo")
         browser.close()
+
+
+def _load_fake_model(page):
+    page.evaluate("""async () => {
+        const ms = await (await fetch('/api/models/local')).json();
+        await fetch('/api/llama/load', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                        body: JSON.stringify({path: ms.find(m => !m.mmproj).path})});
+    }""")
+    for _ in range(60):
+        if page.evaluate("async () => (await (await fetch('/api/llama/status')).json()).state") == "ready":
+            break
+        time.sleep(0.25)
+    page.reload()
+    page.wait_for_selector("#model-select option", state="attached")
+
+
+def test_streaming_pins_favorites_and_project_teams(live):
+    base, cfg = live
+    errors: list[str] = []
+    with playwright_sync.sync_playwright() as p:
+        browser = launch(p)
+        page = browser.new_context(viewport={"width": 1280, "height": 820}).new_page()
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/?token={cfg['token']}")
+        _load_fake_model(page)
+
+        # 1) Respuesta en vivo: lo ya escrito no se vuelve a crear (se puede seleccionar) y la lista sigue numerada
+        page.fill("#input", "varios parrafos")
+        page.click("#send-btn")
+        page.wait_for_selector(".msg.assistant .bubble >> text=Segundo párrafo.", timeout=8000)
+        page.evaluate("window.__first = document.querySelector('.msg.assistant .bubble.cursor p')")
+        page.wait_for_selector(".msg.assistant .bubble >> text=tres tras un hueco", timeout=8000)
+        assert page.evaluate("window.__first && window.__first.isConnected"), "el primer párrafo se volvió a crear"
+        page.wait_for_function("document.querySelector('#send-btn').dataset.state === 'idle'", timeout=15000)
+        page.wait_for_selector(".msg.assistant .bubble >> text=del texto.")
+        assert page.locator(".msg.assistant .bubble.cursor").count() == 0
+        assert page.locator('.msg.assistant ol[start="3"]').count() == 1      # «3.» tras un hueco sigue siendo el 3
+        assert page.locator(".msg.user").count() == 1 and page.locator('.msg[data-id="0"]').count() == 0
+
+        # 2) Dos conversaciones más; fijar una y marcar otra como favorita
+        for txt in ("hola uno", "hola dos"):
+            page.click("#new-chat")
+            page.fill("#input", txt)
+            page.click("#send-btn")
+            page.wait_for_function("document.querySelector('#send-btn').dataset.state === 'idle'", timeout=15000)
+        items = page.locator("#conv-list .conv-item")
+        assert items.count() == 3
+        first_title = page.locator("#conv-list .conv-item").nth(2).inner_text()   # la más antigua
+        page.locator("#conv-list .conv-item").nth(2).hover()
+        page.locator("#conv-list .conv-item").nth(2).locator("button[aria-label='Fijar arriba']").click()
+        page.wait_for_selector("#conv-list .conv-group:first-child >> text=Fijadas")
+        assert page.locator("#conv-list .conv-item").first.inner_text() == first_title
+        page.locator("#conv-list .conv-item").nth(1).hover()
+        page.locator("#conv-list .conv-item").nth(1).locator("button[aria-label='Marcar como favorita']").click()
+        page.click("#conv-favs")
+        page.wait_for_function("document.querySelectorAll('#conv-list .conv-item').length === 1")
+        page.reload()                                                             # se guarda en el servidor
+        page.wait_for_selector("#conv-list .conv-item .conv-star")
+        assert page.locator("#conv-list .conv-item").count() == 1
+        page.click("#conv-favs")
+        page.wait_for_function("document.querySelectorAll('#conv-list .conv-item').length === 3")
+        conv = page.evaluate("async () => (await (await fetch('/api/conversations')).json())")
+        assert sum(1 for c in conv if c["pinned"]) == 1 and sum(1 for c in conv if c["favorite"]) == 1
+
+        # 3) Equipos guardados y asignados a un proyecto
+        page.click("[data-view=team]")
+        page.wait_for_selector("#team-pick")
+        page.click("#team-bar button:has-text('Nuevo equipo')")
+        page.fill(".team-name", "Juego 3D")
+        page.click("#team-templates button:has-text('Programador')")
+        page.click("#team-save")
+        page.wait_for_selector("#toast >> text=Equipo guardado")
+        assert [t["name"] for t in cfg["teams"]] == ["Juego 3D"] and not cfg["team"]["members"]
+        assert page.eval_on_selector("#team-pick", "s => s.options[s.selectedIndex].text") == "Juego 3D"
+        tid = cfg["teams"][0]["id"]
+        page.click("[data-view=projects]")
+        page.once("dialog", lambda d: d.accept("Juego"))
+        page.click("text=Crear el primero")
+        page.wait_for_selector(f".proj-cols select option[value='{tid}']", state="attached")
+        page.select_option(".proj-cols select", tid)
+        page.wait_for_selector("#toast >> text=Guardado")
+        projs = page.evaluate("async () => (await (await fetch('/api/projects')).json())")
+        assert projs[0]["team_id"] == tid
+        teams = page.evaluate("async () => (await (await fetch('/api/teams')).json())")
+        assert teams["saved"][0]["projects"][0]["name"] == "Juego"
+        browser.close()
+    assert errors == [], errors

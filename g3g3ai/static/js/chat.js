@@ -188,35 +188,74 @@ function exportDialog(id) {
 }
 $("#top-export").addEventListener("click", () => S.convId && exportDialog(S.convId));
 
+// Fijar (arriba del todo) y favoritas (estrella; filtro con el botón ☆ junto al buscador)
+let favOnly = store.get("conv_fav_only", false);
+async function markConv(c, fields) {
+  Object.assign(c, { ...fields, pinned: "pinned" in fields ? (fields.pinned ? Date.now() / 1000 : null) : c.pinned });
+  renderConvList();
+  try { await api(`/api/conversations/${c.id}`, { method: "PATCH", body: fields }); }
+  catch (e) { toast(e.message, 5000); loadConversations(); }
+}
+function syncFavButton() {
+  const b = $("#conv-favs"); b.classList.toggle("on", favOnly); b.setAttribute("aria-pressed", String(favOnly));
+  b.title = favOnly ? "Mostrar todas las conversaciones" : "Ver sólo las favoritas";
+}
+$("#conv-favs").addEventListener("click", () => { favOnly = !favOnly; store.set("conv_fav_only", favOnly); syncFavButton(); renderConvList(); });
+syncFavButton();
 function renderConvList() {
   $("#top-export").classList.toggle("hidden", !S.convId);
   const ul = $("#conv-list"), q = $("#conv-search").value.trim().toLowerCase();
-  ul.innerHTML = "";
+  const frag = document.createDocumentFragment();
   let group = null;
-  if (q && CS.res && CS.res.q.toLowerCase() === q) { renderSearchResults(ul, CS.res.q, CS.res.items); return; }
-  const list = convCache.filter((c) => !q || norm(c.title).includes(norm(q)));
-  if (!list.length) ul.append(h("div", { class: "conv-group" }, q ? "Sin resultados" : "Aún no hay conversaciones"));
+  if (q && CS.res && CS.res.q.toLowerCase() === q) { ul.innerHTML = ""; renderSearchResults(ul, CS.res.q, CS.res.items); return; }
+  const list = convCache.filter((c) => (!q || norm(c.title).includes(norm(q))) && (!favOnly || c.favorite));
+  const pinned = list.filter((c) => c.pinned).sort((a, b) => b.pinned - a.pinned);
+  if (!list.length) frag.append(h("div", { class: "conv-group" }, q ? "Sin resultados" : favOnly ? "Aún no hay favoritas: pulsa ☆ en una conversación" : "Aún no hay conversaciones"));
+  if (pinned.length) frag.append(h("div", { class: "conv-group" }, "Fijadas"), ...pinned.map(convItem));
   for (const c of list) {
+    if (c.pinned) continue;
     const g = dateGroup(c.updated);
-    if (g !== group) { group = g; ul.append(h("div", { class: "conv-group" }, g)); }
-    const li = h("div", { class: "conv-item" + (c.id === S.convId ? " active" : ""), onclick: () => { setView("chat"); openConversation(c.id); } },
+    if (g !== group) { group = g; frag.append(h("div", { class: "conv-group" }, g)); }
+    frag.append(convItem(c));
+  }
+  ul.replaceChildren(frag);
+}
+function convItem(c) {
+  return h("div", { class: "conv-item" + (c.id === S.convId ? " active" : "") + (c.pinned ? " pinned" : ""), "data-id": c.id, onclick: () => { setView("chat"); openConversation(c.id); } },
+      c.favorite ? h("span", { class: "conv-star", title: "Favorita" }, ico("star")) : null,
       h("span", { class: "t", title: c.title }, c.title),
       h("span", { class: "acts" },
-        h("button", { title: "Renombrar", onclick: async (e) => {
-          e.stopPropagation();
-          const t = prompt("Nuevo título", c.title);
-          if (t) { await api(`/api/conversations/${c.id}`, { method: "PATCH", body: { title: t } }); loadConversations(); if (S.convId === c.id) $("#top-title").textContent = t; }
-        } }, "✎"),
-        h("button", { title: "Mover a un proyecto", onclick: (e) => { e.stopPropagation(); moveToProject(c); } }, ico("project")),
-        h("button", { title: "Exportar", onclick: (e) => { e.stopPropagation(); exportDialog(c.id); } }, ico("download")),
-        h("button", { title: "Borrar", onclick: async (e) => {
-          e.stopPropagation();
-          if (!confirm("¿Borrar esta conversación?")) return;
-          await api(`/api/conversations/${c.id}`, { method: "DELETE" });
-          if (S.convId === c.id) newChat(); else loadConversations();
-        } }, "🗑")));
-    ul.append(li);
-  }
+        h("button", { title: c.pinned ? "Desfijar" : "Fijar arriba", "aria-label": c.pinned ? "Desfijar" : "Fijar arriba", class: c.pinned ? "on" : "",
+          onclick: (e) => { e.stopPropagation(); markConv(c, { pinned: !c.pinned }); } }, ico("pin")),
+        h("button", { title: c.favorite ? "Quitar de favoritas" : "Marcar como favorita", "aria-label": c.favorite ? "Quitar de favoritas" : "Marcar como favorita", class: c.favorite ? "on" : "",
+          onclick: (e) => { e.stopPropagation(); markConv(c, { favorite: !c.favorite }); } }, ico("star")),
+        h("button", { title: "Más acciones", "aria-label": "Más acciones", class: "conv-more", onclick: (e) => { e.stopPropagation(); convMenu(c, e.currentTarget); } }, "⋯")));
+}
+// Menú ⋯ de una conversación: renombrar, mover, exportar, borrar
+function convMenu(c, anchor) {
+  document.querySelector(".conv-menu")?.remove();
+  const item = (icon, label, fn, cls = "") => h("button", { class: cls, onclick: (e) => { e.stopPropagation(); menu.remove(); fn(); } }, icon, label);
+  const menu = h("div", { class: "conv-menu", role: "menu" },
+    item(ico("pencil"), "Renombrar", async () => {
+      const t = prompt("Nuevo título", c.title);
+      if (t) { await api(`/api/conversations/${c.id}`, { method: "PATCH", body: { title: t } }); loadConversations(); if (S.convId === c.id) $("#top-title").textContent = t; }
+    }),
+    item(ico("pin"), c.pinned ? "Desfijar" : "Fijar arriba", () => markConv(c, { pinned: !c.pinned })),
+    item(ico("star"), c.favorite ? "Quitar de favoritas" : "Marcar como favorita", () => markConv(c, { favorite: !c.favorite })),
+    item(ico("project"), "Mover a un proyecto", () => moveToProject(c)),
+    item(ico("download"), "Exportar", () => exportDialog(c.id)),
+    item(ico("trash"), "Borrar", async () => {
+      if (!confirm("¿Borrar esta conversación?")) return;
+      await api(`/api/conversations/${c.id}`, { method: "DELETE" });
+      if (S.convId === c.id) newChat(); else loadConversations();
+    }, "danger"));
+  document.body.append(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = Math.min(r.bottom + 4, innerHeight - menu.offsetHeight - 8) + "px";
+  menu.style.left = Math.max(8, Math.min(r.left, innerWidth - menu.offsetWidth - 8)) + "px";
+  setTimeout(() => document.addEventListener("click", function close(ev) {
+    if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener("click", close); }
+  }), 0);
 }
 async function openConversation(id, focusMsg, q) {
   S.conv = await api(`/api/conversations/${id}`);
@@ -227,7 +266,8 @@ async function openConversation(id, focusMsg, q) {
   }
   S.workdir = undefined;
   S.projectId = S.conv.project_id || null;
-  renderMessages(); loadConversations(); refreshChanges(); refreshContext(); renderProjectChip();
+  if (focusMsg) { const k = S.conv.messages.findIndex((m) => String(m.id) === String(focusMsg)); if (k >= 0) S.focusIndex = k; }
+  renderMessages(); renderConvList(); refreshChanges(); refreshContext(); renderProjectChip();
   if (focusMsg) requestAnimationFrame(() => {      // desde la búsqueda: ir al mensaje y resaltarlo
     const el = $(`#messages .msg[data-id="${focusMsg}"]`); if (!el) return;
     el.scrollIntoView({ block: "center" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2400);
@@ -272,7 +312,26 @@ function renderMessages() {
     return;
   }
   $("#view-chat").classList.remove("is-empty"); $("#welcome-ideas")?.remove();
-  msgs.forEach((m, i) => box.append(messageEl(m, i)));
+  // Conversaciones largas: primero los últimos mensajes (lo que se ve) y los anteriores al subir
+  const FIRST = 40, want = S.focusIndex ?? msgs.length, from = Math.max(0, Math.min(msgs.length - FIRST, want - 5));
+  S.focusIndex = undefined;
+  if (from > 0) {
+    const more = h("button", { class: "ghost small load-older" }, `Ver ${from} mensaje${from > 1 ? "s" : ""} anteriores`);
+    let upto = from;
+    const older = () => {
+      if (!upto || !more.isConnected) return;
+      const start = Math.max(0, upto - FIRST), prevH = box.scrollHeight, prevTop = box.scrollTop, frag = document.createDocumentFragment();
+      msgs.slice(start, upto).forEach((m, k) => frag.append(messageEl(m, start + k)));
+      more.after(frag); upto = start;
+      box.scrollTop = prevTop + (box.scrollHeight - prevH);          // la vista no salta
+      if (!upto) more.remove(); else more.textContent = `Ver ${upto} mensaje${upto > 1 ? "s" : ""} anteriores`;
+    };
+    more.onclick = older;
+    box.append(more);
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting) && box.scrollTop > 0) older(); }, { root: box });
+    io.observe(more);
+  }
+  msgs.slice(from).forEach((m, k) => box.append(messageEl(m, from + k)));
   if (S.live && S.streaming && S.live.conv && S.live.conv === S.convId) box.append(S.live.el);
   box.scrollTop = box.scrollHeight;
 }
@@ -374,7 +433,11 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   for (const f of extra.fallbacks || []) frag.append(h("div", { class: "route warn" }, "↪ falló " + f + ", probando el otro modelo…"));
   const { think, body, open } = splitThink(content || "");
   const r = [reasoning, think].filter(Boolean).join("\n");
-  if (r) frag.append(h("details", { class: "thinking", open: streaming && (open || !body) ? true : false }, h("summary", {}, ico("brain"), streaming && !body ? "Pensando…" : "Razonamiento"), h("pre", {}, r)));
+  if (r) {
+    const d = h("details", { class: "thinking", open: (extra.thinkOpen ?? (streaming && (open || !body))) ? true : false },
+      h("summary", { onclick: () => { if (extra.onThinkToggle) extra.onThinkToggle(!d.open); } }, ico("brain"), streaming && !body ? "Pensando…" : "Razonamiento"), h("pre", {}, r));
+    frag.append(d);
+  }
   const pendingCalls = {};
   const toolList = () => {  // filas de herramientas seguidas: un único bloque discreto
     const last = frag.lastChild;
@@ -398,9 +461,12 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   if (streaming) for (const [name, c] of Object.entries(pendingCalls)) {  // en curso
     if (!(tools || []).some((x) => x.type === "approval" && x.name === name && !x.state)) toolList().append(toolRow(name, c.args, null));
   }
-  const b = h("div", { class: "bubble" + (streaming ? " cursor" : "") });
-  b.innerHTML = md(body);
-  frag.append(b);
+  if (extra.liveBubble) frag.append(extra.liveBubble);       // respuesta en curso: el mismo nodo (ver liveMd)
+  else {
+    const b = h("div", { class: "bubble" + (streaming ? " cursor" : "") });
+    b.innerHTML = md(body);
+    frag.append(b);
+  }
   const fileIcon = (p) => ({ docx: "📘", doc: "📘", xlsx: "📗", xlsm: "📗", csv: "📗", pptx: "📙", pdf: "📕", exe: "⚙️", py: "🐍" }[String(p).split(".").pop().toLowerCase()] || "📄");
   const outs = [...new Set(extra.files || [])];
   if (outs.length) frag.append(h("div", { class: "file-cards" }, outs.map(fileCard)));
@@ -813,6 +879,64 @@ function showGenLog(m) {
   document.body.append(dlg); dlg.showModal();
 }
 
+// Al acabar una respuesta: se trae la conversación guardada y sólo se cambian los mensajes nuevos (el del usuario y
+// la respuesta) por su versión definitiva. Si algo no cuadra (resumen, ramas…), se repinta entera como antes.
+async function finishInPlace(liveEl) {
+  const cid = S.convId, old = S.conv?.messages || [];
+  let conv = await api(`/api/conversations/${cid}`);
+  if ((conv.messages || []).length <= old.length) { await new Promise((r) => setTimeout(r, 300)); conv = await api(`/api/conversations/${cid}`); }
+  if (S.convId !== cid) return;
+  const box = $("#messages"), msgs = conv.messages || [];
+  const fromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
+  const same = old.length < msgs.length && old.every((m, i) => m.id === msgs[i].id && m.content === msgs[i].content);
+  S.conv = conv;
+  if (!same || !liveEl.isConnected) { renderMessages(); return; }
+  // fuera lo provisional (el mensaje del usuario pintado con id 0 y la respuesta en curso); dentro lo guardado
+  box.querySelectorAll(':scope > .msg[data-id="0"]').forEach((x) => x.remove());
+  liveEl.remove();
+  const frag = document.createDocumentFragment();
+  msgs.slice(old.length).forEach((m, i) => frag.append(messageEl(m, old.length + i)));
+  box.append(frag);
+  if (fromBottom < 80) box.scrollTop = box.scrollHeight;
+  if (S.view === "chat" || S.view === "code") $("#top-title").textContent = conv.title;
+  renderConvList(); refreshChanges();
+}
+
+// --- Respuesta en curso sin tirones -------------------------------------------------------------
+// Antes se reconstruía TODO (markdown completo, razonamiento, herramientas) en cada fotograma: con respuestas
+// largas la página se trababa, no se podía seleccionar texto y el razonamiento abierto se cerraba solo.
+// Ahora: el «armazón» (razonamiento, herramientas, avisos) sólo se rehace cuando cambia, y del texto sólo se
+// vuelve a convertir el último párrafo; lo anterior queda fijo.
+function liveView() {
+  const stable = h("div", { class: "md-part" }), tail = h("div", { class: "md-part" });
+  return { key: null, body: null, prefix: "", stable, tail, bubble: h("div", { class: "bubble cursor" }, stable, tail), thinkOpen: undefined };
+}
+function stableCut(body) {
+  let cut = body.lastIndexOf("\n\n");
+  while (cut > 0 && ((body.slice(0, cut).match(/^\s*```/gm) || []).length % 2)) cut = body.lastIndexOf("\n\n", cut - 1);
+  return cut > 0 ? cut : 0;
+}
+function liveMd(v, body) {
+  if (body === v.body) return false;
+  v.body = body;
+  const prefix = body.slice(0, stableCut(body));
+  if (prefix !== v.prefix) {
+    // Una línea en blanco cierra cualquier bloque (párrafo, lista, tabla, cita): lo nuevo se añade sin rehacer lo anterior
+    if (v.prefix && prefix.startsWith(v.prefix)) v.stable.insertAdjacentHTML("beforeend", md(prefix.slice(v.prefix.length)));
+    else v.stable.innerHTML = prefix ? md(prefix) : "";
+    v.prefix = prefix;
+  }
+  v.tail.innerHTML = md(body.slice(prefix.length));
+  return true;
+}
+function liveKey(content, reasoning, tools, extra) {
+  const { think, body } = splitThink(content || "");
+  const waiting = !content && !reasoning && !(tools || []).length && !extra.progress;
+  return JSON.stringify([reasoning.length, think.length, !body, (tools || []).map((t) => [t.type, t.name, t.state, (t.result || "").length]),
+    extra.todos, extra.compacted, (extra.liveOut || "").length, extra.status, extra.progress, extra.route, extra.fallbacks.length,
+    extra.files.length, extra.images.length, waiting ? Math.round((Date.now() - extra.t0) / 1000) : 0, extra.reading]);
+}
+
 // Un error no debe dejar la respuesta en blanco: queda en la conversación con su causa y un botón para reintentar
 function showChatError(msg) {
   $("#chat-error")?.remove();
@@ -846,10 +970,17 @@ async function send(text, attachments, isContinue = false) {
   const extra = { route: null, fallbacks: [], images: [], files: [], todos: [], t0: Date.now(), reading: attachments.length };
   // Mientras no llegue nada, «Pensando… N s» (y la fase: leyendo adjuntos, conectando…) para que nunca parezca colgado
   const waitTick = setInterval(() => { if (!content && !reasoning && !tools.length && !extra.progress) paint(); }, 1000);
+  const view = liveView();
   const paint = () => {
     raf = 0;
     const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    el.innerHTML = ""; el.append(assistantInner(content, reasoning, tools, true, extra));
+    const key = liveKey(content, reasoning, tools, extra);
+    if (key !== view.key) {
+      view.key = key;
+      el.replaceChildren(assistantInner(content, reasoning, tools, true,
+        { ...extra, liveBubble: view.bubble, thinkOpen: view.thinkOpen, onThinkToggle: (o) => { view.thinkOpen = o; } }));
+    }
+    liveMd(view, splitThink(content || "").body);
     if (stick) box.scrollTop = box.scrollHeight;
   };
   try {
@@ -902,8 +1033,8 @@ async function send(text, attachments, isContinue = false) {
         if (S.code && (ev.type === "tool_call" || ev.type === "tool_result" || ev.type === "todos")) {
           renderCodePanel({ tools, todos: extra.todos }); if (ev.type === "tool_result") refreshChanges();
         }
-        // En respuestas muy largas repintar todo el markdown en cada frame congela la página: máx. ~7 veces/s
-        if (!raf) raf = setTimeout(() => requestAnimationFrame(paint), content.length > 4000 ? 140 : 0);
+        // Un repintado por fotograma como mucho (y menos en respuestas enormes, donde el último párrafo pesa más)
+        if (!raf) raf = setTimeout(() => requestAnimationFrame(paint), content.length > 30000 ? 120 : 0);
       }
     }
   } catch (e) {
@@ -915,7 +1046,7 @@ async function send(text, attachments, isContinue = false) {
     if (S.live === live) S.live = null;
     const here = !!live.conv && S.convId === live.conv;
     if (here) {
-      await new Promise((r) => setTimeout(r, 150)); const wd = S.workdir; await openConversation(S.convId).catch(() => {}); S.workdir = wd;
+      const wd = S.workdir; await finishInPlace(el).catch(() => openConversation(S.convId).catch(() => {})); S.workdir = wd;
       const cards = $$("#messages .msg.assistant:last-child .art-card");   // la IA acaba de crear una página o diagrama: se muestra al lado
       if (cards.length && !isMobile()) openArtifactCard(cards[cards.length - 1]);
     } else {

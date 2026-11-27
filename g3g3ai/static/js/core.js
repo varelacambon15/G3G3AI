@@ -166,13 +166,13 @@ function md(src) {
     }
     if (/^\s*([-*+]|\d+[.)])\s+/.test(l)) {
       flush();
-      const ordered = /^\s*\d/.test(l); let items = "";
+      const ordered = /^\s*\d/.test(l), start = ordered ? parseInt(l.trim(), 10) : 1; let items = "";
       while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) {
         let item = lines[i++].replace(/^\s*([-*+]|\d+[.)])\s+/, "");
         while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) item += " " + lines[i++].trim();
         items += `<li>${inlineMd(item)}</li>`;
       }
-      out += ordered ? `<ol>${items}</ol>` : `<ul>${items}</ul>`; continue;
+      out += ordered ? `<ol${start > 1 ? ` start="${start}"` : ""}>${items}</ol>` : `<ul>${items}</ul>`; continue;
     }
     if (!l.trim()) { flush(); i++; continue; }
     para.push(l); i++;

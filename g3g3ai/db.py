@@ -99,7 +99,9 @@ class DB:
         self.conn.executescript(SCHEMA)
         for table, col in (("conversations", "summary TEXT"), ("conversations", "summary_upto INTEGER"),
                            ("messages", "uid TEXT"), ("conversations", "workdir TEXT"),
-                           ("conversations", "project_id TEXT")):  # columnas añadidas en versiones posteriores
+                           ("conversations", "project_id TEXT"), ("projects", "team_id TEXT"),
+                           ("conversations", "pinned REAL"), ("conversations", "favorite INTEGER"),
+                           ("conversations", "marked REAL")):  # columnas añadidas en versiones posteriores
             try:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
             except sqlite3.OperationalError:
@@ -122,7 +124,7 @@ class DB:
     # Conversaciones ---------------------------------------------------------
     def list_conversations(self) -> list[dict]:
         rows = self._q(
-            "SELECT id, title, provider, model, updated, project_id FROM conversations ORDER BY updated DESC"
+            "SELECT id, title, provider, model, updated, project_id, pinned, favorite FROM conversations ORDER BY updated DESC"
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -227,6 +229,18 @@ class DB:
                     (cid, b["position"], b["born"], b["data"]))
         self._q("UPDATE conversations SET summary=NULL, summary_upto=NULL, updated=? WHERE id=?", (time.time(), cid))
 
+    def mark_conversation(self, cid: str, pinned: bool | None = None, favorite: bool | None = None) -> None:
+        """Fijar / favorito: no cambia «updated» (la conversación no salta en la lista), pero sí «marked» para sincronizar."""
+        sets, args = [], []
+        if pinned is not None:
+            sets.append("pinned=?")
+            args.append(time.time() if pinned else None)
+        if favorite is not None:
+            sets.append("favorite=?")
+            args.append(1 if favorite else 0)
+        if sets:
+            self._q(f"UPDATE conversations SET {', '.join(sets)}, marked=? WHERE id=?", (*args, time.time(), cid))
+
     def update_conversation(self, cid: str, **fields) -> None:
         keys = [k for k in ("title", "provider", "model", "system", "workdir", "project_id") if k in fields]
         if not keys:
@@ -261,7 +275,7 @@ class DB:
 
     def update_project(self, pid: str, **fields) -> dict | None:
         sets, args = [], []
-        for k in ("name", "instructions", "files"):
+        for k in ("name", "instructions", "files", "team_id"):
             if k in fields:
                 sets.append(f"{k}=?")
                 args.append(json.dumps(fields[k], ensure_ascii=False) if k == "files" else fields[k])

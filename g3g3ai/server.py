@@ -530,6 +530,11 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         if not db.get_project(pid):
             raise HTTPException(404, "No existe el proyecto")
         fields = {k: body[k] for k in ("name", "instructions") if k in body}
+        if "team_id" in body:
+            tid = body["team_id"] or None
+            if tid not in (None, "none") and not any(t["id"] == tid for t in _saved_teams()):
+                raise HTTPException(400, "Ese equipo ya no existe")
+            fields["team_id"] = tid
         if "files" in body:
             fields["files"] = _check_files(body["files"])
         return db.update_project(pid, **fields)
@@ -561,7 +566,10 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
 
     @app.patch("/api/conversations/{cid}")
     async def patch_conversation(cid: str, body: dict):
-        db.update_conversation(cid, **body)
+        if "pinned" in body or "favorite" in body:
+            db.mark_conversation(cid, pinned=None if "pinned" not in body else bool(body["pinned"]),
+                                 favorite=None if "favorite" not in body else bool(body["favorite"]))
+        db.update_conversation(cid, **{k: v for k, v in body.items() if k not in ("pinned", "favorite")})
         return db.get_conversation(cid)
 
     @app.delete("/api/conversations/{cid}")
@@ -711,6 +719,47 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         cfg.data["settings_updated"] = time.time()
         cfg.set("team", t)
         return t
+
+    def _saved_teams() -> list:
+        return [t for t in (cfg["teams"] or []) if isinstance(t, dict)]
+
+    def _teams_payload() -> dict:
+        uses: dict = {}
+        for p in db.list_projects():
+            if p.get("team_id"):
+                uses.setdefault(p["team_id"], []).append({"id": p["id"], "name": p["name"]})
+        return {"general": {**team.DEFAULT, **(cfg["team"] or {})},
+                "saved": [{**t, "projects": uses.get(t["id"], [])} for t in _saved_teams()],
+                "general_projects": [x for p in db.list_projects() if not p.get("team_id") for x in [{"id": p["id"], "name": p["name"]}]]}
+
+    @app.get("/api/teams")
+    async def teams_list():
+        return _teams_payload()
+
+    @app.put("/api/teams/{tid}")
+    async def teams_put(tid: str, body: dict):
+        try:
+            t = team.clean_saved({**body, "id": tid})
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        saved = _saved_teams()
+        if any(x["name"].lower() == t["name"].lower() and x["id"] != t["id"] for x in saved):
+            raise HTTPException(400, f"Ya hay un equipo llamado «{t['name']}»")
+        if not any(x["id"] == t["id"] for x in saved) and len(saved) >= team.MAX_TEAMS:
+            raise HTTPException(400, f"Como mucho {team.MAX_TEAMS} equipos guardados")
+        saved = [t if x["id"] == t["id"] else x for x in saved] + ([] if any(x["id"] == t["id"] for x in saved) else [t])
+        cfg.data["settings_updated"] = time.time()
+        cfg.set("teams", saved)
+        return _teams_payload()
+
+    @app.delete("/api/teams/{tid}")
+    async def teams_delete(tid: str):
+        cfg.data["settings_updated"] = time.time()
+        cfg.set("teams", [x for x in _saved_teams() if x["id"] != tid])
+        for p in db.list_projects():                      # sus proyectos vuelven al equipo general
+            if p.get("team_id") == tid:
+                db.update_project(p["id"], team_id=None)
+        return _teams_payload()
 
     @app.get("/api/onboarding")
     async def onboarding():
@@ -1242,8 +1291,8 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
                             await asyncio.to_thread(shutil.rmtree, copy, True)
                 tc.subagent = run_subagent
             tc.diagnostics = lambda _pid=chosen_pid: diagnostics(local_in_use=_pid == LOCAL_PROVIDER)
-            team_cfg = cfg["team"] or {}
-            if team_cfg.get("enabled") and team_cfg.get("members"):
+            team_cfg = team.for_project(cfg["team"], cfg["teams"], project)
+            if team_cfg:
                 tc.team = team_cfg
 
                 async def run_member(m: dict, task: str) -> str:

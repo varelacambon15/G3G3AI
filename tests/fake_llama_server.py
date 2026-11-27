@@ -190,6 +190,14 @@ class H(BaseHTTPRequestHandler):
             else:
                 self.chunk({"choices": [{"delta": {"content": "Dime qué quieres que busque usando `web_search`."}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "varios parrafos" in str(first_user):  # párrafos y una lista que llegan poco a poco (render incremental)
+            import time as _t
+            parts = ["Primer párrafo ", "con **negrita**.\n\n", "Segundo párrafo.\n\n", "1. uno\n", "2. dos\n\n",
+                     "3. tres tras un hueco\n\n", "Final ", "del texto."]
+            for w in parts:
+                self.chunk({"choices": [{"delta": {"content": w}}]}); self.wfile.flush(); _t.sleep(0.35)
+            self.chunk({"choices": [{"delta": {"content": ""}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "respuesta lenta" in str(first_user):  # escribe poco a poco durante ~3 s
             import time as _t
             for w in ["Esta ", "respuesta ", "llega ", "despacio ", "y ", "termina ", "bien."]:

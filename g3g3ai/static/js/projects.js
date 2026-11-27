@@ -81,6 +81,12 @@ async function renderProject(id) {
   const name = h("input", { class: "proj-name", value: p.name, onchange: () => name.value.trim() && save({ name: name.value.trim() }) });
   const instr = h("textarea", { rows: 6, placeholder: "Por ejemplo: «Soy técnico de RRHH. Responde en tablas cuando compares datos y cita siempre de qué documento sale cada cifra.»" }, p.instructions || "");
   instr.addEventListener("change", () => save({ instructions: instr.value }));
+  const teamSel = h("select", { "aria-label": "Equipo del proyecto", onchange: (e) => save({ team_id: e.target.value || null }) },
+    h("option", { value: "" }, "Equipo general (si está activo)"), h("option", { value: "none" }, "Sin equipo"));
+  api("/api/teams").then((all) => {
+    if (all.saved.length) teamSel.append(h("optgroup", { label: "Equipos guardados" }, all.saved.map((t) => h("option", { value: t.id }, `${t.name} · ${t.members.length} miembro(s)`))));
+    teamSel.value = p.team_id || "";
+  }).catch(() => {});
   const docs = h("div", { class: "proj-docs" });
   const drawDocs = () => {
     docs.innerHTML = "";
@@ -100,6 +106,8 @@ async function renderProject(id) {
       h("div", { class: "card" }, h("h2", {}, "Conversaciones"), convs),
       h("div", {},
         h("div", { class: "card" }, h("h2", {}, "Instrucciones"), h("p", { class: "muted small" }, "Se aplican a todas las conversaciones del proyecto."), instr),
+        h("div", { class: "card" }, h("h2", {}, "Equipo"), h("p", { class: "muted small" }, "Las IAs en las que el chat delega el trabajo en este proyecto. Los equipos se crean en la sección Equipo."),
+          h("div", { class: "row" }, teamSel, h("button", { class: "ghost small", onclick: () => setView("team") }, "Editar equipos"))),
         h("div", { class: "card" }, h("h2", {}, "Documentos"), docs,
           h("button", { class: "ghost small", onclick: () => openPicker("Añadir documento al proyecto", async (path) => {
             if (!p.files.includes(path)) { await save({ files: [...p.files, path] }); drawDocs(); }

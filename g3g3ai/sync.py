@@ -24,7 +24,7 @@ import httpx
 SYNC_KEYS = [
     "providers", "default_system_prompt", "temperature", "max_tokens",
     "router_mode", "router_fast", "router_strong", "ai_write", "ai_commands",
-    "web_provider", "web_api_key", "voice_engine", "voice_language", "voice_model", "hf_token", "github_token", "agent_profile", "agent_temperature", "local_thinking", "command_allow", "commands_trusted", "team", "model_prices", "monthly_budget_usd", "memory_enabled", "memory_auto", "memory_api",
+    "web_provider", "web_api_key", "voice_engine", "voice_language", "voice_model", "hf_token", "github_token", "agent_profile", "agent_temperature", "local_thinking", "command_allow", "commands_trusted", "team", "teams", "model_prices", "monthly_budget_usd", "memory_enabled", "memory_auto", "memory_api",
     "vision_fallback", "context_budget", "image_provider", "image_model", "image_mode", "image_size",
     "sd_steps", "sd_cfg", "model_favorites", "model_hidden",
 ]
@@ -89,7 +89,7 @@ class Sync:
     def export(self, since: float) -> dict:
         q = self.db._q
         convs = []
-        for row in q("SELECT * FROM conversations WHERE updated > ?", (since,)).fetchall():
+        for row in q("SELECT * FROM conversations WHERE updated > ? OR COALESCE(marked, 0) > ?", (since, since)).fetchall():
             c = dict(row)
             msgs = q("SELECT id, uid, role, content, reasoning, meta, created FROM messages WHERE conv_id=? ORDER BY id",
                      (c["id"],)).fetchall()
@@ -143,16 +143,23 @@ class Sync:
         for c in ch.get("conversations", []):
             if tomb.get(("conversation", c["id"]), 0) >= c["updated"]:
                 continue
-            row = q("SELECT updated FROM conversations WHERE id=?", (c["id"],)).fetchone()
+            row = q("SELECT updated, marked FROM conversations WHERE id=?", (c["id"],)).fetchone()
+            if row and (c.get("marked") or 0) > (row["marked"] or 0):    # fijada / favorita en el otro equipo
+                q("UPDATE conversations SET pinned=?, favorite=?, marked=? WHERE id=?",
+                  (c.get("pinned"), c.get("favorite"), c["marked"], c["id"]))
             if row and row["updated"] >= c["updated"]:
                 continue
             with self.db.lock:
                 conn = self.db.conn
                 conn.execute("DELETE FROM messages WHERE conv_id=?", (c["id"],))
+                old = conn.execute("SELECT pinned, favorite, marked FROM conversations WHERE id=?", (c["id"],)).fetchone()
+                flags = (c.get("pinned"), c.get("favorite"), c.get("marked"))
+                if old and (old["marked"] or 0) > (c.get("marked") or 0):
+                    flags = (old["pinned"], old["favorite"], old["marked"])
                 conn.execute("INSERT OR REPLACE INTO conversations (id, title, provider, model, system, created, updated,"
-                             " summary, summary_upto, project_id) VALUES (?,?,?,?,?,?,?,?,NULL,?)",
+                             " summary, summary_upto, project_id, pinned, favorite, marked) VALUES (?,?,?,?,?,?,?,?,NULL,?,?,?,?)",
                              (c["id"], c["title"], c.get("provider"), c.get("model"), c.get("system"), c["created"],
-                              c["updated"], c.get("summary"), c.get("project_id")))
+                              c["updated"], c.get("summary"), c.get("project_id"), *flags))
                 upto = None
                 for m in c["messages"]:
                     cur = conn.execute("INSERT INTO messages (conv_id, uid, role, content, reasoning, meta, created) "
@@ -186,8 +193,9 @@ class Sync:
             row = q("SELECT updated FROM projects WHERE id=?", (p["id"],)).fetchone()
             if row and row["updated"] >= p["updated"]:
                 continue
-            q("INSERT OR REPLACE INTO projects (id, name, instructions, files, created, updated) VALUES (?,?,?,?,?,?)",
-              (p["id"], p["name"], p.get("instructions") or "", p.get("files") or "[]", p["created"], p["updated"]))
+            q("INSERT OR REPLACE INTO projects (id, name, instructions, files, created, updated, team_id) VALUES (?,?,?,?,?,?,?)",
+              (p["id"], p["name"], p.get("instructions") or "", p.get("files") or "[]", p["created"], p["updated"],
+               p.get("team_id")))
             n += 1
 
         st = ch.get("settings")

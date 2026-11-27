@@ -40,7 +40,8 @@
       <button data-view="tasks"><span class="ico" data-icon="clock"></span> Tareas</button>
       <button data-view="files"><span class="ico" data-icon="folder"></span> Archivos</button>
     </nav>
-    <div class="side-search"><input id="conv-search" type="search" placeholder="Buscar conversaciones…"></div>
+    <div class="side-search"><input id="conv-search" type="search" placeholder="Buscar conversaciones…">
+      <button id="conv-favs" class="icon-btn conv-favs" title="Ver sólo las favoritas" aria-label="Ver sólo las favoritas" aria-pressed="false"><span class="ico" data-icon="star"></span></button></div>
     <div id="conv-list" class="conv-list"></div>
     <div class="side-foot">
       <button data-view="settings" class="foot-btn tabs-like"><span class="ico" data-icon="gear"></span> Ajustes</button>
@@ -240,6 +241,7 @@
           <div class="row settings-head"><h1 class="page-title grow">Equipo</h1>
             <label class="check team-switch"><input type="checkbox" id="team-enabled"> Equipo activo</label>
             <button id="team-save" class="primary small">Guardar</button></div>
+          <div class="team-bar" id="team-bar"></div>
           <p class="muted">G3G3AI dirige y reparte el trabajo entre los miembros de su equipo: otros modelos con un papel concreto (por ejemplo, el modelo local para lo privado y uno potente para programar). Pulsa un recuadro para editarlo.</p>
           <div class="team-templates" id="team-templates"></div>
           <div class="team-wrap">

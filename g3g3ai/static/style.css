@@ -729,3 +729,36 @@ code.path-link:hover { background: var(--hover); }
 .log-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 12px; max-height: 50vh; display: block; overflow-y: auto; }
 .log-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .log-table td:first-child { white-space: nowrap; font-variant-numeric: tabular-nums; width: 60px; }
+
+.team-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.team-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.team-pick select { min-width: 180px; }
+.team-name { min-width: 220px; flex: 0 1 260px; }
+.team-bar .grow { flex: 1 1 200px; }
+
+.side-search { display: flex; gap: 4px; align-items: center; }
+.side-search input { flex: 1; }
+.conv-favs { flex: none; opacity: .65; }
+.conv-favs.on { opacity: 1; color: #d4a017; }
+.conv-favs.on svg { fill: currentColor; }
+.conv-star { flex: none; display: inline-flex; color: #d4a017; margin-right: 4px; }
+.conv-star svg { width: 12px; height: 12px; fill: currentColor; }
+.conv-item .acts button.on { color: #d4a017; }
+.conv-item .acts button.on svg { fill: currentColor; }
+.conv-item .acts .ico, .conv-item .acts svg { width: 14px; height: 14px; }
+
+.md-part { display: contents; }
+.load-older { display: block; margin: 4px auto 12px; }
+
+/* Acciones de la conversación: encima del título (sin moverlo) y sólo las básicas; el resto en ⋯ */
+.conv-item { position: relative; }
+.conv-item .acts { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); align-items: center; gap: 0;
+  background: var(--hover); border-radius: 7px; padding-left: 6px; box-shadow: -10px 0 8px -4px var(--hover); }
+.conv-item .acts button { padding: 2px 4px; display: inline-flex; align-items: center; }
+.conv-more { font-size: 15px !important; line-height: 1; }
+.conv-menu { position: fixed; z-index: 60; min-width: 200px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.18); padding: 4px; display: flex; flex-direction: column; }
+.conv-menu button { display: flex; align-items: center; gap: 8px; background: none; border: 0; text-align: left; padding: 7px 10px; border-radius: 7px; font-size: 14px; color: var(--text); }
+.conv-menu button:hover { background: var(--hover); }
+.conv-menu button.danger { color: #c0392b; }
+.conv-menu svg, .conv-menu .ico { width: 15px; height: 15px; }

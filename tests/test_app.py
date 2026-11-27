@@ -3012,3 +3012,32 @@ def test_scratch_scripts_are_not_offered_as_files(env):
     asyncio.run(ctx.run("write_file", {"path": str(home / "calc.py"), "content": "print(1)"}))
     asyncio.run(ctx.run("write_file", {"path": str(home / "informe.md"), "content": "# hola"}))
     assert ctx.files_out == [str(home / "informe.md")]
+
+
+def test_pins_sync_and_team_per_project(tmp_path):
+    import time as _t
+    from g3g3ai import team as TM
+    from g3g3ai.db import DB
+    db = DB(tmp_path / "a.db")
+    c = db.create_conversation(provider="local", model="local")
+    before = db.get_conversation(c["id"])["updated"]
+    _t.sleep(0.01)
+    db.mark_conversation(c["id"], pinned=True, favorite=True)
+    got = db.get_conversation(c["id"])
+    assert got["updated"] == before and got["pinned"] and got["favorite"] == 1   # no salta en la lista
+    from g3g3ai.sync import Sync
+
+    from g3g3ai.config import Config
+    cfg = Config(tmp_path / "cfg.json")
+    from g3g3ai.memory import Memory
+    ch = Sync(cfg, db, Memory(db)).export(before)              # sólo cambió la marca: igualmente viaja
+    assert [x["id"] for x in ch["conversations"]] == [c["id"]] and ch["conversations"][0]["pinned"]
+    db2 = DB(tmp_path / "b.db")
+    Sync(Config(tmp_path / "cfg2.json"), db2, Memory(db2)).apply(ch)
+    assert db2.get_conversation(c["id"])["favorite"] == 1
+    saved = [{"id": "t1", "name": "Juego", "members": [{"name": "P", "model": "x::y"}]}]
+    general = {"enabled": True, "members": [{"name": "G", "model": "x::y"}]}
+    assert TM.for_project(general, saved, {"team_id": "t1"})["name"] == "Juego"
+    assert TM.for_project(general, saved, {"team_id": "none"}) is None
+    assert TM.for_project(general, saved, None) is general
+    assert TM.for_project({"enabled": False, "members": []}, saved, {}) is None
