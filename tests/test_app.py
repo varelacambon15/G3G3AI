@@ -2905,3 +2905,26 @@ def test_read_file_reads_text_in_images(env):
     img.save(p)
     out = asyncio.run(ToolContext(Files(cfg), cfg, agent=True).run("read_file", {"path": str(p)}))
     assert "Beatriz" in out and "OCR" in out
+
+
+def test_mail_read_includes_attachment_text(env):
+    import asyncio
+    import base64
+    from fpdf import FPDF
+    from g3g3ai import mail as M
+    client, cfg, home, tmp = env
+    pdf = FPDF(); pdf.add_page(); pdf.set_font("Helvetica", size=12); pdf.cell(0, 10, "Roberto Solano 5,00 horas extra")
+    b64 = base64.b64encode(bytes(pdf.output())).decode()
+    raw = ("From: Yazmin <y@x.mx>\nTo: yo@x.com\nSubject: INCIDENCIAS\nDate: Tue, 25 Nov 2026 21:13:00 -0600\n"
+           "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=XX\n\n--XX\nContent-Type: text/plain\n\nadjunto el PDF\n"
+           "--XX\nContent-Type: application/pdf\nContent-Disposition: attachment; filename=\"SEGUNDA QUINCENA.pdf\"\n"
+           f"Content-Transfer-Encoding: base64\n\n{b64}\n--XX--\n")
+    (tmp / "mb").mkdir()
+    (tmp / "mb" / "Inbox").write_bytes(("From y@x.mx Tue Nov 25 21:13:00 2026\n" + raw + "\n").encode())
+    cfg.set("mail_enabled", True); cfg.set("mail_auto", False); cfg.set("mail_paths", [str(tmp / "mb")])
+    idx = M.MailIndex(cfg, tmp / "mi.sqlite"); idx.index_all()
+    ctx = _ctx(cfg); ctx.mail = idx
+    mid = idx.search(sender="y@x.mx")[0]["id"]
+    out = asyncio.run(ctx.run("mail_read", {"id": mid, "attachments": True}))
+    assert "Adjunto «SEGUNDA QUINCENA.pdf»" in out and "Roberto Solano 5,00" in out
+    assert "Roberto Solano" not in asyncio.run(ctx.run("mail_read", {"id": mid}))      # sin attachments: sólo el correo
