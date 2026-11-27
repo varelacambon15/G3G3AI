@@ -2928,3 +2928,19 @@ def test_mail_read_includes_attachment_text(env):
     out = asyncio.run(ctx.run("mail_read", {"id": mid, "attachments": True}))
     assert "Adjunto «SEGUNDA QUINCENA.pdf»" in out and "Roberto Solano 5,00" in out
     assert "Roberto Solano" not in asyncio.run(ctx.run("mail_read", {"id": mid}))      # sin attachments: sólo el correo
+
+
+def test_pdf_tables_respect_time_budget(tmp_path, monkeypatch):
+    from fpdf import FPDF
+    from g3g3ai import documents as D
+    pdf = FPDF(); pdf.add_page(); pdf.set_font("Helvetica", size=10)
+    pdf.cell(0, 10, "Proveedor: Calle Mayor 3, Madrid", new_x="LMARGIN", new_y="NEXT")
+    with pdf.table() as t:
+        for row in [["A", "B"], ["1", "2"]]:
+            r = t.row()
+            for c in row:
+                r.cell(c)
+    p = tmp_path / "f.pdf"; pdf.output(str(p))
+    monkeypatch.setattr(D, "TABLES_BUDGET", -1)          # sin tiempo: se usa el lector sencillo, sin bloquear
+    text = D.extract_text(p)
+    assert "Calle Mayor 3" in text and "| A | B |" not in text

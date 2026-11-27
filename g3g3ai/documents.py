@@ -196,6 +196,9 @@ def _odf(z: zipfile.ZipFile) -> str:
     return _xml_text(z.read("content.xml"), para_tags=("p", "h", "table-row"))
 
 
+TABLES_BUDGET = 12.0   # segundos como máximo buscando tablas en un PDF
+
+
 def _md_table(rows: list[list]) -> str:
     rows = [[" ".join(str(c or "").split()) for c in r] for r in rows if r and any(str(c or "").strip() for c in r)]
     if not rows:
@@ -213,10 +216,18 @@ def _pdf_tables(path: Path) -> str:
         import pdfplumber
     except ImportError:
         return ""
+    import time as _time
     parts, found = [], False
+    t0 = _time.monotonic()
     try:
         with pdfplumber.open(str(path)) as pdf:
             for i, page in enumerate(pdf.pages, 1):
+                # Presupuesto: facturas con miles de líneas y cajas hacen muy lento detectar tablas. Si una página
+                # es así o se agota el tiempo, se usa el lector sencillo (instantáneo) en vez de bloquear la respuesta.
+                if _time.monotonic() - t0 > TABLES_BUDGET or i > 40:
+                    return ""
+                if len(page.lines) + len(page.rects) + len(page.curves) > 1500:
+                    return ""
                 tables = [t for t in (page.extract_tables() or []) if t and len(t) > 1]
                 text = (page.extract_text() or "").strip()
                 if tables:

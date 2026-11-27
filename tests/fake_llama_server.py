@@ -190,6 +190,12 @@ class H(BaseHTTPRequestHandler):
             else:
                 self.chunk({"choices": [{"delta": {"content": "Dime qué quieres que busque usando `web_search`."}, "finish_reason": "stop"}]})
             self.wfile.write(b"data: [DONE]\n\n"); return
+        if "respuesta lenta" in str(first_user):  # escribe poco a poco durante ~3 s
+            import time as _t
+            for w in ["Esta ", "respuesta ", "llega ", "despacio ", "y ", "termina ", "bien."]:
+                self.chunk({"choices": [{"delta": {"content": w}}]}); self.wfile.flush(); _t.sleep(0.45)
+            self.chunk({"choices": [{"delta": {"content": ""}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n"); return
         if "desbocate" in str(first_user):  # se va al chino salvo que se le baje la temperatura
             if (req.get("temperature") or 1) <= 0.25:
                 self.chunk({"choices": [{"delta": {"content": "Respuesta serena y correcta."}, "finish_reason": "stop"}]})

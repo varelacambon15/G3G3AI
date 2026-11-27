@@ -1213,6 +1213,7 @@ async function openConversation(id, focusMsg, q) {
 }
 function newChat() {
   if (S.code) queueMicrotask(() => { S.workdir = store.get("code_dir", "") || undefined; renderCodePanel(); });
+  if (S.live) S.live.isNew = false;
   S.convId = null; S.conv = null; S.system = undefined; S.projectId = null; store.set("conv", null); renderProjectChip();
   renderMessages(); loadConversations(); closeSide(); $("#top-title").textContent = "";
   if (!isMobile()) $("#input").focus();
@@ -1246,6 +1247,7 @@ function renderMessages() {
   }
   $("#view-chat").classList.remove("is-empty"); $("#welcome-ideas")?.remove();
   msgs.forEach((m, i) => box.append(messageEl(m, i)));
+  if (S.live && S.streaming && S.live.conv && S.live.conv === S.convId) box.append(S.live.el);
   box.scrollTop = box.scrollHeight;
 }
 function diffBlock(path, diff) {
@@ -1331,7 +1333,8 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
   if (streaming && !content && !reasoning && !(tools || []).length && !extra.progress && extra.t0) {
     const secs = Math.round((Date.now() - extra.t0) / 1000);
     frag.append(h("div", { class: "waiting" }, h("span", { class: "dots" }, h("i"), h("i"), h("i")),
-      extra.status ? "" : (secs < 2 ? "Pensando…" : `Pensando… ${secs} s`)));
+      extra.status ? "" : extra.reading ? `Leyendo ${extra.reading > 1 ? `los ${extra.reading} adjuntos` : "el adjunto"}… ${secs} s`
+        : (secs < 2 ? "Pensando…" : `Pensando… ${secs} s`)));
   }
   const pg = extra.progress;
   if (pg && streaming && pg.done < pg.total) {
@@ -1808,11 +1811,13 @@ async function send(text, attachments, isContinue = false) {
   const el = h("div", { class: "msg assistant" });
   el.append(h("div", { class: "bubble cursor" }));
   box.append(el); box.scrollTop = box.scrollHeight;
+  // Respuesta en curso: si te vas a otra conversación y vuelves, se vuelve a mostrar y sigue escribiéndose
+  const live = S.live = { el, conv: S.convId || null, isNew: !S.convId };
 
   const ctrl = new AbortController(); S.streaming = ctrl;
   setSending(true);
   let content = "", reasoning = "", tools = [], errorMsg = null, raf = 0;
-  const extra = { route: null, fallbacks: [], images: [], files: [], todos: [], t0: Date.now() };
+  const extra = { route: null, fallbacks: [], images: [], files: [], todos: [], t0: Date.now(), reading: attachments.length };
   // Mientras no llegue nada, «Pensando… N s» (y la fase: leyendo adjuntos, conectando…) para que nunca parezca colgado
   const waitTick = setInterval(() => { if (!content && !reasoning && !tools.length && !extra.progress) paint(); }, 1000);
   const paint = () => {
@@ -1843,7 +1848,11 @@ async function send(text, attachments, isContinue = false) {
         const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
         if (!chunk.startsWith("data:")) continue;
         const ev = JSON.parse(chunk.slice(5));
-        if (ev.type === "start") { if (!S.convId) { S.convId = ev.conversation_id; store.set("conv", S.convId); loadConversations(); } }
+        if (ev.type === "start") {
+          live.conv = ev.conversation_id; extra.reading = 0;
+          if (!S.convId && live.isNew) { S.convId = ev.conversation_id; store.set("conv", S.convId); }
+          loadConversations();
+        }
         else if (ev.type === "content") { content += ev.text; extra.status = null; extra.progress = null; }
         else if (ev.type === "reasoning") { reasoning += ev.text; extra.progress = null; }
         else if (ev.type === "progress") extra.progress = ev;
@@ -1877,13 +1886,21 @@ async function send(text, attachments, isContinue = false) {
     clearInterval(waitTick);
     S.streaming = null;
     setSending(false);
-    if (S.convId) {
+    if (S.live === live) S.live = null;
+    const here = !!live.conv && S.convId === live.conv;
+    if (here) {
       await new Promise((r) => setTimeout(r, 150)); const wd = S.workdir; await openConversation(S.convId).catch(() => {}); S.workdir = wd;
       const cards = $$("#messages .msg.assistant:last-child .art-card");   // la IA acaba de crear una página o diagrama: se muestra al lado
       if (cards.length && !isMobile()) openArtifactCard(cards[cards.length - 1]);
+    } else {
+      el.remove();
+      loadConversations();
+      if (live.conv) {   // terminó mientras mirabas otra conversación: aviso con enlace
+        const title = (convCache.find((c) => c.id === live.conv) || {}).title || "otra conversación";
+        toast(errorMsg ? `No se pudo completar la respuesta en «${title}»` : `Respuesta lista en «${title}»`, 6000);
+      }
     }
-    else el.remove();
-    if (errorMsg) showChatError(errorMsg);
+    if (errorMsg && (here || !live.conv)) showChatError(errorMsg);
     if (document.hidden) systemNotify(errorMsg ? "G3G3AI: no se pudo responder" : "G3G3AI ha respondido",
       errorMsg || plainForSpeech(content).slice(0, 180) || "La respuesta está lista");
     refreshContext();

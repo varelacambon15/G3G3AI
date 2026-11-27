@@ -1102,7 +1102,9 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         model = body.get("model") or "local"
         text = (body.get("message") or "").strip()
         attachments = body.get("attachments") or []
+        t_attach = time.time()
         attach_text, attach_meta = await asyncio.to_thread(expand_attachments, attachments)   # el OCR puede tardar
+        attach_secs = time.time() - t_attach
         if not text and not attach_text and not body.get("continue"):
             raise HTTPException(400, "Mensaje vacío")
         agent = bool(body.get("use_tools"))
@@ -1281,6 +1283,10 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
             def log_note(text: str):
                 if len(gen_log) < 200:
                     gen_log.append({"t": round(time.time() - t_start, 1), "text": str(text)[:300]})
+
+            if attach_meta:
+                log_note(f"Adjuntos leídos en {attach_secs:.1f} s: " + ", ".join(
+                    a["name"] + (" (OCR)" if a.get("kind") == "document" and "OCR" in attach_text[:2000] else "") for a in attach_meta))
             made: list[str] = []
             out_files: list[str] = []
             todos: list = []

@@ -7,9 +7,11 @@ horas, nóminas o facturas escaneadas.
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
 MAX_PAGES = 30
+OCR_BUDGET = 60.0     # segundos como máximo leyendo un PDF escaneado
 _engine = None
 _lock = threading.Lock()
 _cache: dict[tuple[str, float, int], str] = {}
@@ -94,7 +96,12 @@ def pdf_text(path: Path, max_pages: int = MAX_PAGES) -> str:
     parts = []
     try:
         n = len(pdf)
+        t0 = time.monotonic()
         for i in range(min(n, max_pages)):
+            if i and time.monotonic() - t0 > OCR_BUDGET:      # no bloquear la respuesta: se avisa de lo que falta
+                parts.append(f"[… OCR detenido por tiempo: faltan las páginas {i + 1}–{n}. Pide leerlas aparte si las necesitas.]")
+                n = 0
+                break
             page = pdf[i]
             w = page.get_width() or 612                   # puntos (1/72 pulgada)
             scale = max(1.0, min(3.0, 1600 / w))           # ~1600 px de ancho: A4 a unos 190 ppp

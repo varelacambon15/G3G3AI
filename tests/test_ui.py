@@ -218,6 +218,20 @@ def test_ui_end_to_end(live):
         page.click('#perm-menu b >> text="Manual"')
         page.wait_for_selector(".perm-chip.perm-manual")
 
+        # 2j) Irse a otra conversación mientras responde y volver: la respuesta sigue a la vista
+        page.click("#new-chat")
+        page.fill("#input", "respuesta lenta")
+        page.click("#send-btn")
+        page.wait_for_selector(".msg.assistant >> text=respuesta", timeout=10000)
+        slow_id = page.evaluate("S.convId")
+        page.click("#conv-list .conv-item:not(.active)")                     # otra conversación
+        page.wait_for_function(f"S.convId && S.convId !== '{slow_id}'")
+        page.click(f"#conv-list .conv-item >> text=respuesta lenta")          # volver
+        page.wait_for_function(f"S.convId === '{slow_id}'")
+        page.wait_for_selector(".msg.assistant >> text=respuesta", timeout=3000)   # sigue ahí mientras escribe
+        page.wait_for_function("document.querySelector('#send-btn').dataset.state === 'idle'", timeout=15000)
+        page.wait_for_selector(".msg.assistant >> text=termina bien.", timeout=5000)
+
         # 2b) Selector de modelos con buscador
         page.click("#model-btn")
         page.wait_for_selector("#model-picker .mp-row")
