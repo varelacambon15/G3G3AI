@@ -54,11 +54,25 @@ git clone https://github.com/varelacambon15/G3G3AI.git && cd G3G3AI && ./install
 
 En Linux x64 también hay un binario `G3G3AI-linux-x64` en Releases/Actions.
 
+En **macOS con Apple Silicon** (M1/M2/M3/M4) hay dos archivos en Releases: `G3G3AI-macos.zip` (descomprime y arrastra **G3G3AI.app** a Aplicaciones; al abrirlo la primera vez, clic derecho → *Abrir*, porque está firmado «ad hoc») y `G3G3AI-macos-arm64` (el binario que usa la actualización automática). Se actualiza solo, como en Windows y Linux.
+
 ### Android
 
 - **App (APK):** se conecta a tu PC, y además tiene un **💬 Chat directo con API** para usar DeepSeek, Claude, OpenAI… desde el móvil sin ningún equipo encendido. Las claves se importan de un equipo con un toque. Ver `android/README.md`.
 - **Como cliente web** (sin instalar nada): abre en el navegador la dirección que aparece en Ajustes → Acceso remoto, y usa «Añadir a pantalla de inicio».
 - **Como servidor** (experimental): con [Termux](https://f-droid.org/packages/com.termux/) y `bash android/termux-install.sh`. Funciona con modelos pequeños (1–3B). Android puede cerrar Termux en segundo plano.
+
+### Conectar la app del móvil con el PC (emparejamiento)
+
+Sin escribir direcciones ni contraseñas:
+
+1. En el **PC**: Ajustes → Acceso → **Conectar la app del móvil** → *Generar código de emparejamiento*. Aparece un código de 6 dígitos y un QR (vale 10 minutos).
+2. En el **móvil**, en la app:
+   - **🔗 Enlazar con QR**: abre la página del PC y escanea el QR con la cámara (o escribe el código en esa misma página). Al terminar, el equipo queda guardado y se abre.
+   - **🔍 Buscar en la red**: encuentra el PC solo (mismo Wi-Fi) y ofrece emparejarlo con el código del paso 1.
+3. El código sólo entrega la contraseña al móvil; caduca a los 10 minutos, admite 5 intentos y se genera desde el propio PC (nadie remoto puede crear uno).
+
+El descubrimiento en la red usa un «ping» UDP al puerto del servidor; sólo responde con el nombre y la dirección del equipo, nunca con la contraseña.
 
 ## Uso
 

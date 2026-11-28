@@ -40,6 +40,8 @@ def asset_name() -> str | None:
         return "G3G3AI.exe"
     if sys.platform.startswith("linux"):
         return "G3G3AI-linux-x64"
+    if sys.platform == "darwin":
+        return "G3G3AI-macos-arm64"   # binario de la .app (Contents/MacOS/G3G3AI); la .app completa va aparte
     return None
 
 
@@ -156,6 +158,10 @@ class Updater:
         if sys.platform == "win32" and head[:2] != b"MZ" or sys.platform.startswith("linux") and head != b"\x7fELF":
             path.unlink(missing_ok=True)
             raise UpdateError("El archivo descargado no es un ejecutable válido.")
+        if sys.platform == "darwin" and head not in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe"):
+            # MH_MAGIC_64 (arm64) o FAT_MAGIC (binario universal)
+            path.unlink(missing_ok=True)
+            raise UpdateError("El archivo descargado no es un ejecutable de macOS válido.")
 
     def _swap_and_restart(self, exe: Path, new: Path) -> None:
         args = [a for a in sys.argv[1:]]
@@ -177,8 +183,11 @@ class Updater:
             subprocess.Popen(["cmd", "/c", str(script)], creationflags=0x00000008 | 0x00000200 | 0x08000000,
                              close_fds=True)      # DETACHED_PROCESS | NEW_PROCESS_GROUP | CREATE_NO_WINDOW
         else:
+            # Linux y macOS: se puede sustituir un ejecutable en marcha y volver a lanzar.
+            # En macOS el binario vive dentro de G3G3AI.app/Contents/MacOS/, y al cambiarlo
+            # queda actualizada la .app entera (todo lo demás va dentro del binario).
             os.chmod(new, 0o755)
-            os.replace(new, exe)                 # en Linux se puede sustituir un ejecutable en marcha
+            os.replace(new, exe)
             env = {**os.environ, "G3G3AI_WAIT_PID": str(os.getpid())}
             subprocess.Popen([str(exe), *args], env=env, start_new_session=True, close_fds=True)
         self._exit_soon()

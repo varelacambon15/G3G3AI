@@ -119,6 +119,61 @@ jobs:
           name: G3G3AI-linux-x64-completo
           path: dist/G3G3AI-linux-x64-completo.tar.gz
 
+  macos:
+    needs: tests
+    runs-on: macos-14          # Apple Silicon (M1): genera la .app para Macs con chip M
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt pyinstaller pywebview
+      - run: pyinstaller --noconfirm --distpath dist packaging/g3g3ai.spec
+      - name: Montar G3G3AI.app y firmar ad hoc
+        run: |
+          APP=dist/G3G3AI.app
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp dist/G3G3AI "$APP/Contents/MacOS/G3G3AI"
+          chmod +x "$APP/Contents/MacOS/G3G3AI"
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>G3G3AI</string>
+            <key>CFBundleDisplayName</key><string>G3G3AI</string>
+            <key>CFBundleIdentifier</key><string>es.g3g3ai.app</string>
+            <key>CFBundleVersion</key><string>0.44.0</string>
+            <key>CFBundleShortVersionString</key><string>0.44.0</string>
+            <key>CFBundleExecutable</key><string>G3G3AI</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          PLIST
+          codesign --force --deep -s - "$APP"
+          codesign --verify --verbose=2 "$APP"
+          # Comprobación de arranque: la .app debe servir la interfaz
+          export G3G3AI_CONFIG_DIR="$RUNNER_TEMP/g3cfg" G3G3AI_DATA_DIR="$RUNNER_TEMP/g3data"
+          "$APP/Contents/MacOS/G3G3AI" --headless --port 8879 &> "$RUNNER_TEMP/g3.log" &
+          APPPID=$!
+          ok=0
+          for i in $(seq 1 60); do
+            sleep 1
+            if curl -fsS http://127.0.0.1:8879/ > /dev/null; then ok=1; break; fi
+          done
+          kill $APPPID 2>/dev/null || true
+          if [ "$ok" != "1" ]; then cat "$RUNNER_TEMP/g3.log"; echo "La .app no respondió"; exit 1; fi
+          echo "La .app arranca y sirve la interfaz"
+      - name: Comprimir la .app
+        run: |
+          cd dist && zip -qry G3G3AI-macos.zip G3G3AI.app && cd ..
+          cp dist/G3G3AI.app/Contents/MacOS/G3G3AI dist/G3G3AI-macos-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: G3G3AI-macos
+          path: |
+            dist/G3G3AI-macos.zip
+            dist/G3G3AI-macos-arm64
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -139,7 +194,7 @@ jobs:
   release:
     # Con una etiqueta v* o al lanzar el flujo a mano (Actions → Run workflow): compila y publica la Release
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    needs: [windows, linux, android]
+    needs: [windows, linux, macos, android]
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
