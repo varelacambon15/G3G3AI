@@ -146,7 +146,8 @@ jobs:
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp dist/G3G3AI "$APP/Contents/MacOS/G3G3AI"
           chmod +x "$APP/Contents/MacOS/G3G3AI"
-          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          # Delimitador SIN comillas: así $VER se expande dentro del plist (no hay otras $ en el XML)
+          cat > "$APP/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
