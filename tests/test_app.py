@@ -3333,7 +3333,9 @@ def test_self_update_on_macos_replaces_the_app_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr(U.sys, "executable", str(exe))
     assert U.installed_exe() == app.resolve()                      # se cambia la carpeta .app entera
     script = U.mac_script(app, tmp_path / ".stage", 4242, ["--port", "8800"])
-    assert "kill -0 4242" in script and f"mv {tmp_path}/.stage/G3G3AI.app {app}" in script and "open -n" in script
+    import shlex
+    stage_app = tmp_path / ".stage" / "G3G3AI.app"
+    assert "kill -0 4242" in script and f"mv {shlex.quote(str(stage_app))} {shlex.quote(str(app))}" in script and "open -n" in script
     assert script.index("kill -0") < script.index("mv ")          # primero espera a que la app se cierre
     # Abierta desde Descargas (Gatekeeper la «traslada», sólo lectura): se explica qué hacer
     translocated = tmp_path / "AppTranslocation" / "X" / "d" / "G3G3AI.app"
