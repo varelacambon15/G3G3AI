@@ -9,3 +9,6 @@ venv/
 .build-venv/
 dist/
 build/
+.gradle/
+local.properties
+.kotlin/
