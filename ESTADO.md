@@ -64,8 +64,16 @@ descubrimiento en la red), más contenido en el chat directo y versión de macOS
   - `f3427a7` macOS en CI + README (0.44.0)
   - `b6a47f4` `.gitignore` de artefactos Gradle
   - `9ec79bb` refirmado de la .app tras actualizar
-- Estado: rama empujada a `origin`.
-- **Comprobado en el CI real** (run 46151138062, anterior al arreglo): `tests`, `windows`, `linux` y `android` en verde
-  (el job de Android produce la APK en el runner). `macos` falló en 1 s por la etiqueta del runner, ya cambiada a
-  `macos-latest`; falta verlo pasar en un run nuevo.
-- Pendiente: lanzar la release 0.44.0 (ver abajo).
+  - `e4b0c11` macOS en CI con `macos-latest` y arquitectura detectada en el runner
+  - `f5856a1` heredoc del Info.plist sin comillas (para que se expanda la versión); **sólo en local, push pendiente**
+- **Comprobado en el CI real** (run `46155137321`, commit `e4b0c11`): `tests`, `windows`, `linux`, `macos` y `android`
+  en **success** (macOS ya monta y firma la .app; Android produce la APK en el runner). `release` en `skipped`
+  porque no había etiqueta.
+- Antes de ese run, el job `macos` fallaba en 1 s por la etiqueta del runner (`macos-14` → `macos-14-arm64-us-default`,
+  «is not supported» en esta cuenta).
+- **Fallo detectado y corregido después**: el heredoc del `Info.plist` usaba delimitador entrecomillado (`<<'PLIST'`),
+  así que `$VER` no se expandía y la .app se publicaba con la versión literal `$VER`. Comprobado en Git Bash con las
+  dos variantes y ya corregido en `f5856a1`; el run `46155137321` todavía llevaba la versión literal en el plist.
+- Estado: **`origin` está en `e4b0c11`**; falta empujar `f5856a1` (el push quedó denegado).
+- Pendiente: (1) empujar `f5856a1`; (2) lanzar la release 0.44.0 etiquetando `v0.44.0`, o con Actions →
+  «Run workflow» sobre la rama (el job `release` se dispara también con `workflow_dispatch`).
