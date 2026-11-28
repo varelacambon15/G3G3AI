@@ -49,6 +49,7 @@ public class WebActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         direct = getIntent().getBooleanExtra("direct", false);
+        boolean pair = getIntent().getBooleanExtra("pair", false);
         baseUrl = direct ? "file:///android_asset/direct" : getIntent().getStringExtra("url");
         String token = getIntent().getStringExtra("token");
 
@@ -76,6 +77,12 @@ public class WebActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
                 Uri u = req.getUrl();
+                // La página /m del PC avisa de que el emparejamiento terminó (vuelve a Equipos)
+                if ("g3g3ai".equals(u.getScheme())) {
+                    ServersActivity.pendingPair = u.getQueryParameter("d");
+                    backToServers();
+                    return true;
+                }
                 Uri base = Uri.parse(baseUrl);
                 boolean sameServer = direct ? "file".equals(u.getScheme())
                         : u.getHost() != null && u.getHost().equals(base.getHost()) && u.getPort() == base.getPort();
@@ -126,6 +133,9 @@ public class WebActivity extends Activity {
             bridge = new NativeBridge(this, web);
             web.addJavascriptInterface(bridge, "G3Native");
             web.loadUrl("file:///android_asset/direct/index.html");
+        } else if (pair) {
+            // Página de emparejamiento del PC: escanea el QR o escribe el código; al acabar vuelve a Equipos
+            web.loadUrl(baseUrl + "/m");
         } else if (savedInstanceState != null) {
             web.restoreState(savedInstanceState);
         } else {

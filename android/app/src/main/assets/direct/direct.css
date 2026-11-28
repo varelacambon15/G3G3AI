@@ -118,3 +118,23 @@ details.prov summary b { flex: 1; }
 .prov-actions .toggle { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
 .prov-actions .toggle input { width: auto; }
 .test-out.ok { color: #3e8a52; }
+
+/* ===== Uso del plan, ficha de modelo y acciones de conversación ===== */
+.usage-chip { align-self: center; border: 1px solid var(--border); background: transparent; color: var(--muted);
+  border-radius: 999px; font-size: 12px; padding: 3px 10px; margin-right: 6px; flex: none; }
+.usage-chip[data-level=high] { color: #b7791f; border-color: #b7791f66; }
+.usage-chip[data-level=full] { color: #c0392b; border-color: #c0392b66; }
+.usage-pop, .model-card { position: fixed; left: 8px; right: 8px; bottom: 76px; z-index: 45;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.18); max-height: 60vh; overflow-y: auto; }
+.usage-pop .dialog-head, .model-card .dialog-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.meter { margin: 10px 0; }
+.meter-head { display: flex; justify-content: space-between; font-size: 13.5px; margin-bottom: 3px; }
+.meter-bar { height: 8px; border-radius: 6px; background: var(--panel-2); overflow: hidden; }
+.meter-bar span { display: block; height: 100%; background: #3e8a52; border-radius: 6px; }
+.meter-bar[data-level=high] span { background: #b7791f; }
+.meter-bar[data-level=full] span { background: #c0392b; }
+.model-card b { display: block; overflow-wrap: anywhere; }
+.model-card a { color: var(--accent); }
+.conv-actions { display: flex; gap: 2px; flex: none; }
+.conv-actions button { padding: 4px; }

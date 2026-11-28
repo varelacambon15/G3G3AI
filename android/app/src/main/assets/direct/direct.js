@@ -114,6 +114,8 @@ const ICON_PATHS = {
   doc: '<path d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8L14 3.5Z"/><path d="M14 3.5V8h4.5M9 12.5h6M9 16h6"/>',
   globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.4 3.5 5.3 3.5 8.5s-1 6.1-3.5 8.5c-2.5-2.4-3.5-5.3-3.5-8.5s1-6.1 3.5-8.5Z"/>',
   pen: '<path d="M12 20h8M16.5 3.8a2 2 0 0 1 2.8 2.8L8 18l-4 1 1-4L16.5 3.8Z"/>', bulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3Z"/>',
+  pin: '<path d="M12 17v5M5.5 9.5 7 3h10l1.5 6.5a2 2 0 0 1-2 2.5h-9a2 2 0 0 1-2-2.5ZM7 12h10"/>',
+  star: '<path d="m12 3.5 2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.9l-5.3 2.7 1-5.8-4.2-4.1 5.9-.9L12 3.5Z"/>',
 };
 function ico(name) {
   const s = document.createElement("span");
@@ -188,6 +190,140 @@ async function fetchModels(p) {
   if (r.status >= 400) throw new Error(`HTTP ${r.status}`);
   return (JSON.parse(r.text).data || []).map((m) => m.id).sort();
 }
+
+// Uso del plan o saldo del proveedor (misma lógica que el escritorio: OpenCode Go, OpenRouter, DeepSeek)
+const USAGE = { pid: null, data: null, ticket: 0 };
+const until = (iso) => {
+  if (!iso) return "";
+  const ms = new Date(iso) - Date.now(); if (!(ms > 0)) return "ya";
+  const m = Math.round(ms / 60000), hh = Math.floor(m / 60), dd = Math.floor(hh / 24);
+  return dd >= 1 ? `en ${dd} d ${hh % 24} h` : hh >= 1 ? `en ${hh} h ${m % 60} min` : `en ${m} min`;
+};
+const money = (v) => v == null ? "—" : v < 0.01 && v > 0 ? `$${v.toFixed(4)}` : `$${v.toFixed(2)}`;
+async function refreshUsage(fresh = false) {
+  const chip = $("#usage-chip"); if (!chip) return;
+  const [pid] = ($("#model").value || "").split("::");
+  const p = S.providers.find((x) => x.id === pid);
+  if (!p) { chip.classList.add("hidden"); USAGE.pid = null; return; }
+  const t = ++USAGE.ticket;
+  const kind = usageKind(p);
+  if (!kind) { chip.classList.add("hidden"); USAGE.pid = null; return; }
+  let d = null;
+  try { d = await fetchLimits(p, fresh); } catch { d = null; }
+  if (t !== USAGE.ticket) return;
+  USAGE.pid = pid; USAGE.data = d;
+  if (!d || !d.kind) { chip.classList.add("hidden"); return; }
+  chip.classList.remove("hidden");
+  if (d.meters?.length) {
+    const top = d.meters.reduce((a, b) => (b.percent > a.percent ? b : a));
+    chip.textContent = `${top.percent} %`;
+    chip.dataset.level = top.status === "rate-limited" || top.percent >= 90 ? "full" : top.percent >= 70 ? "high" : "ok";
+    chip.title = d.meters.map((m) => `${m.name}: ${m.percent} % (se reinicia ${until(m.resets_at)})`).join("\n");
+  } else if (d.credits) {
+    const c = d.credits;
+    chip.textContent = c.remaining != null ? money(c.remaining) : money(c.used);
+    chip.dataset.level = c.remaining != null && c.remaining < 1 ? "high" : "ok";
+    chip.title = c.remaining != null ? `Saldo que queda: ${money(c.remaining)}` : `Gastado: ${money(c.used)}`;
+  }
+}
+function usageKind(p) {
+  const b = (p.base_url || "").toLowerCase();
+  if (b.includes("opencode.ai") && b.includes("/go")) return "opencode-go";
+  if (b.includes("openrouter.ai")) return "openrouter";
+  if (b.includes("api.deepseek.com")) return "deepseek";
+  return null;
+}
+async function fetchLimits(p, fresh = false) {
+  const key = p.id + "|" + p.base_url;
+  if (!fresh && USAGE.pid === p.id && USAGE.data && Date.now() - (USAGE.at || 0) < 60000) return USAGE.data;
+  const h = { Authorization: "Bearer " + p.api_key };
+  let out;
+  if (usageKind(p) === "opencode-go") {
+    const base = p.base_url.replace(/\/$/, "");
+    const urls = [base + "/usage", "https://opencode.ai/inference/go/v1/usage"];
+    let r = null;
+    for (const u of urls) {
+      r = await request({ url: u, headers: h });
+      if (r.status !== 404) break;
+    }
+    if (r.status >= 400) throw new Error("HTTP " + r.status);
+    const u = (JSON.parse(r.text).usage) || {};
+    const names = { rolling: "5 horas", weekly: "Semana", monthly: "Mes" };
+    out = { kind: "opencode-go", meters: Object.keys(names).filter((k) => k in u).map((k) => ({
+      id: k, name: names[k], percent: Number((u[k] || {}).percent || 0),
+      status: (u[k] || {}).status || "ok", resets_at: (u[k] || {}).resetsAt })) };
+  } else if (usageKind(p) === "openrouter") {
+    const r = await request({ url: "https://openrouter.ai/api/v1/key", headers: h });
+    if (r.status >= 400) throw new Error("HTTP " + r.status);
+    const d = (JSON.parse(r.text).data) || {};
+    out = { kind: "openrouter", credits: { used: d.usage, limit: d.limit, remaining: d.limit_remaining, currency: "USD" } };
+  } else {
+    const r = await request({ url: "https://api.deepseek.com/user/balance", headers: h });
+    if (r.status >= 400) throw new Error("HTTP " + r.status);
+    const b = ((JSON.parse(r.text).balance_infos) || [{}])[0];
+    out = { kind: "deepseek", credits: { remaining: Number(b.total_balance || 0), currency: b.currency || "USD" } };
+  }
+  USAGE.pid = p.id; USAGE.data = out; USAGE.at = Date.now();
+  return out;
+}
+// Panel con el detalle del uso (barras por ventana y saldo)
+async function openUsagePanel() {
+  const old = document.querySelector(".usage-pop"); if (old) old.remove();
+  const [pid, ...rest] = ($("#model").value || "").split("::");
+  const p = S.providers.find((x) => x.id === pid);
+  if (!p) return;
+  const pop = h("div", { class: "usage-pop", role: "dialog", "aria-label": "Uso y gasto" }, h("p", { class: "muted" }, "Consultando…"));
+  document.querySelector(".composer-wrap").append(pop);
+  const close = (ev) => { if (!pop.contains(ev.target) && ev.target !== $("#usage-chip")) { pop.remove(); document.removeEventListener("mousedown", close, true); } };
+  setTimeout(() => document.addEventListener("mousedown", close, true), 0);
+  let lim = null, err = null;
+  try { lim = await fetchLimits(p, true); } catch (e) { err = e.message; }
+  pop.innerHTML = "";
+  pop.append(h("div", { class: "dialog-head" }, h("b", {}, `Uso · ${p.name}`),
+    h("button", { class: "icon", "aria-label": "Cerrar", onclick: () => pop.remove() }, ico("x"))));
+  if (err) pop.append(h("p", { class: "muted small" }, "No se pudo consultar: " + err));
+  for (const m of lim?.meters || []) {
+    const lvl = m.status === "rate-limited" || m.percent >= 90 ? "full" : m.percent >= 70 ? "high" : "ok";
+    pop.append(h("div", { class: "meter" },
+      h("div", { class: "meter-head" }, h("span", {}, m.name), h("b", {}, m.status === "rate-limited" ? "Agotado" : `${m.percent} %`)),
+      h("div", { class: "meter-bar", "data-level": lvl }, h("span", { style: `width:${Math.min(100, m.percent)}%` })),
+      h("small", { class: "muted" }, `Se reinicia ${until(m.resets_at)}` + (m.resets_at ? ` (${new Date(m.resets_at).toLocaleString()})` : ""))));
+  }
+  if (lim?.kind === "opencode-go") pop.append(h("p", { class: "muted small" },
+    "El límite de 5 horas es el 20 % del cupo mensual y el semanal el 50 % (se reinicia los lunes a las 00:00 UTC). Todos los modelos de Go comparten el mismo cupo; los gratuitos no lo gastan."));
+  if (lim?.credits) {
+    const c = lim.credits;
+    pop.append(h("div", { class: "meter" }, ...[
+      c.remaining != null ? h("div", { class: "meter-head" }, h("span", {}, "Saldo disponible"), h("b", {}, money(c.remaining))) : null,
+      c.used != null ? h("div", { class: "meter-head" }, h("span", {}, "Gastado"), h("b", {}, money(c.used))) : null,
+      c.limit != null ? h("div", { class: "meter-head" }, h("span", {}, "Límite"), h("b", {}, money(c.limit))) : null]));
+  }
+  if (!lim?.meters?.length && !lim?.credits) pop.append(h("p", { class: "muted small" }, "Este proveedor no informa de uso ni saldo."));
+}
+$("#usage-chip")?.addEventListener("click", openUsagePanel);
+
+// Ficha del modelo al desplegar el selector (proveedor, nº de modelos, uso y enlace a claves)
+async function modelCard() {
+  const old = document.querySelector(".model-card"); if (old) { old.remove(); return; }
+  const [pid, ...rest] = ($("#model").value || "").split("::");
+  const p = S.providers.find((x) => x.id === pid);
+  if (!p) return;
+  const card = h("div", { class: "model-card" }, h("b", {}, rest.join("::") || "(sin modelo)"),
+    h("div", { class: "muted small" }, `${p.name} · ${p.base_url}`));
+  card.append(h("div", { class: "muted small" }, (S.models[p.id] || []).length + " modelos disponibles"));
+  try {
+    const lim = await fetchLimits(p);
+    if (lim?.meters?.length) card.append(h("div", { class: "muted small" },
+      "Uso: " + lim.meters.map((m) => `${m.name} ${m.percent} %`).join(" · ")));
+    else if (lim?.credits?.remaining != null) card.append(h("div", { class: "muted small" }, `Saldo: ${money(lim.credits.remaining)}`));
+  } catch { /* sin datos de uso: no pasa nada */ }
+  if (p.key_url) card.append(h("a", { href: p.key_url, target: "_blank", rel: "noopener", class: "small" }, "Conseguir o gestionar la clave ↗"));
+  document.querySelector(".composer-wrap").append(card);
+  const close = (ev) => { if (!card.contains(ev.target) && ev.target !== $("#model")) { card.remove(); document.removeEventListener("mousedown", close, true); } };
+  setTimeout(() => document.addEventListener("mousedown", close, true), 0);
+}
+$("#model").addEventListener("click", modelCard);
+
 async function renderModels(refresh = false) {
   const sel = $("#model"), prev = store.get("model", "");
   sel.innerHTML = "";
@@ -204,21 +340,51 @@ async function renderModels(refresh = false) {
   }
   store.set("models", S.models);
   if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  refreshUsage();
 }
-$("#model").addEventListener("change", (e) => store.set("model", e.target.value));
+$("#model").addEventListener("change", (e) => { store.set("model", e.target.value); refreshUsage(); });
 
 // --- Conversaciones ----------------------------------------------------------------------
 function renderConvs() {
   const box = $("#convs"); box.innerHTML = "";
   const q = ($("#conv-search")?.value || "").trim().toLowerCase();
-  const list = S.convs.filter((c) => !q || c.title.toLowerCase().includes(q) || c.messages.some((m) => (m.content || "").toLowerCase().includes(q)));
+  // Fijadas arriba, luego favoritas, luego el resto; dentro de cada grupo, la más reciente primero
+  const rank = (c) => (c.pinned ? 0 : c.fav ? 1 : 2);
+  const list = S.convs.filter((c) => !q || c.title.toLowerCase().includes(q) || c.messages.some((m) => (m.content || "").toLowerCase().includes(q)))
+    .sort((a, b) => rank(a) - rank(b) || (b.created || 0) - (a.created || 0));
   if (!list.length) box.append(h("p", { class: "muted small" }, q ? "Sin resultados." : "Aún no hay conversaciones."));
   for (const c of list) {
+    const marks = (c.pinned ? "\ud83d\udccc" : "") + (c.fav ? "\u2606" : "");
     box.append(h("div", { class: "conv" + (S.current === c ? " active" : ""), onclick: () => { open(c); document.body.classList.remove("drawer-open"); } },
-      h("span", {}, c.title),
-      h("button", { onclick: (e) => { e.stopPropagation(); if (!confirm("¿Borrar esta conversación?")) return;
-        S.convs = S.convs.filter((x) => x !== c); saveConvs(); if (S.current === c) open(null); else renderConvs(); } }, ico("trash"))));
+      h("span", {}, (marks ? marks + " " : "") + c.title),
+      h("span", { class: "conv-actions" },
+        h("button", { title: c.pinned ? "Quitar de fijadas" : "Fijar arriba", onclick: (e) => { e.stopPropagation(); c.pinned = !c.pinned; saveConvs(); renderConvs(); } }, ico("pin")),
+        h("button", { title: c.fav ? "Quitar de favoritas" : "Favorita", onclick: (e) => { e.stopPropagation(); c.fav = !c.fav; saveConvs(); renderConvs(); } }, ico("star")),
+        h("button", { title: "Exportar como Markdown", onclick: (e) => { e.stopPropagation(); exportConv(c); } }, ico("doc")),
+        h("button", { title: "Borrar", onclick: (e) => { e.stopPropagation(); if (!confirm("\u00bfBorrar esta conversaci\u00f3n?")) return;
+          S.convs = S.convs.filter((x) => x !== c); saveConvs(); if (S.current === c) open(null); else renderConvs(); } }, ico("trash")))));
   }
+}
+// Exportar una conversación como Markdown (descarga .md con el título en el nombre)
+function exportConv(c) {
+  const lines = [`# ${c.title}`, "", `*Exportado de G3G3AI (chat directo) · ${new Date().toLocaleString()}*`, ""];
+  for (const m of c.messages || []) {
+    if (m.role === "user") {
+      lines.push(`## \ud83d\udc64 T\u00fa`, "", m.content || "", "");
+      for (const img of m.images || []) lines.push(`![imagen](${img})`, "");
+    } else {
+      const { think, body } = splitThink(m.content || "");
+      if (think) lines.push(`<details><summary>Razonamiento</summary>\n\n${think}\n\n</details>`, "");
+      lines.push(`## \ud83e\udd16 ${m.model || "Asistente"}`, "", body, "");
+      if (m.error) lines.push(`> \u26a0\ufe0f ${m.error}`, "");
+    }
+  }
+  const name = "g3g3ai-" + (c.title || "chat").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) + ".md";
+  const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast("Conversación exportada: " + name);
 }
 function open(c) { S.current = c; renderMessages(); renderConvs(); }
 $("#conv-search").addEventListener("input", renderConvs);
@@ -281,12 +447,23 @@ function renderMessages() {
     const hr = new Date().getHours();
     const hello = hr < 6 ? "Buenas noches" : hr < 13 ? "Buenos días" : hr < 21 ? "Buenas tardes" : "Buenas noches";
     const ok = ready().length > 0;
-    const ideas = [["doc", "Resume este texto", "Resume en 5 puntos clave el siguiente texto:\n\n"],
+    const ideas = [
+      ["doc", "Resume este texto", "Resume en 5 puntos clave el siguiente texto:\n\n"],
       ["pen", "Redacta un correo", "Redacta un correo breve y cordial para "],
       ["bulb", "Explícame algo", "Explícame de forma sencilla cómo funciona "],
-      ["globe", "Traduce", "Traduce al inglés manteniendo el tono:\n\n"]];
+      ["globe", "Traduce", "Traduce al inglés manteniendo el tono:\n\n"],
+      ["doc", "Saca los puntos clave", "Dame las ideas principales de esto, en una lista:\n\n"],
+      ["pen", "Mensaje de disculpa", "Redacta un mensaje sincero para disculparme con "],
+      ["bulb", "Ideas de regalo", "Dame 10 ideas de regalo para "],
+      ["globe", "Mejora este texto", "Mejora la redacción, claridad y ortografía, sin cambiar el sentido:\n\n"],
+      ["doc", "Lista de la compra", "Hazme la lista de la compra para esta receta:\n\n"],
+      ["pen", "Publicación para redes", "Escribe una publicación breve y cercana para redes sociales sobre "],
+      ["bulb", "Plan de estudio", "Prepárame un plan de estudio de dos semanas para "],
+      ["globe", "Prepárame una entrevista", "Hazme preguntas de entrevista para el puesto de "],
+    ];
+    const pick = ideas.map((v, ix) => [Math.random(), ix, v]).sort((a, b) => a[0] - b[0]).slice(0, 4).map((x) => x[2]);
     box.append(h("div", { class: "empty" }, h("h1", {}, ico("spark"), hello),
-      ok ? h("div", { class: "ideas" }, ideas.map(([i, label, text]) => h("button", { onclick: () => { input.value = text; input.focus(); input.dispatchEvent(new Event("input")); } }, ico(i), label)))
+      ok ? h("div", { class: "ideas" }, pick.map(([i, label, text]) => h("button", { onclick: () => { input.value = text; input.focus(); input.dispatchEvent(new Event("input")); } }, ico(i), label)))
         : h("div", {}, h("p", {}, "Para empezar, añade un proveedor de IA (OpenCode Go, OpenRouter, DeepSeek, Claude…) o importa los de tu PC."),
           h("button", { class: "primary", onclick: openSettings }, "Configurar un proveedor"))));
     return;
