@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import subprocess
@@ -20,6 +21,8 @@ import time
 from pathlib import Path
 
 from . import __version__
+
+log = logging.getLogger(__name__)
 
 REPO = "varelacambon15/G3G3AI"
 API = "https://api.github.com"
@@ -163,6 +166,21 @@ class Updater:
             path.unlink(missing_ok=True)
             raise UpdateError("El archivo descargado no es un ejecutable de macOS válido.")
 
+    def _resign_macos(self, exe: Path) -> None:
+        """Al cambiar el binario dentro de G3G3AI.app, la firma ad hoc deja de valer y macOS
+        mataría el proceso al arrancar. Se vuelve a firmar la .app entera (ad hoc, sin cuenta).
+        Si la .app no está firmada o no hay codesign, no se hace nada: no es un error."""
+        app = next((p for p in exe.parents if p.suffix == ".app"), None)
+        if app is None:
+            return
+        try:
+            r = subprocess.run(["codesign", "--force", "--deep", "-s", "-", str(app)],
+                               capture_output=True, text=True, timeout=120)
+            if r.returncode != 0:
+                log.warning("No se pudo volver a firmar %s: %s", app, (r.stderr or "").strip())
+        except Exception as e:  # noqa: BLE001
+            log.warning("No se pudo volver a firmar %s: %s", app, e)
+
     def _swap_and_restart(self, exe: Path, new: Path) -> None:
         args = [a for a in sys.argv[1:]]
         if sys.platform == "win32":
@@ -188,6 +206,8 @@ class Updater:
             # queda actualizada la .app entera (todo lo demás va dentro del binario).
             os.chmod(new, 0o755)
             os.replace(new, exe)
+            if sys.platform == "darwin":
+                self._resign_macos(exe)
             env = {**os.environ, "G3G3AI_WAIT_PID": str(os.getpid())}
             subprocess.Popen([str(exe), *args], env=env, start_new_session=True, close_fds=True)
         self._exit_soon()
