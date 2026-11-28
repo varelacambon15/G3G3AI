@@ -3321,7 +3321,8 @@ def test_pairing_code_page_discovery_and_lockout(env):
 
 
 def test_self_update_on_macos_replaces_the_app_bundle(tmp_path, monkeypatch):
-    import sys as _sys
+    import urllib.request  # noqa: F401  (importarlo antes de simular darwin: si no, busca el módulo _scproxy de macOS)
+    import httpx  # noqa: F401
     from g3g3ai import updater as U
     monkeypatch.setattr(U.sys, "platform", "darwin")
     assert U.asset_name() == "G3G3AI-macos.zip"
