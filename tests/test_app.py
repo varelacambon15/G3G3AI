@@ -3348,3 +3348,45 @@ def test_self_update_on_macos_replaces_the_app_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr(httpx, "get", lambda *a, **k: httpx.Response(200, json=release))
     out = info.check(force=True)
     assert not out["can_install"] and "Aplicaciones" in out["reason"]
+
+
+def test_github_tool_reads_ci_logs_and_dispatches_workflow(monkeypatch):
+    import asyncio
+    import httpx
+    from g3g3ai import github as GH
+    seen = []
+
+    def handler(req):
+        seen.append((req.method, req.url.path))
+        p = req.url.path
+        if p.endswith("/actions/runs") and req.method == "GET":
+            return httpx.Response(200, json={"workflow_runs": [{"id": 9, "head_sha": "abcdef1234", "head_branch": "dev", "event": "push",
+                                                                 "conclusion": "failure", "status": "completed", "display_title": "Arreglo"}]})
+        if p.endswith("/runs/9/jobs"):
+            return httpx.Response(200, json={"jobs": [{"id": 77, "name": "tests", "conclusion": "failure", "status": "completed",
+                                                       "steps": [{"name": "Pruebas", "conclusion": "failure"}]}]})
+        if p.endswith("/jobs/77/logs"):
+            return httpx.Response(200, text="2026-11-28T10:00:00Z ok\n2026-11-28T10:00:01Z E   AssertionError: 1 != 2\n2026-11-28T10:00:02Z ##[error]Process completed with exit code 1.")
+        if p.endswith("/dispatches"):
+            return httpx.Response(204)
+        if p.endswith("/releases/latest"):
+            return httpx.Response(200, json={"name": "G3G3AI 0.44.0", "tag_name": "v0.44.0", "published_at": "x", "html_url": "u", "assets": [{"name": "G3G3AI.exe", "size": 3145728}], "body": "notas"})
+        if p.endswith("/repos/o/r"):
+            return httpx.Response(200, json={"default_branch": "dev"})
+        return httpx.Response(404)
+    real = httpx.AsyncClient
+    monkeypatch.setattr(GH.httpx, "AsyncClient", lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)}))
+
+    class Cfg(dict):
+        def __getitem__(self, k):
+            return self.get(k, "")
+    cfg = Cfg(github_token="t")
+    run = lambda **a: asyncio.run(GH.call(cfg, {"repo": "o/r", **a}, None))
+    assert "9 · abcdef1 · dev · push · ✕ failure" in run(action="runs", ref="dev")
+    out = run(action="run", run_id=9)
+    assert "✕ tests (id 77)" in out and "job_log job_id=77" in out
+    log = run(action="job_log", job_id=77, tail=5)
+    assert "AssertionError" in log and "primer error en la línea 2" in log and "Z ok" not in log   # sin marcas de hora
+    assert "v0.44.0" in run(action="release") and "G3G3AI.exe (3 MB)" in run(action="release")
+    assert "lanzado" in run(action="dispatch", workflow="build.yml") and ("POST", "/repos/o/r/actions/workflows/build.yml/dispatches") in seen
+    assert {"runs", "run", "job_log", "release"} <= GH.READ_ACTIONS and "dispatch" in GH.WRITE_ACTIONS

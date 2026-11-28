@@ -432,6 +432,20 @@ function assistantInner(content, reasoning, tools, streaming, extra = {}) {
       extra.status ? "" : extra.reading ? `Leyendo ${extra.reading > 1 ? `los ${extra.reading} adjuntos` : "el adjunto"}… ${secs} s`
         : (secs < 2 ? "Pensando…" : `Pensando… ${secs} s`)));
   }
+  // Entre un paso y otro del agente (esperando al modelo o a una herramienta) se ve qué pasa y cuánto lleva
+  if (streaming && (tools || []).length && extra.last && !extra.progress) {
+    const idle = Math.round((Date.now() - extra.last) / 1000);
+    if (idle >= 2) {
+      const open = (tools || []).filter((t) => t.type === "tool_call" && !(tools || []).some((r) => r.type === "tool_result" && r.name === t.name && tools.indexOf(r) > tools.indexOf(t)));
+      const running = open[open.length - 1];
+      const steps = (tools || []).filter((t) => t.type === "tool_call").length;
+      const what = running && !(tools || []).some((t) => t.type === "approval" && !t.state)
+        ? `Ejecutando ${TOOL_LABELS[running.name] || running.name}… ${idle} s`
+        : `Esperando al modelo… ${idle} s`;
+      frag.append(h("div", { class: "waiting step-wait" }, h("span", { class: "dots" }, h("i"), h("i"), h("i")),
+        `${what} · paso ${steps + 1}` + (idle >= 40 ? " · el modelo va lento; puedes detener con ■ o cambiar de modelo" : "")));
+    }
+  }
   const pg = extra.progress;
   if (pg && streaming && pg.done < pg.total) {
     const pct = Math.round(100 * pg.done / pg.total);
@@ -1005,12 +1019,16 @@ function liveMd(v, body) {
   v.tail.innerHTML = md(body.slice(prefix.length));
   return true;
 }
+const TOOL_LABELS = { run_command: "un comando", read_file: "una lectura", write_file: "una escritura", edit_file: "una edición",
+  grep_files: "una búsqueda", list_dir: "un listado", web_search: "una búsqueda web", fetch_url: "una página", github: "GitHub",
+  build_exe: "la compilación", delegate: "un ayudante", team_delegate: "un miembro del equipo", create_document: "un documento" };
 function liveKey(content, reasoning, tools, extra) {
   const { think, body } = splitThink(content || "");
   const waiting = !content && !reasoning && !(tools || []).length && !extra.progress;
   return JSON.stringify([reasoning.length, think.length, !body, (tools || []).map((t) => [t.type, t.name, t.state, (t.result || "").length]),
     extra.todos, extra.compacted, (extra.liveOut || "").length, extra.status, extra.progress, extra.route, extra.fallbacks.length,
-    extra.files.length, extra.images.length, extra.teams.length, waiting ? Math.round((Date.now() - extra.t0) / 1000) : 0, extra.reading]);
+    extra.files.length, extra.images.length, extra.teams.length, waiting ? Math.round((Date.now() - extra.t0) / 1000) : 0, extra.reading,
+    (tools || []).length && extra.last ? Math.max(0, Math.round((Date.now() - extra.last) / 1000) - 1) : 0]);
 }
 
 // Un error no debe dejar la respuesta en blanco: queda en la conversación con su causa y un botón para reintentar
@@ -1045,7 +1063,7 @@ async function send(text, attachments, isContinue = false) {
   let content = "", reasoning = "", tools = [], errorMsg = null, raf = 0;
   const extra = { route: null, fallbacks: [], images: [], files: [], todos: [], teams: [], t0: Date.now(), reading: attachments.length };
   // Mientras no llegue nada, «Pensando… N s» (y la fase: leyendo adjuntos, conectando…) para que nunca parezca colgado
-  const waitTick = setInterval(() => { if (!content && !reasoning && !tools.length && !extra.progress) paint(); }, 1000);
+  const waitTick = setInterval(() => { if ((!content && !reasoning && !tools.length && !extra.progress) || (tools.length && extra.last && Date.now() - extra.last > 1500)) paint(); }, 1000);
   const view = liveView();
   const paint = () => {
     raf = 0;
@@ -1082,6 +1100,7 @@ async function send(text, attachments, isContinue = false) {
         const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
         if (!chunk.startsWith("data:")) continue;
         const ev = JSON.parse(chunk.slice(5));
+        extra.last = Date.now();
         if (ev.type === "start") {
           live.conv = ev.conversation_id; extra.reading = 0;
           for (const q of S.queue) if (!q.conv && q.live === live) q.conv = live.conv;

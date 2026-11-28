@@ -330,13 +330,19 @@ ALL_SPECS = {
                        _schema({"prompt": {"type": "string", "description": "Descripción detallada de la imagen"},
                                 "size": {"type": "string", "description": "Opcional, p.ej. 1024x1024 o 1024x1536"}},
                                ["prompt"])),
-    "github": ("Consulta y gestiona GitHub (issues, pull requests, CI y archivos de un repositorio). Acciones de lectura: "
-               "repo, issues, issue, prs, pr, checks, file, search_code. Acciones que escriben (piden permiso al usuario): "
-               "create_issue, comment, create_pr, close_issue. Para abrir un PR, sube antes la rama con git push. "
-               "Si no indicas repo se usa el remoto «origin» de la carpeta de trabajo.",
+    "github": ("Consulta y gestiona GitHub (issues, pull requests, CI, versiones y archivos de un repositorio). Lectura: "
+               "repo, issues, issue, prs, pr, checks, file, search_code, runs (ejecuciones de CI), run (sus trabajos y el paso "
+               "que falló), job_log (registro de un trabajo), release (última versión publicada). Escritura (piden permiso): "
+               "create_issue, comment, create_pr, close_issue, dispatch (lanzar la compilación/publicación). Para abrir un PR, "
+               "sube antes la rama con git push. Si no indicas repo se usa el remoto «origin» de la carpeta de trabajo.",
                _schema({"action": {"type": "string", "enum": ["repo", "issues", "issue", "prs", "pr", "checks", "file",
-                                                              "search_code", "create_issue", "comment", "create_pr",
-                                                              "close_issue"]},
+                                                              "search_code", "runs", "run", "job_log", "release",
+                                                              "create_issue", "comment", "create_pr", "close_issue", "dispatch"]},
+                        "run_id": {"type": "integer", "description": "Id de una ejecución de CI (run)"},
+                        "job_id": {"type": "integer", "description": "Id de un trabajo de CI (job_log)"},
+                        "workflow": {"type": "string", "description": "Archivo del flujo (dispatch), p. ej. build.yml"},
+                        "tail": {"type": "integer", "description": "Líneas finales del registro (job_log, por defecto 80)"},
+                        "limit": {"type": "integer", "description": "Cuántas ejecuciones listar (runs)"},
                         "repo": {"type": "string", "description": "propietario/nombre (opcional)"},
                         "number": {"type": "integer", "description": "Número de issue o PR"},
                         "title": {"type": "string"}, "body": {"type": "string"},
