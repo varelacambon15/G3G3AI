@@ -121,7 +121,10 @@ jobs:
 
   macos:
     needs: tests
-    runs-on: macos-14          # Apple Silicon (M1): genera la .app para Macs con chip M
+    # macos-latest: la arquitectura la decide el runner. Se publica con el nombre que toca
+    # (G3G3AI-macos-arm64 en Apple Silicon, G3G3AI-macos-x64 en Intel) y el updater elige
+    # el suyo según la máquina. Si el runner fuese Intel, la .app corre en Macs M con Rosetta 2.
+    runs-on: macos-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -129,9 +132,17 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -r requirements.txt pyinstaller pywebview
       - run: pyinstaller --noconfirm --distpath dist packaging/g3g3ai.spec
+      - name: Arquitectura del runner
+        id: arch
+        run: |
+          M=$(uname -m)
+          if [ "$M" = "arm64" ]; then A=arm64; else A=x64; fi
+          echo "arch=$A" >> "$GITHUB_OUTPUT"
+          echo "Runner: $M -> G3G3AI-macos-$A"
       - name: Montar G3G3AI.app y firmar ad hoc
         run: |
           APP=dist/G3G3AI.app
+          VER=$(python3 -c 'import re;print(re.search(r"__version__ = \"([^\"]+)\"", open("g3g3ai/__init__.py").read()).group(1))')
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp dist/G3G3AI "$APP/Contents/MacOS/G3G3AI"
           chmod +x "$APP/Contents/MacOS/G3G3AI"
@@ -142,8 +153,8 @@ jobs:
             <key>CFBundleName</key><string>G3G3AI</string>
             <key>CFBundleDisplayName</key><string>G3G3AI</string>
             <key>CFBundleIdentifier</key><string>es.g3g3ai.app</string>
-            <key>CFBundleVersion</key><string>0.44.0</string>
-            <key>CFBundleShortVersionString</key><string>0.44.0</string>
+            <key>CFBundleVersion</key><string>$VER</string>
+            <key>CFBundleShortVersionString</key><string>$VER</string>
             <key>CFBundleExecutable</key><string>G3G3AI</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>LSMinimumSystemVersion</key><string>11.0</string>
@@ -167,13 +178,13 @@ jobs:
       - name: Comprimir la .app
         run: |
           cd dist && zip -qry G3G3AI-macos.zip G3G3AI.app && cd ..
-          cp dist/G3G3AI.app/Contents/MacOS/G3G3AI dist/G3G3AI-macos-arm64
+          cp dist/G3G3AI.app/Contents/MacOS/G3G3AI "dist/G3G3AI-macos-${{ steps.arch.outputs.arch }}"
       - uses: actions/upload-artifact@v4
         with:
           name: G3G3AI-macos
           path: |
             dist/G3G3AI-macos.zip
-            dist/G3G3AI-macos-arm64
+            dist/G3G3AI-macos-${{ steps.arch.outputs.arch }}
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 40

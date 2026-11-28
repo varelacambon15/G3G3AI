@@ -29,13 +29,18 @@ descubrimiento en la red), más contenido en el chat directo y versión de macOS
      chip de uso del plan (OpenCode Go/OpenRouter/DeepSeek, misma lógica que el escritorio),
      ficha del modelo al tocar el selector, 12 sugerencias de inicio (4 al azar).
    - `versionCode 16`, `versionName "0.44.0"`.
-4. **macOS en CI** (`.github/workflows/build.yml`): job `macos` (macos-14, Apple Silicon) que compila con el spec
-   existente, monta `G3G3AI.app` (Info.plist + firma ad hoc + comprobación de arranque) y publica
-   `G3G3AI-macos.zip` (la .app) y `G3G3AI-macos-arm64` (binario para el updater). Incluido en el job `release`.
-5. **Actualización automática en macOS** (`g3g3ai/updater.py`): asset `G3G3AI-macos-arm64`, verificación de
-   cabecera Mach-O (MH_MAGIC_64/FAT) y sustitución del binario dentro de `G3G3AI.app/Contents/MacOS/`.
-   Tras sustituirlo se **vuelve a firmar la .app** (`codesign --force --deep -s -`): si no, la firma ad hoc
-   queda inválida y macOS mata el proceso en el siguiente arranque. Si la firma falla, sólo se anota en el log.
+4. **macOS en CI** (`.github/workflows/build.yml`): job `macos` (`macos-latest`) que compila con el spec
+   existente, monta `G3G3AI.app` (Info.plist con la versión leída de `__init__.py`, firma ad hoc y comprobación
+   de arranque) y publica `G3G3AI-macos.zip` (la .app) y el binario para el updater con el nombre de la
+   arquitectura del runner (`G3G3AI-macos-arm64` o `-x64`). Incluido en el job `release`.
+   - **Por qué `macos-latest`:** `runs-on: macos-14` resolvió a `macos-14-arm64-us-default` y GitHub lo rechazó
+     en 1 s («configuration is not supported») en la cuenta del autor. `macos-latest` sí arranca.
+   - Si el runner sale Intel, la .app funciona en Macs Apple Silicon con Rosetta 2 (y se publica como `-x64`).
+5. **Actualización automática en macOS** (`g3g3ai/updater.py`): asset según `platform.machine()`
+   (`G3G3AI-macos-arm64` / `-x64`), verificación de cabecera Mach-O (MH_MAGIC_64/FAT) y sustitución del binario
+   dentro de `G3G3AI.app/Contents/MacOS/`. Tras sustituirlo se **vuelve a firmar la .app**
+   (`codesign --force --deep -s -`): si no, la firma ad hoc queda inválida y macOS mata el proceso en el siguiente
+   arranque. Si la firma falla, sólo se anota en el log.
 6. **README**: secciones nuevas «Conectar la app del móvil con el PC (emparejamiento)» y macOS.
 7. Versión: `g3g3ai/__init__.py` → `0.44.0`.
 
@@ -59,5 +64,8 @@ descubrimiento en la red), más contenido en el chat directo y versión de macOS
   - `f3427a7` macOS en CI + README (0.44.0)
   - `b6a47f4` `.gitignore` de artefactos Gradle
   - `9ec79bb` refirmado de la .app tras actualizar
-- Estado: rama empujada a `origin`. Pendiente: lanzar el CI (etiqueta `v0.44.0` o workflow_dispatch)
-  y release 0.44.0; comprobar en un runner real el job de macOS, que aquí no se puede probar.
+- Estado: rama empujada a `origin`.
+- **Comprobado en el CI real** (run 46151138062, anterior al arreglo): `tests`, `windows`, `linux` y `android` en verde
+  (el job de Android produce la APK en el runner). `macos` falló en 1 s por la etiqueta del runner, ya cambiada a
+  `macos-latest`; falta verlo pasar en un run nuevo.
+- Pendiente: lanzar la release 0.44.0 (ver abajo).

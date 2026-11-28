@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -44,7 +45,9 @@ def asset_name() -> str | None:
     if sys.platform.startswith("linux"):
         return "G3G3AI-linux-x64"
     if sys.platform == "darwin":
-        return "G3G3AI-macos-arm64"   # binario de la .app (Contents/MacOS/G3G3AI); la .app completa va aparte
+        # Binario de la .app (Contents/MacOS/G3G3AI); la .app completa va aparte en G3G3AI-macos.zip.
+        # El nombre depende de la arquitectura con la que se compiló (el CI publica la del runner).
+        return "G3G3AI-macos-arm64" if platform.machine() in ("arm64", "aarch64") else "G3G3AI-macos-x64"
     return None
 
 
