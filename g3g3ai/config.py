@@ -96,6 +96,10 @@ DEFAULTS: dict = {
     "model_hidden": [],
     # Ollama (motor local alternativo)
     "ollama_url": "http://127.0.0.1:11434",
+    # OpenCode (agente de código que corre en este equipo): API HTTP local con contraseña Basic
+    "opencode_url": "http://127.0.0.1:28894",
+    "opencode_password": "",   # vacío = variable de entorno OPENCODE_PASSWORD
+    "opencode_enabled": True,
     # Python del entorno de compilación (vacío = el de G3G3AI en la carpeta de datos)
     "devenv_python": "",
     # Juegos de Steam: la IA puede leer y (siempre pidiendo permiso) modificar carpetas de juegos y prefijos de Proton
@@ -189,7 +193,7 @@ DEFAULTS: dict = {
     "config_version": CONFIG_VERSION,
 }
 
-SECRET_KEYS = {"token", "hf_token", "web_api_key", "sync_key", "github_token"}
+SECRET_KEYS = {"token", "hf_token", "web_api_key", "sync_key", "github_token", "opencode_password"}
 
 
 def default_blocked() -> list[str]:

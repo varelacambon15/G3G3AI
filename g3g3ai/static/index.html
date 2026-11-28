@@ -105,6 +105,7 @@
                   <span id="ctx-meter" class="ctx-meter hidden" title="Contexto usado"></span>
                 </div>
                 <div class="right-tools">
+                  <select id="engine-select" class="hidden" title="Motor del chat" aria-label="Motor del chat"><option value="g3g3ai">G3G3AI</option><option value="opencode">OpenCode</option></select>
                   <button id="fav-btn" class="fav-btn" title="Marcar este modelo como favorito" aria-label="Favorito">☆</button>
                   <select id="model-select" title="Modelo" aria-label="Modelo"></select>
                   <button id="send-btn" class="send-btn" title="Enviar" aria-label="Enviar">↑</button>
@@ -124,10 +125,12 @@
             <button data-ctab="changes" class="active">Cambios <span id="ct-changes" class="badge">0</span></button>
             <button data-ctab="term">Terminal</button>
             <button data-ctab="plan">Plan</button>
+            <button data-ctab="oc">OpenCode</button>
           </div>
           <div id="ctab-changes" class="code-body"></div>
           <div id="ctab-term" class="code-body hidden"></div>
           <div id="ctab-plan" class="code-body hidden"></div>
+          <div id="ctab-oc" class="code-body hidden"></div>
         </aside>
         <!-- Panel de vista previa (HTML / SVG) -->
         <aside id="artifact" class="artifact hidden">

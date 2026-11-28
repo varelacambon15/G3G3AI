@@ -2148,3 +2148,93 @@ def test_grep_does_not_follow_symlink_into_blocked_path(env):
     (home / "visible.txt").write_text("valor-secreto-123")
     r = asyncio.run(ctx.run("grep_files", {"pattern": "valor-secreto", "path": str(home)}))
     assert "visible.txt" in r and "valor-secreto-123" in r               # ...pero un archivo normal sí se busca
+
+
+# --- OpenCode (agente de código que corre en este equipo) -----------------------------------
+def _opencode_fake():
+    """Servidor OpenCode falso en un puerto libre: devuelve (url, módulo)."""
+    import fake_opencode
+    return fake_opencode.start(), fake_opencode
+
+
+def test_opencode_status_and_sessions(env):
+    """Estado, lista de sesiones, creación, permisos, interrupción y borrado en OpenCode."""
+    client, cfg, *_ = env
+    url, oc = _opencode_fake()
+    try:
+        cfg.data["opencode_url"] = url
+        cfg.data["opencode_password"] = oc.PASSWORD
+        h = auth(cfg)
+        st = client.get("/api/opencode/status", headers=h).json()
+        assert st["available"] is True and st["version"] == "0.0.0-fake" and st["error"] is None
+        assert st["url"] == url and st["enabled"] is True
+        sessions = client.get("/api/opencode/sessions", headers=h).json()["sessions"]
+        assert sessions[0]["id"] == "ses_ejemplo" and sessions[0]["title"] == "Sesión de ejemplo"
+        assert sessions[0]["directory"] == "C:/prueba"                     # viene de location
+        assert sessions[0]["model"] == "fake"                              # en el real es {id, providerID}: se queda el id
+        assert abs(sessions[0]["updated"] - time.time()) < 60             # OpenCode da milisegundos; aquí, segundos
+        new = client.post("/api/opencode/sessions", headers=h,
+                          json={"title": "Otra", "directory": "C:/otra"}).json()["session"]
+        assert new["title"] == "Otra" and new["directory"] == "C:/otra"
+        assert len(client.get("/api/opencode/sessions", headers=h).json()["sessions"]) == 2
+        # Una sesión inexistente se responde como 404, no como un error del servidor
+        r = client.get("/api/opencode/sessions/ses_no_existe/messages", headers=h)
+        assert r.status_code == 404 and "404" in r.json()["detail"]
+        sid = new["id"]
+        rep = client.post(f"/api/opencode/sessions/{sid}/permissions/ped1/reply", headers=h,
+                          json={"approved": True})
+        assert rep.json() == {"ok": True}
+        assert client.post(f"/api/opencode/sessions/{sid}/interrupt", headers=h).json() == {"ok": True}
+        assert client.delete(f"/api/opencode/sessions/{sid}", headers=h).json() == {"ok": True}
+        assert len(client.get("/api/opencode/sessions", headers=h).json()["sessions"]) == 1
+    finally:
+        oc.stop()
+
+
+def test_opencode_prompt_streams_messages(env):
+    """El prompt va a OpenCode y el SSE trae los mensajes (usuario y asistente) hasta «done»."""
+    client, cfg, *_ = env
+    url, oc = _opencode_fake()
+    try:
+        cfg.data["opencode_url"] = url
+        cfg.data["opencode_password"] = oc.PASSWORD
+        h = auth(cfg)
+        sid = client.post("/api/opencode/sessions", headers=h, json={"title": "prueba"}).json()["session"]["id"]
+        r = client.post(f"/api/opencode/sessions/{sid}/prompt", headers=h, json={"text": "hola OpenCode"})
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+        evs = sse(r)
+        lists = [e["messages"] for e in evs if e["type"] == "messages"]
+        assert lists, evs                                                    # hubo al menos un envío
+        assert any(m["type"] == "user" and m["text"] == "hola OpenCode" for m in lists[-1])
+        assert any(m["type"] == "assistant" for m in lists[-1])              # la respuesta del asistente
+        assert evs[-1]["type"] == "done"                                     # y el stream termina en done
+    finally:
+        oc.stop()
+
+
+def test_opencode_disabled_returns_404(env):
+    """Con la integración desactivada, los endpoints de OpenCode responden 404."""
+    client, cfg, *_ = env
+    cfg.data["opencode_enabled"] = False
+    h = auth(cfg)
+    r = client.get("/api/opencode/status", headers=h)
+    assert r.status_code == 404 and "desactivada" in r.json()["detail"]
+    assert client.get("/api/opencode/sessions", headers=h).status_code == 404
+
+
+def test_opencode_permissions(env):
+    """Las peticiones de permiso pendientes de OpenCode se exponen en /api/opencode/permissions."""
+    client, cfg, *_ = env
+    url, oc = _opencode_fake()
+    try:
+        cfg.data["opencode_url"] = url
+        cfg.data["opencode_password"] = oc.PASSWORD
+        h = auth(cfg)
+        oc.add_permission()                                                   # una petición pendiente
+        perms = client.get("/api/opencode/permissions", headers=h).json()["permissions"]
+        assert isinstance(perms, list) and len(perms) == 1
+        assert perms[0]["id"] == "perm1" and perms[0]["action"] == "bash"
+        cfg.data["opencode_enabled"] = False
+        assert client.get("/api/opencode/permissions", headers=h).status_code == 404
+    finally:
+        oc.stop()

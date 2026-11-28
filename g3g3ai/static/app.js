@@ -136,6 +136,10 @@ const S = {
   view: "chat", convId: null, conv: null, providers: [], models: {}, attachments: [],
   streaming: null, status: null, settings: null, filesPath: "", pickerPath: "", system: undefined,
   hubRepoOpen: null,
+  // Motor alternativo del chat en el modo Code (OpenCode): «engine» es el motor activo,
+  // «session»/«meta» la sesión de OpenCode en uso y «perms» las peticiones pendientes.
+  oc: { engine: store.get("engine", "g3g3ai"), session: null, meta: null, messages: [],
+        status: null, perms: [], live: false, panel: false, prevTab: null },
 };
 
 // --- Login ---------------------------------------------------------------------------
@@ -157,6 +161,16 @@ function setView(v) {
   const wasCode = !!S.code;
   S.code = v === "code";
   document.body.classList.toggle("code-mode", S.code);
+  // El motor solo se elige dentro de Code; fuera de él el chat es siempre el de G3G3AI.
+  if (S.code) {
+    S.oc.engine = store.get("engine", "g3g3ai");
+    if (S.oc.engine === "opencode") ensureSession();
+  } else if (S.oc.engine !== "g3g3ai") {
+    S.oc.engine = "g3g3ai";
+    stopOcPoll();
+    renderMessages();   // se vuelve al chat normal de G3G3AI
+  }
+  updateEngineUi();
   $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
   $$(".view").forEach((s) => s.classList.toggle("active", s.id === "view-" + real));
   $("#top-title").textContent = real === "chat" ? (S.conv?.title || (S.code ? "Code" : "")) : { models: "Modelos", tasks: "Tareas", files: "Archivos", settings: "Ajustes" }[real];
@@ -474,7 +488,7 @@ function enterCode() {
 $$("[data-ctab]").forEach((b) => b.addEventListener("click", () => {
   codeState.tab = b.dataset.ctab;
   $$("[data-ctab]").forEach((x) => x.classList.toggle("active", x === b));
-  ["changes", "term", "plan"].forEach((n) => $("#ctab-" + n).classList.toggle("hidden", n !== codeState.tab));
+  ["changes", "term", "plan", "oc"].forEach((n) => $("#ctab-" + n).classList.toggle("hidden", n !== codeState.tab));
 }));
 $("#code-dir-set").addEventListener("click", async () => {
   const dir = $("#code-dir").value.trim();
@@ -541,6 +555,308 @@ function renderCodePanel(live) {
   const withTodos = (S.conv?.messages || []).filter((m) => m.role === "assistant" && m.meta?.todos);
   const todos = live?.todos?.length ? live.todos : (withTodos.length ? withTodos[withTodos.length - 1].meta.todos : []);
   plan.append(todos.length ? todoCard(todos) : h("p", { class: "muted" }, "Cuando la tarea sea larga, la IA mostrará aquí su plan y lo irá marcando."));
+  renderOcPanel();
+}
+
+// --- OpenCode: motor alternativo del chat en el modo Code ------------------------------------------
+// Los mensajes llegan en bruto de OpenCode: {type:"user", text}, {type:"assistant", content:[…]},
+// {type:"idle", outcome} y {type:"model-switched"} (este último se ignora: el modelo lo elige OpenCode).
+const ocRole = (m) => (m && (m.type || m.role)) || "";
+function ocText(m) {
+  if (!m) return "";
+  const parts = Array.isArray(m.content) ? m.content : (Array.isArray(m.parts) ? m.parts : null);
+  if (parts) return parts.filter((p) => p && p.type === "text").map((p) => p.text || "").join("\n\n");
+  if (typeof m.content === "string") return m.content;
+  return typeof m.text === "string" ? m.text : "";
+}
+const ocModel = (m) => { const v = m && m.model; return typeof v === "string" ? v : (v && (v.id || v.modelID)) || ""; };
+const ocOutcome = (o) => ({ success: "✔ Completado", completed: "✔ Completado", error: "✕ Con errores",
+  failed: "✕ Falló", aborted: "⏹ Detenido", interrupted: "⏹ Detenido" }[o] || (o ? "• " + o : "—"));
+// El panel de Code se oculta por CSS en pantallas estrechas: ahí hay que mostrar los permisos en el chat.
+const ocPanelVisible = () => S.code && !matchMedia("(max-width: 900px)").matches;
+
+let ocRaf = 0, ocPoll = 0, ocPermTimer = 0;
+function scheduleOcPaint() {
+  if (ocRaf) return;
+  ocRaf = requestAnimationFrame(() => { ocRaf = 0; renderOcMessages(); });
+}
+function startOcPoll() {
+  if (ocPoll) return;
+  // Refresco lento por si OpenCode sigue trabajando fuera de este chat (p. ej. tras aprobar un permiso).
+  ocPoll = setInterval(() => {
+    if (S.oc.engine !== "opencode" || S.oc.live || !S.oc.session) return;
+    refreshOcMessages(true); refreshOcPerms(true);
+  }, 3000);
+}
+function stopOcPoll() { if (ocPoll) { clearInterval(ocPoll); ocPoll = 0; } }
+
+async function refreshOcMessages(quiet = false) {
+  if (!S.oc.session) return;
+  try {
+    const d = await api(`/api/opencode/sessions/${encodeURIComponent(S.oc.session)}/messages`);
+    const msgs = Array.isArray(d.messages) ? d.messages : [];
+    if (JSON.stringify(msgs) !== JSON.stringify(S.oc.messages)) { S.oc.messages = msgs; renderOcMessages(); }
+  } catch (e) { if (!quiet) toast("No se pudieron leer los mensajes de OpenCode: " + e.message, 6000); }
+}
+async function refreshOcPerms(quiet = false) {
+  if (S.oc.engine !== "opencode") return;
+  try {
+    const d = await api("/api/opencode/permissions");
+    const list = Array.isArray(d.permissions) ? d.permissions : [];
+    if (JSON.stringify(list) !== JSON.stringify(S.oc.perms)) {
+      const antes = new Set((S.oc.perms || []).map((p) => p.id));
+      const nuevos = list.filter((p) => !antes.has(p.id));
+      S.oc.perms = list;
+      renderCodePanel(); scheduleOcPaint();
+      if (S.oc.live && nuevos.length) toast("🔒 OpenCode pide permiso: " + (nuevos[0].message || nuevos[0].action || ""), 7000);
+    }
+  } catch (e) { if (!quiet) toast("No se pudieron leer los permisos de OpenCode: " + e.message, 6000); }
+}
+async function replyOcPerm(p, approved) {
+  const sid = p.sessionID || S.oc.session;
+  try {
+    await api(`/api/opencode/sessions/${encodeURIComponent(sid)}/permissions/${encodeURIComponent(p.id)}/reply`,
+      { method: "POST", body: { approved } });
+    await refreshOcPerms();
+    await refreshOcMessages();
+  } catch (e) { toast(e.message); }
+}
+function ocPermCard(p) {
+  const res = Array.isArray(p.resources) ? p.resources.join(" · ") : "";
+  const card = h("div", { class: "oc-perm" },
+    h("b", {}, "🔒 OpenCode pide permiso" + (p.action ? ": " + p.action : "")),
+    h("div", { class: "text" }, p.message || "El agente quiere realizar una acción."),
+    res ? h("div", { class: "res" }, res) : null);
+  const answer = async (approved) => {
+    card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    await replyOcPerm(p, approved);
+  };
+  card.append(h("div", { class: "row" },
+    h("button", { class: "primary small", onclick: () => answer(true) }, "Permitir"),
+    h("button", { class: "danger small", onclick: () => answer(false) }, "Denegar")));
+  return card;
+}
+
+function renderOcMessages() {
+  if (S.oc.engine !== "opencode") return;   // nunca pisa el chat normal
+  const box = $("#messages");
+  const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const top = box.scrollTop;
+  box.innerHTML = "";
+  const msgs = S.oc.messages || [];
+  if (!msgs.length) {
+    box.append(h("div", { class: "empty-state" },
+      h("h1", { class: "greeting" }, h("span", { class: "logo" }, "✦"), "OpenCode"),
+      h("p", {}, "Escribe abajo para empezar. OpenCode trabaja en la carpeta del proyecto y te pedirá permiso antes de tocar archivos o ejecutar comandos.")));
+    return;
+  }
+  let lastBubble = null;
+  for (const m of msgs) {
+    const role = ocRole(m);
+    if (role === "user") {
+      const txt = ocText(m);
+      const b = h("div", { class: "bubble" }); b.innerHTML = md(txt);
+      box.append(h("div", { class: "msg user" }, b,
+        h("div", { class: "meta" }, h("button", { class: "act", title: "Copiar", onclick: () => copyText(txt) }, "⧉"))));
+    } else if (role === "assistant") {
+      const txt = ocText(m), mm = ocModel(m);
+      const b = h("div", { class: "bubble" }); b.innerHTML = md(txt);
+      lastBubble = b;
+      box.append(h("div", { class: "msg assistant" }, b,
+        h("div", { class: "meta" },
+          h("button", { class: "act", title: "Copiar", onclick: () => copyText(txt) }, "⧉"),
+          mm ? h("span", {}, "☁ " + mm) : null)));
+    } else if (role === "idle" && (m.error || m.outcome === "failed")) {
+      box.append(h("div", { class: "msg assistant" }, h("div", { class: "bubble" },
+        h("div", { class: "route warn" }, "✕ " + (m.error || "OpenCode terminó con errores.")))));
+    }
+  }
+  if (S.oc.live && lastBubble) lastBubble.classList.add("cursor");
+  // En pantallas estrechas el panel de Code está oculto: ahí los permisos se ven en el chat.
+  if (!ocPanelVisible()) for (const p of S.oc.perms || []) box.append(ocPermCard(p));
+  if (stick) box.scrollTop = box.scrollHeight; else box.scrollTop = top;
+}
+
+function renderOcPanel() {
+  const box = $("#ctab-oc");
+  if (!box) return;
+  box.innerHTML = "";
+  if (S.oc.engine !== "opencode") {
+    box.append(h("p", { class: "muted" }, "Elige OpenCode arriba, junto al modelo, para trabajar con él desde aquí."));
+    return;
+  }
+  const st = S.oc.status;
+  if (!st || !st.available) { box.append(h("p", { class: "muted" }, "Comprobando OpenCode…")); return; }
+  const meta = S.oc.meta || {};
+  let model = "", outcome = "";
+  for (const m of S.oc.messages || []) {
+    const r = ocRole(m);
+    if (r === "assistant") { const mm = ocModel(m); if (mm) model = mm; }
+    else if (r === "idle" && m.outcome) outcome = m.outcome;
+  }
+  if (!model) model = meta.model || "";
+  if (!outcome && meta.outcome) outcome = meta.outcome;
+  const row = (k, v) => h("div", { class: "oc-row" }, h("span", { class: "k" }, k),
+    h("span", { class: "v", title: String(v || "") }, v || "—"));
+  box.append(h("div", { class: "oc-head" }, "🗔 Sesión de OpenCode"));
+  for (const p of S.oc.perms || []) box.append(ocPermCard(p));   // permisos pendientes, a la vista
+  box.append(
+    row("Título", meta.title || "Sin título"),
+    row("Carpeta", meta.directory || S.workdir || S.conv?.workdir || ""),
+    row("Modelo", model),
+    row("Agente", meta.agent || ""),
+    row("Resultado", ocOutcome(outcome)),
+    h("p", { class: "muted small-text" }, "Versión " + (st.version || "?")
+      + (S.oc.perms.length ? ` · ${S.oc.perms.length} permiso(s) pendiente(s)` : "")),
+    h("div", { class: "row" },
+      h("button", { class: "primary small", disabled: S.oc.live, onclick: newOcSession }, "＋ Nueva sesión"),
+      h("button", { class: "ghost small", disabled: !S.oc.live, onclick: interruptOc }, "■ Interrumpir"),
+      h("button", { class: "ghost small", onclick: () => window.open(st.url, "_blank", "noopener") }, "↗ Web completa")));
+}
+
+function updateEngineUi() {
+  const oc = S.oc.engine === "opencode";
+  const sel = $("#engine-select");
+  sel.classList.toggle("hidden", !S.code);
+  sel.value = S.oc.engine;
+  if (oc !== S.oc.panel) {           // al cambiar de motor cambia también la pestaña activa
+    const panel = $("#code-panel");
+    if (oc) { S.oc.prevTab = codeState.tab; codeState.tab = "oc"; }
+    else { codeState.tab = (S.oc.prevTab && S.oc.prevTab !== "oc") ? S.oc.prevTab : "changes"; S.oc.prevTab = null; }
+    S.oc.panel = oc;
+    panel.classList.toggle("oc", oc);
+    $$("[data-ctab]").forEach((x) => x.classList.toggle("active", x.dataset.ctab === codeState.tab));
+    ["changes", "term", "plan", "oc"].forEach((n) => $("#ctab-" + n).classList.toggle("hidden", n !== codeState.tab));
+  }
+  // Con OpenCode mandan su modelo y su conversación: los de G3G3AI no harían nada aquí.
+  $("#model-select").classList.toggle("hidden", oc);
+  $("#fav-btn").classList.toggle("hidden", oc);
+  $("#input").placeholder = oc ? "Escribe una tarea para OpenCode…" : "¿En qué puedo ayudarte?";
+}
+function ocFallback(msg) {
+  toast(msg, 6000);
+  stopOcPoll();
+  S.oc.engine = "g3g3ai";
+  updateEngineUi();
+  renderMessages();
+  renderCodePanel();
+}
+$("#engine-select").addEventListener("change", () => {
+  const v = $("#engine-select").value;
+  if (v === S.oc.engine) return;
+  if (v === "g3g3ai" && S.oc.live && S.streaming) S.streaming.abort();  // se corta la ejecución en curso
+  S.oc.engine = v;
+  store.set("engine", v);
+  updateEngineUi();
+  if (v === "opencode") ensureSession();
+  else { stopOcPoll(); renderMessages(); renderCodePanel(); }
+});
+
+let ocEnsuring = null;   // evita crear dos sesiones si se pide a la vez
+function ensureSession() {
+  if (S.oc.engine !== "opencode") return Promise.resolve(false);
+  if (!ocEnsuring) ocEnsuring = ocEnsure().finally(() => { ocEnsuring = null; });
+  return ocEnsuring;
+}
+async function ocEnsure() {
+  if (S.oc.engine !== "opencode") return false;
+  if (!S.oc.status) {
+    try { S.oc.status = await api("/api/opencode/status"); }
+    catch (e) { S.oc.status = { available: false, error: e.message }; }
+  }
+  if (!S.oc.status?.available) {
+    ocFallback(S.oc.status?.error || "OpenCode no está disponible en este equipo.");
+    return false;
+  }
+  if (!S.oc.session) {
+    try {
+      const d = await api("/api/opencode/sessions", { method: "POST", body: { directory: S.workdir || undefined } });
+      const s = (d && d.session) || {};
+      if (!s.id) throw new Error("OpenCode no abrió ninguna sesión");
+      S.oc.session = s.id; S.oc.meta = s; S.oc.messages = []; S.oc.perms = [];
+    } catch (e) { ocFallback("No se pudo abrir una sesión de OpenCode: " + e.message); return false; }
+  }
+  await refreshOcMessages();
+  renderOcMessages();   // sustituye lo que hubiera en el chat (aunque la lista no haya cambiado)
+  refreshOcPerms(true);
+  if (S.oc.engine !== "opencode") return false;   // se cambió de motor mientras se preparaba
+  startOcPoll();
+  renderCodePanel();
+  return true;
+}
+async function newOcSession() {
+  if (S.streaming) return;
+  stopOcPoll();
+  S.oc.session = null; S.oc.meta = null; S.oc.messages = []; S.oc.perms = [];
+  renderOcMessages(); renderCodePanel();
+  await ensureSession();
+}
+async function interruptOc() {
+  if (!S.oc.session) return;
+  try {
+    await api(`/api/opencode/sessions/${encodeURIComponent(S.oc.session)}/interrupt`, { method: "POST" });
+    toast("OpenCode detenido", 3000);
+    await refreshOcMessages();
+    refreshOcPerms(true);
+  } catch (e) { toast(e.message); }
+}
+
+async function sendOpenCode(text) {
+  if (S.streaming) return;
+  if (!(await ensureSession())) return;
+  const sid = encodeURIComponent(S.oc.session);
+  const box = $("#messages");
+  // Mensaje del usuario y burbuja del asistente «en vivo»: llegará el primer evento y los sustituye.
+  S.oc.messages = [...(S.oc.messages || []),
+    { type: "user", text, time: { created: Date.now() / 1000 } },
+    { type: "assistant", content: [] }];
+  S.oc.live = true;
+  renderOcMessages(); renderCodePanel();
+  box.scrollTop = box.scrollHeight;
+
+  const ctrl = new AbortController();
+  S.streaming = ctrl;
+  setSending(true);
+  ocPermTimer = setInterval(() => refreshOcPerms(true), 2000);
+  let errorMsg = null, stopped = false;
+  try {
+    const r = await fetch(`/api/opencode/sessions/${sid}/prompt`, { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }), signal: ctrl.signal });
+    if (r.status === 401) { showLogin(); throw new Error("No autorizado"); }
+    if (!r.ok) { let d = r.statusText; try { d = (await r.json()).detail; } catch { /* */ } throw new Error(d || "No se pudo enviar el mensaje"); }
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        if (!chunk.startsWith("data:")) continue;   // «: ping» y demás comentarios
+        let ev = null;
+        try { ev = JSON.parse(chunk.slice(5)); } catch { continue; }
+        if (ev.type === "messages") {
+          S.oc.messages = Array.isArray(ev.messages) ? ev.messages : [];
+          scheduleOcPaint(); refreshOcPerms(true);
+        } else if (ev.type === "error") errorMsg = ev.message || "Error de OpenCode";
+        // «done» termina; «model-switched» no se pinta
+      }
+    }
+  } catch (e) {
+    if (e.name === "AbortError") stopped = true; else errorMsg = e.message;
+  } finally {
+    if (ocPermTimer) { clearInterval(ocPermTimer); ocPermTimer = 0; }
+    S.streaming = null; S.oc.live = false;
+    setSending(false);
+    if (stopped) api(`/api/opencode/sessions/${sid}/interrupt`, { method: "POST" }).catch(() => {});
+    if (S.oc.session && encodeURIComponent(S.oc.session) === sid) await refreshOcMessages();
+    else renderOcMessages();
+    refreshOcPerms(true);
+    renderCodePanel();
+    if (errorMsg) toast("Error: " + errorMsg, 7000);
+    if (S.queued) { const q = S.queued; S.queued = null; setTimeout(() => send(q, []), 200); }
+  }
 }
 
 // Comandos con «/» en el cuadro de texto
@@ -622,12 +938,17 @@ function newChat() {
   if (S.code) queueMicrotask(() => { S.workdir = store.get("code_dir", "") || undefined; renderCodePanel(); });
   S.convId = null; S.conv = null; S.system = undefined; store.set("conv", null);
   renderMessages(); loadConversations(); closeSide(); $("#top-title").textContent = "";
+  // En el motor OpenCode, «nueva conversación» equivale a una sesión de OpenCode nueva.
+  if (S.code && S.oc.engine === "opencode") { if (S.streaming) renderOcMessages(); else newOcSession(); }
   if (!isMobile()) $("#input").focus();
 }
 $("#new-chat").addEventListener("click", () => { setView("chat"); newChat(); });
 
 // --- Mensajes -----------------------------------------------------------------------
 function renderMessages() {
+  // Con el motor OpenCode el chat lo pinta OpenCode: cualquier refresco del chat normal
+  // (p. ej. abrir otra conversación) no debe borrar su contenido.
+  if (S.code && S.oc.engine === "opencode") { renderOcMessages(); return; }
   const box = $("#messages"); box.innerHTML = "";
   const msgs = S.conv?.messages || [];
   if (!msgs.length) {
@@ -892,6 +1213,10 @@ $("#send-btn").addEventListener("click", () => {
 });
 
 async function send(text, attachments, isContinue = false) {
+  if (S.code && S.oc.engine === "opencode") {   // en modo Code con OpenCode, el mensaje va a OpenCode
+    if (attachments.length) toast("OpenCode trabaja en la carpeta del proyecto: los adjuntos no se envían.", 5000);
+    return sendOpenCode(text);
+  }
   const { provider, model } = currentModel();
   const box = $("#messages");
   if (!S.conv?.messages?.length) box.innerHTML = "";
