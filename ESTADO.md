@@ -1,7 +1,9 @@
 # ESTADO — rama `android-remoto-macos` (0.44.0)
 
 > Documento de estado para quien retome este trabajo (humano u otra IA).
-> Rama creada desde `main` (0.43.0, commit 145dcea). **No se ha tocado `main`.**
+> Rama creada desde la rama por defecto del repositorio, `ccr-0ee08766-rvyi3x` (0.43.0, commit `e470a48`).
+> En este repositorio **no existe `main`**: la rama por defecto es `ccr-0ee08766-rvyi3x`.
+> **No se ha tocado la rama por defecto.**
 
 ## Qué hay en esta rama
 
@@ -32,6 +34,8 @@ descubrimiento en la red), más contenido en el chat directo y versión de macOS
    `G3G3AI-macos.zip` (la .app) y `G3G3AI-macos-arm64` (binario para el updater). Incluido en el job `release`.
 5. **Actualización automática en macOS** (`g3g3ai/updater.py`): asset `G3G3AI-macos-arm64`, verificación de
    cabecera Mach-O (MH_MAGIC_64/FAT) y sustitución del binario dentro de `G3G3AI.app/Contents/MacOS/`.
+   Tras sustituirlo se **vuelve a firmar la .app** (`codesign --force --deep -s -`): si no, la firma ad hoc
+   queda inválida y macOS mata el proceso en el siguiente arranque. Si la firma falla, sólo se anota en el log.
 6. **README**: secciones nuevas «Conectar la app del móvil con el PC (emparejamiento)» y macOS.
 7. Versión: `g3g3ai/__init__.py` → `0.44.0`.
 
@@ -39,13 +43,21 @@ descubrimiento en la red), más contenido en el chat directo y versión de macOS
 
 - `tests/test_qr.py`: OK (incluye decodificado OpenCV).
 - `tests/test_pairing.py`: OK (ciclo completo, sólo-local, bloqueo por intentos, caducidad, UDP, /m).
-- Batería completa: **136 passed, 11 skipped** (247 s, sin `test_ui.py`, que necesita navegador: la hará el CI).
+- Batería completa: **136 passed, 12 skipped** (245 s, sin `test_ui.py`, que necesita navegador: la hará el CI).
 - APK compilada aquí mismo (Gradle 8.11.1 + JDK 17 + SDK android-35): `BUILD SUCCESSFUL`,
   firmada con clave de depuración y verificada con apksigner → `G3G3AI-android-0.44.0.apk`.
 
 ## Cómo revertir / continuar
 
-- Todo está en commits de la rama `android-remoto-macos`; `main` no se ha tocado. Revertir = no fusionar la rama.
+- Todo está en commits de la rama `android-remoto-macos`; la rama por defecto no se ha tocado.
+  Revertir = no fusionar la rama.
 - Para revertir un paso concreto: `git revert <commit>` en la rama.
-- Pendiente al continuar: push de la rama (pide permiso), release 0.44.0 (etiqueta `v0.44.0` o workflow_dispatch),
-  y comprobar el job de macOS en un runner real.
+- Commits de esta rama (de más antiguo a más nuevo):
+  - `25c5169` generador QR verificado
+  - `b6632c2` emparejamiento + `/m` + descubrimiento UDP
+  - `7f5e137` app Android (chat directo ampliado y conexión con el PC)
+  - `f3427a7` macOS en CI + README (0.44.0)
+  - `b6a47f4` `.gitignore` de artefactos Gradle
+  - `9ec79bb` refirmado de la .app tras actualizar
+- Estado: rama empujada a `origin`. Pendiente: lanzar el CI (etiqueta `v0.44.0` o workflow_dispatch)
+  y release 0.44.0; comprobar en un runner real el job de macOS, que aquí no se puede probar.
