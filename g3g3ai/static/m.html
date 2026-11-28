@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>G3G3AI · Conectar con el PC</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 16px/1.5 system-ui, sans-serif; background: #0f1115; color: #e8e8ea;
+         min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .card { width: 100%; max-width: 420px; background: #181b22; border: 1px solid #2a2f3a;
+          border-radius: 14px; padding: 22px; }
+  h1 { font-size: 1.1rem; margin-bottom: 4px; }
+  p.sub { color: #9aa0ab; font-size: .9rem; margin-bottom: 16px; }
+  input { width: 100%; font-size: 1.6rem; letter-spacing: .3em; text-align: center;
+          background: #0f1115; color: #e8e8ea; border: 1px solid #2a2f3a; border-radius: 10px;
+          padding: 12px; margin-bottom: 12px; }
+  button { width: 100%; padding: 12px; border: 0; border-radius: 10px; font-size: 1rem;
+           background: #4f7cff; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  .err { color: #ff7b7b; font-size: .9rem; min-height: 1.4em; margin-bottom: 8px; }
+  video { width: 100%; border-radius: 10px; background: #000; display: none; }
+  .sep { text-align: center; color: #9aa0ab; font-size: .85rem; margin: 10px 0; }
+  a { color: #8ab0ff; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Conectar con tu PC</h1>
+  <p class="sub">Introduce el código que aparece en el PC (Ajustes → Acceso → Conectar el móvil)
+     o escanea su QR.</p>
+  <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="······">
+  <div class="err" id="err"></div>
+  <button id="go">Conectar</button>
+  <div class="sep">o</div>
+  <button id="scan" style="background:#2a2f3a">Escanear código QR</button>
+  <video id="v" playsinline muted></video>
+  <p class="sub" style="margin-top:14px">También puedes abrir en el PC el enlace con
+     <a href="#" id="lnk">?token=…</a> y copiarlo aquí.</p>
+</div>
+<script>
+const $ = (s) => document.querySelector(s);
+const base = location.origin;
+$("#lnk").textContent = base + "/?token=…";
+$("#lnk").href = base + "/";
+
+async function connect(code) {
+  $("#err").textContent = "";
+  $("#go").disabled = true;
+  try {
+    const r = await fetch(base + "/api/pair/exchange", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({code})
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      $("#err").textContent = d.detail || "Código incorrecto o caducado";
+      $("#go").disabled = false;
+      return;
+    }
+    const d = await r.json();
+    localStorage.setItem("g3g3ai_pc", JSON.stringify({urls: d.urls, token: d.token, at: Date.now()}));
+    // Dentro de la app de Android: le pasa los datos y vuelve a la pantalla de Equipos
+    try { location.href = "g3g3ai://paired?d=" + encodeURIComponent(JSON.stringify({urls: d.urls, token: d.token})); } catch { /* */ }
+    document.body.innerHTML = '<div class="card"><h1>Conectado</h1><p class="sub">El PC quedó guardado ' +
+      'en la app: ábrelo desde «Equipos». Ya puedes cerrar esta página.</p></div>';
+  } catch (e) {
+    $("#err").textContent = "No se pudo conectar: " + e;
+    $("#go").disabled = false;
+  }
+}
+
+$("#go").onclick = () => {
+  const c = $("#code").value.replace(/\D/g, "");
+  if (c.length !== 6) { $("#err").textContent = "Son 6 dígitos"; return; }
+  connect(c);
+};
+$("#code").onkeydown = (e) => { if (e.key === "Enter") $("#go").onclick(); };
+
+$("#scan").onclick = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: "environment"}});
+    const v = $("#v");
+    v.srcObject = stream;
+    v.style.display = "block";
+    await v.play();
+    const cv = document.createElement("canvas");
+    const ctx = cv.getContext("2d", {willReadFrequently: true});
+    const tick = async () => {
+      if (v.readyState < 2) { requestAnimationFrame(tick); return; }
+      cv.width = v.videoWidth; cv.height = v.videoHeight;
+      ctx.drawImage(v, 0, 0);
+      const detector = window.BarcodeDetector ? new BarcodeDetector() : null;
+      if (detector) {
+        const codes = await detector.detect(cv);
+        if (codes.length) {
+          stream.getTracks().forEach(t => t.stop());
+          try { connect(JSON.parse(codes[0].rawValue).code); } catch (e) { $("#err").textContent = "QR no válido"; }
+          return;
+        }
+      }
+      requestAnimationFrame(tick);
+    };
+    tick();
+    if (!window.BarcodeDetector) $("#err").textContent =
+      "Este navegador no soporta BarcodeDetector; introduce el código a mano.";
+  } catch (e) {
+    $("#err").textContent = "Sin acceso a la cámara: " + e;
+  }
+};
+</script>
+</body>
+</html>

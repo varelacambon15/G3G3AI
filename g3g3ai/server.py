@@ -38,6 +38,8 @@ from .engine import EngineInstaller
 from . import documents as D
 from . import devtools, extras, hardware, images, ollama, projects, web
 from .context import HistoryBuilder
+from .pairing import Pairing
+from .qr import qr_svg
 from .sync import INTERVAL as SYNC_INTERVAL, Sync, SyncError, new_key as new_sync_key
 from . import providers as providers_mod
 from .providers import ProviderError, chat_stream, complete, complete_messages, list_models
@@ -158,6 +160,9 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     mail_index = MailIndex(cfg)
     session_allow: dict[str, set] = {}  # conversación -> herramientas permitidas «siempre»
     session_state: dict[str, dict] = {}  # conversación -> {"read": archivos leídos, "todos": plan de la tarea}
+    pairing = Pairing(cfg["port"], lambda: socket.gethostname(),
+                      lambda: [f"http://{ip}:{cfg['port']}" for ip in lan_addresses()])
+    pairing.set_token(cfg["token"])
 
     def state_for(cid: str, conv: dict | None = None) -> dict:
         if cid not in session_state:
@@ -177,11 +182,13 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         sync.start()
         cloud.start()
         scheduler.start()
+        pairing.start()
         if cfg["mail_enabled"]:
             mail_index.start()          # pone al día el índice del correo en segundo plano
         yield
         scheduler.stop()
         mail_index._stop = True
+        pairing.stop()
         sync.stop()
         cloud.stop()
         await mcp_mgr.stop()
@@ -308,7 +315,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     async def auth_mw(request: Request, call_next):
         path = request.url.path
         if ((path.startswith("/api/") or path.startswith("/v1/") or path == "/mcp")
-                and path not in ("/api/login", "/api/sync/exchange")):  # la sincronización va cifrada con su clave
+                and path not in ("/api/login", "/api/sync/exchange", "/api/pair/exchange")):  # el emparejamiento va con su código
             if not authorized(request):
                 return JSONResponse({"detail": "No autorizado"}, status_code=401)
         response = await call_next(request)
@@ -331,6 +338,35 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     async def logout():
         r = JSONResponse({"ok": True})
         r.delete_cookie(COOKIE)
+        return r
+
+    # --- Emparejamiento con el móvil -------------------------------------------------
+    @app.post("/api/pair/code")
+    async def pair_code(request: Request):
+        """Genera un código de emparejamiento (sólo desde el propio equipo)."""
+        if not (request.client and request.client.host in ("127.0.0.1", "::1")):
+            raise HTTPException(403, "Sólo se puede emparejar desde el propio equipo")
+        code = pairing.new_code()
+        urls = [f"http://{ip}:{cfg['port']}" for ip in lan_addresses()]
+        link = urls[0] if urls else f"http://127.0.0.1:{cfg['port']}"
+        payload = json.dumps({"g3g3ai": 1, "urls": urls, "code": code}, ensure_ascii=False)
+        return {"code": code, "expires_in": 600, "urls": urls, "qr": qr_svg(payload.encode())}
+
+    @app.get("/api/pair/status")
+    async def pair_status(request: Request):
+        if not (request.client and request.client.host in ("127.0.0.1", "::1")):
+            raise HTTPException(403, "Sólo desde el propio equipo")
+        return pairing.current()
+
+    @app.post("/api/pair/exchange")
+    async def pair_exchange(body: dict):
+        """Cambia el código de 6 dígitos por la contraseña (sin autenticar)."""
+        token = pairing.exchange(str(body.get("code") or ""))
+        if not token:
+            raise HTTPException(401, "Código incorrecto o caducado")
+        r = JSONResponse({"ok": True, "token": token,
+                          "urls": [f"http://{ip}:{cfg['port']}" for ip in lan_addresses()]})
+        r.set_cookie(COOKIE, token, max_age=3600 * 24 * 365, httponly=True, samesite="lax")
         return r
 
     # --- Estado / ajustes -------------------------------------------------------------
@@ -2222,6 +2258,11 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+    # Página mínima para el escáner QR del móvil (sin JS de la interfaz principal)
+    @app.get("/m")
+    async def mobile_page():
+        return FileResponse(STATIC / "m.html", headers={"Cache-Control": "no-cache"})
 
     @app.get("/manifest.webmanifest")
     async def manifest():

@@ -146,6 +146,36 @@ async function renderUsage() {
     box.append(h("p", { class: "muted" }, "Los precios son orientativos; ajústalos en «Precios por modelo». Los modelos locales cuestan 0."));
   } catch (e) { box.append(h("p", { class: "muted" }, "No se pudo cargar el uso: " + e.message)); }
 }
+function renderPairing() {
+  const box = h("div", { class: "pairing" },
+    h("h3", { style: "margin:14px 0 4px" }, "Conectar la app del móvil"),
+    h("p", { class: "muted" }, "Genera un código y escanéalo con la app de G3G3AI (o ábrelo en el móvil y escribe el código). Vale 10 minutos."));
+  const btn = h("button", { class: "small" }, "Generar código de emparejamiento");
+  const out = h("div", {});
+  let timer = null;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try {
+      const d = await api("/api/pair/code", { method: "POST" });
+      out.innerHTML = "";
+      const qrBox = h("div", { style: "width:220px;height:220px;background:#fff;border-radius:10px;padding:8px" });
+      qrBox.innerHTML = d.qr;
+      const codeEl = h("code", { style: "font-size:1.6rem;letter-spacing:.2em" }, d.code);
+      const left = h("span", { class: "muted" });
+      out.append(qrBox, h("p", {}, "Código: ", codeEl), h("p", {}, left));
+      let secs = d.expires_in;
+      clearInterval(timer);
+      timer = setInterval(() => {
+        secs -= 1;
+        if (secs <= 0) { clearInterval(timer); left.textContent = "Caducado: genera otro."; btn.disabled = false; return; }
+        left.textContent = `Caduca en ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+      }, 1000);
+    } catch (e) { toast("No se pudo generar: " + e.message); btn.disabled = false; }
+  };
+  box.append(btn, out);
+  return box;
+}
+
 async function loadSettings() {
   S.settings = await api("/api/settings");
   await refreshStatus();
@@ -158,6 +188,7 @@ async function loadSettings() {
     "Otras apps compatibles con OpenAI pueden usar ", h("code", {}, `${st.urls[0] || "http://IP:" + S.settings.port}/v1`), " con la contraseña como API key."));
 
   acc.append(h("p", { class: "muted" }, `Equipo: ${st.hostname} · ${st.platform} · G3G3AI ${st.version}`));
+  if (st.is_local) acc.append(renderPairing());
   if (st.is_local) acc.append(h("button", { class: "danger small", onclick: async () => {
     if (!confirm("¿Apagar el servidor de G3G3AI? Dejarás de poder conectarte desde otros dispositivos.")) return;
     await api("/api/shutdown", { method: "POST" }).then(() => toast("Apagando…")).catch((e) => toast(e.message));
