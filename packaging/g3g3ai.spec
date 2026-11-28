@@ -48,10 +48,22 @@ a = Analysis(
     excludes=["tkinter", "pytest"],
 )
 pyz = PYZ(a.pure)
-exe = EXE(
-    pyz, a.scripts, a.binaries, a.datas, [],
-    name="G3G3AI",
-    console=False,  # sin ventana negra de consola
-    icon=str(ROOT / "packaging" / "icon.ico") if sys.platform == "win32" else None,
-    upx=False,
-)
+if sys.platform == "darwin":
+    # macOS: una aplicación G3G3AI.app (en modo carpeta: un solo archivo no se admite en una .app)
+    import re as _re
+    _version = _re.search(r'__version__ = "([^"]+)"', (ROOT / "g3g3ai" / "__init__.py").read_text(encoding="utf-8")).group(1)
+    exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="G3G3AI", console=False, upx=False)
+    coll = COLLECT(exe, a.binaries, a.datas, name="G3G3AI", upx=False)
+    app = BUNDLE(coll, name="G3G3AI.app", bundle_identifier="com.g3g3ai.app",
+                 info_plist={"CFBundleName": "G3G3AI", "CFBundleDisplayName": "G3G3AI", "CFBundleShortVersionString": _version,
+                             "CFBundleVersion": _version, "LSMinimumSystemVersion": "11.0", "NSHighResolutionCapable": True,
+                             "NSMicrophoneUsageDescription": "G3G3AI usa el micrófono para dictar mensajes.",
+                             "NSCameraUsageDescription": "G3G3AI usa la cámara para adjuntar fotos."})
+else:
+    exe = EXE(
+        pyz, a.scripts, a.binaries, a.datas, [],
+        name="G3G3AI",
+        console=False,  # sin ventana negra de consola
+        icon=str(ROOT / "packaging" / "icon.ico") if sys.platform == "win32" else None,
+        upx=False,
+    )

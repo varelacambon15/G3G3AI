@@ -16,10 +16,18 @@
 
         <activity
             android:name=".ServersActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Enlace del QR de «Conectar el móvil»: g3g3ai://pair?u=…&c=…&n=… -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="g3g3ai" android:host="pair" />
             </intent-filter>
         </activity>
 

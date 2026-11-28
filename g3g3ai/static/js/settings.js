@@ -149,6 +149,7 @@ async function renderUsage() {
 async function loadSettings() {
   S.settings = await api("/api/settings");
   await refreshStatus();
+  if (S.status?.is_local !== false) drawPair(false); else $("#pair-box").replaceChildren(h("p", { class: "muted" }, "Genera el código desde el propio PC."));
   const st = S.status, acc = $("#access-info"); acc.innerHTML = "";
   acc.append(h("p", {}, "Conecta el móvil o portátil a la misma red Wi-Fi y abre:"));
   for (const u of st.urls) acc.append(h("code", { class: "access-url" }, st.token ? `${u}/?token=${st.token}` : u));
@@ -688,3 +689,35 @@ function waitForRestart(version) {
 $("#update-btn").addEventListener("click", () => (UPD.info ? openUpdateDialog() : checkUpdate(true, false).then((i) => i?.newer && openUpdateDialog())));
 setTimeout(() => checkUpdate(false, true), 4000);
 setInterval(() => checkUpdate(false, true), 6 * 3600 * 1000);
+
+// --- Conectar el móvil: QR y código de emparejamiento --------------------------------------------------
+const PAIR = { timer: null, data: null };
+async function drawPair(fresh = true) {
+  const box = $("#pair-box"); if (!box) return;
+  clearInterval(PAIR.timer);
+  if (fresh || !PAIR.data || PAIR.data.expires * 1000 < Date.now()) {
+    box.replaceChildren(h("p", { class: "muted" }, "Generando código…"));
+    try { PAIR.data = await api("/api/pair/new", { method: "POST" }); } catch (e) { box.replaceChildren(h("p", { class: "warn-text" }, e.message)); return; }
+  }
+  const d = PAIR.data, left = h("small", { class: "muted" });
+  const tick = () => {
+    const s = Math.max(0, Math.round(d.expires - Date.now() / 1000));
+    left.textContent = s ? `Vale ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} min más` : "Caducado";
+    if (!s) { clearInterval(PAIR.timer); box.classList.add("expired"); }
+  };
+  box.classList.remove("expired");
+  const qr = h("div", { class: "pair-qr" }); qr.innerHTML = d.qr || "";
+  box.replaceChildren(
+    d.qr ? qr : h("p", { class: "warn-text" }, "No se detectó ninguna dirección de red local: conecta el PC a la Wi-Fi."),
+    h("div", { class: "pair-info" },
+      h("ol", { class: "pair-steps" },
+        h("li", {}, "En el móvil abre la cámara y ", h("b", {}, "escanea el QR"), " (o abre la app G3G3AI → ", h("b", {}, "Buscar equipos"), ")."),
+        h("li", {}, "Elige «Abrir en la app» y listo."),
+        h("li", {}, "Si la app te pide un código, escribe:")),
+      h("div", { class: "pair-code", title: "Código de un solo uso" }, `${d.code.slice(0, 3)} ${d.code.slice(3)}`),
+      left,
+      h("div", { class: "row" }, h("button", { class: "ghost small", onclick: () => drawPair(true) }, ico("retry"), "Código nuevo"),
+        d.link ? h("button", { class: "ghost small", onclick: () => copyText(d.link, "Enlace copiado") }, ico("copy"), "Copiar enlace") : null),
+      h("small", { class: "muted" }, `Equipo: ${d.name} · ${(d.urls || []).join(" · ")}`)));
+  tick(); PAIR.timer = setInterval(tick, 1000);
+}

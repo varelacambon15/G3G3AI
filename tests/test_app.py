@@ -3264,3 +3264,87 @@ def test_self_update_windows_swap_script(tmp_path, monkeypatch):
     assert f'move /Y "{new}" "{exe}"' in script and f'start "" "{exe}"' in script and "tasklist" in script
     assert started[0][:2] == ["cmd", "/c"] and started[-1] == "exit"
     assert exe.read_bytes() == b"MZ-old"          # en Windows lo cambia el script cuando la app se cierra
+
+
+def test_qr_encodes_a_scannable_pairing_link():
+    import cv2
+    import numpy as np
+    from g3g3ai import qr
+    link = "http://192.168.1.50:8800/m?c=483920"
+    m = qr.make(link)
+    scale, b = 8, 4
+    img = np.full(((len(m) + 2 * b) * scale,) * 2, 255, np.uint8)
+    for y, row in enumerate(m):
+        for x, v in enumerate(row):
+            if v:
+                img[(y + b) * scale:(y + b + 1) * scale, (x + b) * scale:(x + b + 1) * scale] = 0
+    assert cv2.QRCodeDetector().detectAndDecode(img)[0] == link
+    assert qr.svg(link).startswith("<svg") and "viewBox" in qr.svg(link)
+
+
+def test_pairing_code_page_discovery_and_lockout(env):
+    import socket
+    client, cfg, home, tmp = env
+    h = auth(cfg)
+    d = client.get("/api/discover").json()                          # sin contraseña: quién soy
+    assert d["app"] == "g3g3ai" and d["port"] == cfg["port"] and "token" not in str(d)
+    assert client.post("/api/pair", json={"code": "123456"}).status_code == 401   # sin código generado
+    r = client.post("/api/pair/new", headers=h).json()
+    code = r["code"]
+    assert len(code) == 6 and code.isdigit() and r["expires"] > time.time()
+    assert r["link"] == "" or (r["link"].endswith(f"/m?c={code}") and r["qr"].startswith("<svg"))
+    page = client.get(f"/m?c={code}")                                # lo que abre la cámara del móvil
+    assert page.status_code == 200 and "intent://pair" in page.text and "com.g3g3ai.client" in page.text and cfg["token"] not in page.text
+    assert client.get("/m?c=000000").status_code == 410
+    ok = client.post("/api/pair", json={"code": f"{code[:3]} {code[3:]}"})   # admite el espacio del cartel
+    assert ok.status_code == 200 and ok.json()["token"] == cfg["token"]
+    assert client.post("/api/pair", json={"code": code}).status_code == 401  # de un solo uso
+    # Fuerza bruta: tras 5 fallos se bloquea aunque el código sea bueno
+    code2 = client.post("/api/pair/new", headers=h).json()["code"]
+    wrong = "000000" if code2 != "000000" else "111111"
+    for _ in range(5):
+        assert client.post("/api/pair", json={"code": wrong}).status_code == 401
+    locked = client.post("/api/pair", json={"code": code2})
+    assert locked.status_code == 401 and "Demasiados intentos" in locked.json()["detail"]
+    # Descubrimiento por UDP (como hace la app)
+    from g3g3ai import pairing
+    t = pairing.start_discovery(lambda: pairing.info("PC-de-prueba", 8800, "9.9"))
+    if t is not None:                                                # puerto libre en esta máquina
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(3)
+        s.sendto(pairing.DISCOVERY_QUERY, ("127.0.0.1", pairing.DISCOVERY_PORT))
+        data, _ = s.recvfrom(512)
+        assert json.loads(data) == {"app": "g3g3ai", "name": "PC-de-prueba", "port": 8800, "version": "9.9"}
+        s.close()
+        t.stop()
+    assert pairing.preferred_ip(["10.0.0.4", "172.20.1.1", "192.168.1.9"]) == "192.168.1.9"
+
+
+def test_self_update_on_macos_replaces_the_app_bundle(tmp_path, monkeypatch):
+    import sys as _sys
+    from g3g3ai import updater as U
+    monkeypatch.setattr(U.sys, "platform", "darwin")
+    assert U.asset_name() == "G3G3AI-macos.zip"
+    app = tmp_path / "G3G3AI.app"
+    (app / "Contents" / "MacOS").mkdir(parents=True)
+    exe = app / "Contents" / "MacOS" / "G3G3AI"
+    exe.write_bytes(b"x")
+    monkeypatch.setattr(U.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(U.sys, "executable", str(exe))
+    assert U.installed_exe() == app.resolve()                      # se cambia la carpeta .app entera
+    script = U.mac_script(app, tmp_path / ".stage", 4242, ["--port", "8800"])
+    assert "kill -0 4242" in script and f"mv {tmp_path}/.stage/G3G3AI.app {app}" in script and "open -n" in script
+    assert script.index("kill -0") < script.index("mv ")          # primero espera a que la app se cierre
+    # Abierta desde Descargas (Gatekeeper la «traslada», sólo lectura): se explica qué hacer
+    translocated = tmp_path / "AppTranslocation" / "X" / "d" / "G3G3AI.app"
+    (translocated / "Contents" / "MacOS").mkdir(parents=True)
+    t_exe = translocated / "Contents" / "MacOS" / "G3G3AI"
+    t_exe.write_bytes(b"x")
+    monkeypatch.setattr(U.sys, "executable", str(t_exe))
+    info = U.Updater(cfg={}, token_fn=lambda: "")
+    monkeypatch.setattr(info, "_headers", lambda *a, **k: {})
+    import httpx
+    release = {"tag_name": "v99.0.0", "assets": [{"name": "G3G3AI-macos.zip", "id": 1, "size": 10}], "body": "", "html_url": ""}
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: httpx.Response(200, json=release))
+    out = info.check(force=True)
+    assert not out["can_install"] and "Aplicaciones" in out["reason"]

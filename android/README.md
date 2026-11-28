@@ -13,7 +13,12 @@ Dos formas de uso:
    guardado. Sin agente, búsqueda web ni modelos locales (para eso, conecta a tu PC).
    El catálogo se genera desde el del escritorio con `python scripts/gen_android_catalog.py`.
 
-- Lista de equipos (nombre, dirección y contraseña). Abre el último usado al iniciar.
+- **Conectar con el PC sin teclear nada**: en el PC, Ajustes → Acceso → «Conectar el móvil» muestra un QR y un código de
+  6 cifras (válido 10 minutos y de un solo uso). Escanea el QR con la cámara del móvil («Abrir en la app»), o abre la app
+  y pulsa «Buscar equipos en mi red» (el PC responde por UDP, puerto 8799) y escribe el código.
+- Lista de equipos con su estado (en línea / sin respuesta y versión). Abre el último usado al iniciar.
+- El chat directo tiene conversaciones fijadas y favoritas, precios y ficha de cada modelo, uso del plan (OpenCode Go:
+  5 h / semana / mes; saldo en OpenRouter y DeepSeek), coste por respuesta y copiar la conversación como Markdown.
 - Cámara y selector de archivos para adjuntar fotos y documentos.
 - Descargas con la sesión iniciada (se guardan en Descargas).
 - Los enlaces externos (fuentes de la búsqueda web) se abren en el navegador.

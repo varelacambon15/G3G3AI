@@ -870,3 +870,12 @@ code.path-link:hover { background: var(--hover); }
 .restart-veil { position: fixed; inset: 0; z-index: 100; background: color-mix(in srgb, var(--bg) 88%, transparent); display: flex;
   align-items: center; justify-content: center; text-align: center; }
 .restart-veil > div { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+
+/* Conectar el móvil */
+.pair-box { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.pair-box.expired { opacity: .5; }
+.pair-qr { width: 190px; height: 190px; flex: none; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); background: #fff; }
+.pair-qr svg { width: 100%; height: 100%; display: block; }
+.pair-info { display: flex; flex-direction: column; gap: 8px; flex: 1 1 260px; }
+.pair-steps { margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.5; }
+.pair-code { font: 600 34px/1.1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .08em; }

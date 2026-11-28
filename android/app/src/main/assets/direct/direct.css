@@ -118,3 +118,25 @@ details.prov summary b { flex: 1; }
 .prov-actions .toggle { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
 .prov-actions .toggle input { width: auto; }
 .test-out.ok { color: #3e8a52; }
+
+/* Fijar, favoritas, uso del plan, ficha del modelo */
+.side-search { display: flex; align-items: center; gap: 4px; }
+.side-search input { flex: 1; }
+#fav-filter { opacity: .6; } #fav-filter.on { opacity: 1; color: #d4a017; }
+#fav-filter.on svg { fill: currentColor; }
+.conv-group { font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); padding: 10px 10px 3px; }
+.conv .star { color: #d4a017; display: inline-flex; flex: none; } .conv .star svg { fill: currentColor; width: 13px; height: 13px; }
+.conv button.on { color: #d4a017; } .conv button.on svg { fill: currentColor; }
+.to-pc { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 10px 0 6px; }
+.to-pc .ico { width: 17px; height: 17px; }
+.usage-chip { border: 1px solid var(--border); background: transparent; color: var(--muted); border-radius: 999px; font-size: 12px; padding: 2px 9px; }
+.usage-chip[data-level=high] { color: #b7791f; border-color: #b7791f66; } .usage-chip[data-level=full] { color: #c0392b; border-color: #c0392b66; }
+.hidden { display: none !important; }
+.meter { margin: 10px 0; } .meter-head { display: flex; justify-content: space-between; font-size: 14px; }
+.meter-bar { height: 7px; border-radius: 99px; background: var(--panel-2); overflow: hidden; margin: 4px 0; }
+.meter-bar span { display: block; height: 100%; background: #3f8f5b; } .meter-bar[data-level=high] span { background: #c98a1a; } .meter-bar[data-level=full] span { background: #c0392b; }
+.sheet { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.4); display: flex; align-items: flex-end; }
+.sheet > div { width: 100%; max-height: 80vh; overflow: auto; background: var(--bg); border-radius: 18px 18px 0 0; padding: 16px 16px max(16px, env(safe-area-inset-bottom)); }
+.sheet h3 { margin: 0 0 4px; } .sheet dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 14px; margin: 10px 0; }
+.sheet dt { color: var(--muted); } .sheet dd { margin: 0; }
+.meta .cost { font-size: 11.5px; color: var(--muted); }

@@ -10,13 +10,17 @@
 <header class="top">
   <button id="menu" class="icon" aria-label="Conversaciones" data-icon="menu"></button>
   <div class="title"><b>G3G3AI</b><small id="subtitle">Chat directo con tus APIs</small></div>
+  <button id="usage-chip" class="usage-chip hidden" aria-label="Uso del plan"></button>
+  <button id="export-btn" class="icon hidden" aria-label="Copiar la conversación" data-icon="download"></button>
   <button id="settings-btn" class="icon" aria-label="Ajustes" data-icon="gear"></button>
 </header>
 
 <aside id="drawer" class="drawer">
   <button id="new-chat" class="new"><span data-icon="plus"></span> Nueva conversación</button>
-  <input id="conv-search" type="search" placeholder="Buscar conversaciones…">
+  <div class="side-search"><input id="conv-search" type="search" placeholder="Buscar conversaciones…">
+    <button id="fav-filter" class="icon" aria-label="Ver sólo las favoritas" aria-pressed="false" data-icon="star"></button></div>
   <div id="convs"></div>
+  <button id="to-pc" class="ghost to-pc"><span data-icon="plug"></span> Conectar con mi PC</button>
   <p class="foot">Las conversaciones se guardan sólo en este móvil.</p>
 </aside>
 <div id="scrim" class="scrim"></div>
@@ -31,6 +35,7 @@
       <button id="photo" class="round" title="Añadir foto" aria-label="Añadir foto" data-icon="camera"></button>
       <input id="photo-input" type="file" accept="image/*" hidden>
       <select id="model" aria-label="Modelo"></select>
+      <button id="model-info" class="round hidden" aria-label="Información del modelo" data-icon="info"></button>
       <button id="send" class="send" aria-label="Enviar" data-icon="arrowUp"></button>
     </div>
   </div>
@@ -39,6 +44,11 @@
 <section id="settings" class="panel hidden">
   <div class="panel-head"><b>Ajustes</b><button id="settings-close" class="icon" aria-label="Cerrar" data-icon="x"></button></div>
   <div class="panel-body">
+    <div class="card">
+      <h3>Controlar el chat de tu PC</h3>
+      <p class="muted">Conecta la app con G3G3AI en tu ordenador para usar sus modelos locales, el agente, los archivos y tus conversaciones. Se busca solo en la Wi-Fi o se empareja con un código.</p>
+      <button id="to-pc-2" class="primary">Conectar con mi PC</button>
+    </div>
     <div class="card">
       <h3>Importar APIs de un equipo</h3>
       <p class="muted">Copia los proveedores y sus claves desde tu PC (deben estar encendidos y en la misma red).</p>

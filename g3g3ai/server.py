@@ -16,7 +16,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
@@ -177,9 +177,12 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         sync.start()
         cloud.start()
         scheduler.start()
+        discovery = pairing.start_discovery(discovery_info)
         if cfg["mail_enabled"]:
             mail_index.start()          # pone al día el índice del correo en segundo plano
         yield
+        if discovery:
+            discovery.stop()
         scheduler.stop()
         mail_index._stop = True
         sync.stop()
@@ -308,7 +311,7 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
     async def auth_mw(request: Request, call_next):
         path = request.url.path
         if ((path.startswith("/api/") or path.startswith("/v1/") or path == "/mcp")
-                and path not in ("/api/login", "/api/sync/exchange")):  # la sincronización va cifrada con su clave
+                and path not in ("/api/login", "/api/sync/exchange", "/api/pair", "/api/discover")):  # sincronización cifrada; emparejar y descubrir sin contraseña
             if not authorized(request):
                 return JSONResponse({"detail": "No autorizado"}, status_code=401)
         response = await call_next(request)
@@ -317,6 +320,57 @@ def create_app(cfg: Config | None = None, data_dir: Path | None = None) -> FastA
         if path == "/" and qt and secrets.compare_digest(qt, cfg["token"]):
             response.set_cookie(COOKIE, qt, max_age=3600 * 24 * 365, httponly=True, samesite="lax")
         return response
+
+    # --- Conectar el móvil: código de emparejamiento, QR y descubrimiento en la red ---------------------
+    from . import pairing, qr as qrlib
+    pairing_state = pairing.Pairing()
+
+    def device_name() -> str:
+        return socket.gethostname()
+
+    def discovery_info() -> dict:
+        return pairing.info(device_name(), cfg["port"], __version__)
+
+    @app.get("/api/discover")
+    async def discover():
+        """Quién soy (nombre, puerto y versión); sin secretos. La app lo usa para ver si el PC está en línea."""
+        return discovery_info()
+
+    @app.post("/api/pair/new")
+    async def pair_new(request: Request):
+        """Código nuevo de 6 cifras (10 min) con su QR. Sólo desde el propio equipo o con sesión iniciada."""
+        code, expires = pairing_state.new_code()
+        ips = lan_addresses()
+        port = cfg["port"]
+        link = pairing.pair_link(ips, port, code)
+        return {"code": code, "expires": expires, "link": link, "name": device_name(), "port": port,
+                "urls": [f"http://{ip}:{port}" for ip in ips],
+                "qr": qrlib.svg(link, dark="#1f1e1d", light="#ffffff") if link else None}
+
+    @app.post("/api/pair")
+    async def pair_redeem(body: dict):
+        try:
+            pairing_state.redeem(str(body.get("code") or ""))
+        except pairing.PairError as e:
+            raise HTTPException(401, str(e)) from e
+        r = JSONResponse({"ok": True, "token": cfg["token"], "name": device_name(), "version": __version__})
+        r.set_cookie(COOKIE, cfg["token"], max_age=3600 * 24 * 365, httponly=True, samesite="lax")
+        return r
+
+    @app.get("/m", response_class=HTMLResponse)
+    async def pair_page(c: str = ""):
+        """Página a la que lleva el QR: abrir la app o usar el navegador."""
+        import html as _html
+        code, _ = pairing_state.current()
+        if not code or c != code:
+            return HTMLResponse(pairing.PAGE.split("<a class=\"btn p\"")[0].replace("__NAME__", _html.escape(device_name()))
+                                + "<p>Este código ya no vale. Genera uno nuevo en el PC: <b>Ajustes → Acceso → Conectar el móvil</b>.</p>"
+                                "</main></body></html>", status_code=410)
+        urls = [f"http://{ip}:{cfg['port']}" for ip in lan_addresses()]
+        page = (pairing.PAGE.replace("__NAME__", _html.escape(device_name()))
+                .replace("__INTENT__", _html.escape(pairing.app_intent(urls, code, device_name()), quote=True))
+                .replace("__CODE__", code))
+        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/login")
     async def login(body: dict):

@@ -119,6 +119,39 @@ jobs:
           name: G3G3AI-linux-x64-completo
           path: dist/G3G3AI-linux-x64-completo.tar.gz
 
+  macos:
+    needs: tests
+    runs-on: macos-latest          # Apple Silicon (arm64)
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Dependencias
+        run: pip install -r requirements.txt pyinstaller pywebview
+      - name: Compilar G3G3AI.app
+        run: pyinstaller --noconfirm --distpath dist packaging/g3g3ai.spec
+      - name: Firmar (ad hoc) y comprobar que arranca y responde
+        run: |
+          codesign --force --deep --sign - dist/G3G3AI.app
+          export G3G3AI_CONFIG_DIR="$RUNNER_TEMP/g3cfg" G3G3AI_DATA_DIR="$RUNNER_TEMP/g3data"
+          dist/G3G3AI.app/Contents/MacOS/G3G3AI --headless --port 8879 &
+          PID=$!
+          ok=0
+          for i in $(seq 1 60); do
+            sleep 1
+            if curl -sf http://127.0.0.1:8879/ >/dev/null; then ok=1; break; fi
+          done
+          if [ "$ok" = 1 ]; then curl -s -m 120 http://127.0.0.1:8879/api/ocr/selftest || true; echo; fi
+          kill $PID 2>/dev/null || true
+          if [ "$ok" != 1 ]; then cat "$RUNNER_TEMP/g3data/g3g3ai.log" 2>/dev/null || true; echo "La app no respondió"; exit 1; fi
+      - name: Empaquetar
+        run: ditto -c -k --keepParent dist/G3G3AI.app dist/G3G3AI-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: G3G3AI-macos
+          path: dist/G3G3AI-macos.zip
+
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -138,8 +171,9 @@ jobs:
 
   release:
     # Con una etiqueta v* o al lanzar el flujo a mano (Actions → Run workflow): compila y publica la Release
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    needs: [windows, linux, android]
+    # Si macOS falla no se bloquea el resto: se publica sin esa descarga (y se ve en el registro)
+    if: ${{ !cancelled() && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.android.result == 'success' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+    needs: [windows, linux, android, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:

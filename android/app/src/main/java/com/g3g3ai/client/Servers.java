@@ -54,6 +54,22 @@ final class Servers {
         prefs(c).edit().putString("servers", arr.toString()).apply();
     }
 
+    /** Añade el equipo o, si ya existe esa dirección, actualiza su contraseña y nombre. Devuelve su posición. */
+    static int upsert(Context c, String name, String url, String token) {
+        List<Server> list = load(c);
+        for (int i = 0; i < list.size(); i++) {
+            if (list.get(i).url.equalsIgnoreCase(url)) {
+                String keep = name == null || name.isEmpty() ? list.get(i).name : name;
+                list.set(i, new Server(keep, url, token));
+                save(c, list);
+                return i;
+            }
+        }
+        list.add(new Server(name == null ? "" : name, url, token));
+        save(c, list);
+        return list.size() - 1;
+    }
+
     static int lastIndex(Context c) {
         return prefs(c).getInt("last", -1);
     }

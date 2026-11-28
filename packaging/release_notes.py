@@ -34,6 +34,7 @@ print("""
 - **G3G3AI-windows-completo.zip** — recomendado en Windows: descomprime y abre `G3G3AI.exe`. Incluye llama.cpp (CPU y gráfica), stable-diffusion.cpp, Python y Git portátiles; no hay que instalar nada más.
 - **G3G3AI.exe** — versión ligera para Windows (descarga el motor local al usarlo).
 - **G3G3AI-linux-x64-completo.tar.gz** / **G3G3AI-linux-x64** — Linux, completa o ligera.
+- **G3G3AI-macos.zip** — macOS (Apple Silicon): descomprime, arrastra **G3G3AI** a Aplicaciones y la primera vez ábrela con clic derecho → *Abrir* (no está notarizada por Apple). El motor local se descarga al usarlo.
 - **G3G3AI-android.apk** — app de Android (chat directo con tus APIs y conexión con tu PC). Firmada con clave de prueba: Android puede avisar al instalarla.
 
 Desde la versión 0.43.0, G3G3AI se actualiza solo: botón «Actualizar» abajo a la izquierda (o Ajustes → Buscar actualizaciones).

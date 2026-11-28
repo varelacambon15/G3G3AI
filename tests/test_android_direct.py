@@ -125,3 +125,93 @@ def test_android_decrypts_cloud_copy_made_by_the_pc():
         err = page.evaluate("async (d) => { try { await decryptCloud(new Uint8Array(d), 'otra'); return 'ok'; } catch (e) { return e.message; } }", data)
         assert err == "contraseña incorrecta"
         browser.close()
+
+
+BRIDGE_GO = r"""
+window.__reqs = [];
+window.__opened = 0;
+window.G3Native = {
+  openServers() { window.__opened++; },
+  request(id, method, url, headers, body) {
+    window.__reqs.push({ method, url });
+    const send = (k, d) => setTimeout(() => window.__g3net(id, k, d), 5);
+    if (url.endsWith("/models")) {
+      send("status", 200);
+      send("line", JSON.stringify({ data: [{ id: "glm-5.3-flash", name: "GLM-5.3-Flash", description: "Rápido y barato",
+        limit: { context: 1000000 }, modalities: { input: ["text", "image/png"] },
+        cost: { text: { input: { price: 0.15, cache: { read: 0.03 } }, output: { price: 0.5 } } },
+        go: { monthly_usage: { go: 60 }, zdr: true } }] }));
+      send("end"); return;
+    }
+    if (url.endsWith("/usage")) {
+      send("status", 200);
+      send("line", JSON.stringify({ usage: { rolling: { status: "ok", percent: 34, resetsAt: new Date(Date.now() + 3 * 3600e3).toISOString() },
+        weekly: { status: "ok", percent: 72, resetsAt: new Date(Date.now() + 3 * 86400e3).toISOString() },
+        monthly: { status: "ok", percent: 41, resetsAt: new Date(Date.now() + 12 * 86400e3).toISOString() } } }));
+      send("end"); return;
+    }
+    send("status", 200);
+    setTimeout(() => window.__g3net(id, "line", "data: " + JSON.stringify({ choices: [{ delta: { content: "Hecho." } }] })), 10);
+    setTimeout(() => window.__g3net(id, "line", "data: " + JSON.stringify({ choices: [], usage: { cost: 0, opencode: { allowance: 0.0123 } } })), 20);
+    setTimeout(() => { window.__g3net(id, "line", "data: [DONE]"); window.__g3net(id, "end"); }, 40);
+  },
+  abort() {}, getStore(k) { return localStorage.getItem("ns:" + k) || ""; },
+  setStore(k, v) { localStorage.setItem("ns:" + k, v); }, getServers() { return "[]"; },
+};
+localStorage.setItem("ns:providers", JSON.stringify([{ id: "opencode-go", name: "OpenCode Go", type: "openai",
+  base_url: "https://opencode.ai/zen/go/v1", api_key: "sk-go", enabled: true }]));
+localStorage.setItem("ns:settings", JSON.stringify({ system: "", temperature: "0.7", max_tokens: "2048" }));
+"""
+
+
+def test_android_direct_pins_favorites_usage_and_model_info():
+    pw = pytest.importorskip("playwright.sync_api")
+    errors: list[str] = []
+    with pw.sync_playwright() as p:
+        browser = launch(p)
+        page = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True).new_page()
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.add_init_script(BRIDGE_GO)
+        page.goto((DIRECT / "index.html").as_uri())
+        page.wait_for_selector("#model option[value='opencode-go::glm-5.3-flash']", state="attached")
+        assert "$0.15/$0.50" in page.inner_text("#model")                       # el precio, en el propio selector
+        # Uso del plan de OpenCode Go (5 h / semana / mes) en la cabecera
+        page.wait_for_selector("#usage-chip:not(.hidden)")
+        assert page.inner_text("#usage-chip") == "72 %" and page.get_attribute("#usage-chip", "data-level") == "high"
+        page.click("#usage-chip")
+        page.wait_for_selector(".sheet >> text=5 horas")
+        assert page.locator(".sheet .meter").count() == 3 and "Semana" in page.inner_text(".sheet")
+        page.click(".sheet >> text=Cerrar")
+        # Ficha del modelo
+        page.click("#model-info")
+        page.wait_for_selector(".sheet >> text=Rápido y barato")
+        sheet = page.inner_text(".sheet")
+        assert "$0.15" in sheet and "1 M tokens" in sheet and "$60/mes" in sheet and "no guarda tus datos" in sheet
+        page.click(".sheet >> text=Cerrar")
+        # Dos conversaciones: respuesta con el cupo descontado, exportar, fijar y favoritas
+        for txt in ("primera", "segunda"):
+            page.fill("#input", txt)
+            page.click("#send")
+            page.wait_for_selector(".msg.assistant .bubble >> text=Hecho.")
+            page.wait_for_function("!document.querySelector('#send').classList.contains('stop')")
+            page.click("#menu")
+            page.click("#new-chat")
+        page.click("#menu")
+        convs = page.locator("#convs .conv")
+        assert convs.count() == 2
+        oldest = convs.nth(1).inner_text()
+        convs.nth(1).locator("button[aria-label='Fijar arriba']").click()
+        page.wait_for_selector("#convs .conv-group >> text=Fijadas")
+        assert page.locator("#convs .conv").first.inner_text() == oldest        # la fijada, arriba
+        page.locator("#convs .conv").nth(1).locator("button[aria-label='Marcar como favorita']").click()
+        page.click("#fav-filter")
+        page.wait_for_function("document.querySelectorAll('#convs .conv').length === 1")
+        page.click("#fav-filter")
+        page.click("#convs .conv >> nth=0")
+        assert "cupo" in page.inner_text(".msg.assistant .meta")                  # cupo descontado por la respuesta
+        page.wait_for_selector("#export-btn:not(.hidden)")
+        page.click("#menu")
+        page.click("#to-pc")
+        assert page.evaluate("window.__opened") == 1                              # vuelve a la lista de equipos
+        browser.close()
+    assert errors == [], errors

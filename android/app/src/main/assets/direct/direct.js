@@ -113,6 +113,11 @@ const ICON_PATHS = {
   brain: '<path d="M9 4.5A2.5 2.5 0 0 0 6.5 7v.3A3 3 0 0 0 4.5 10c0 .9.4 1.7 1 2.2A3 3 0 0 0 7 17.5 2.5 2.5 0 0 0 12 18V6.5A2 2 0 0 0 9 4.5ZM15 4.5A2.5 2.5 0 0 1 17.5 7v.3a3 3 0 0 1 2 2.7c0 .9-.4 1.7-1 2.2a3 3 0 0 1-1.5 5.3A2.5 2.5 0 0 1 12 18"/>',
   doc: '<path d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8L14 3.5Z"/><path d="M14 3.5V8h4.5M9 12.5h6M9 16h6"/>',
   globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.4 3.5 5.3 3.5 8.5s-1 6.1-3.5 8.5c-2.5-2.4-3.5-5.3-3.5-8.5s1-6.1 3.5-8.5Z"/>',
+  star: '<path d="m12 4 2.4 5 5.4.6-4 3.7 1.1 5.4L12 16l-4.9 2.7 1.1-5.4-4-3.7 5.4-.6z"/>',
+  pin: '<path d="M9 4h6l-1 6 3 3H7l3-3-1-6zM12 13v7"/>',
+  download: '<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>',
+  plug: '<path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0zM12 16v5"/>',
+  info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>',
   pen: '<path d="M12 20h8M16.5 3.8a2 2 0 0 1 2.8 2.8L8 18l-4 1 1-4L16.5 3.8Z"/>', bulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3Z"/>',
 };
 function ico(name) {
@@ -180,14 +185,66 @@ const saveConvs = () => { try { localStorage.setItem("g3d:convs", JSON.stringify
 const ready = () => S.providers.filter((p) => p.enabled && p.api_key);
 
 // --- Modelos ---------------------------------------------------------------------------
+S.info = store.get("info", {});
+const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+// Datos útiles que publica el proveedor de un modelo (OpenCode/models.dev: cost.text…, OpenRouter: pricing por token)
+function parseInfo(m) {
+  const i = {};
+  if (m.name && m.name !== m.id) i.name = String(m.name).slice(0, 80);
+  if (typeof m.description === "string" && m.description.trim()) i.desc = m.description.replace(/\s+/g, " ").slice(0, 400);
+  const c = m.cost && m.cost.text;
+  if (c) { i.in = num(c.input?.price); i.out = num(c.output?.price); i.cache = num(c.input?.cache?.read); }
+  else if (m.pricing) {
+    const per = (v) => (num(v) == null ? null : +(num(v) * 1e6).toFixed(4));
+    i.in = per(m.pricing.prompt); i.out = per(m.pricing.completion); i.cache = per(m.pricing.input_cache_read);
+  }
+  const ctx = m.limit?.context || m.context_length; if (ctx) i.ctx = Number(ctx);
+  const mods = m.modalities?.input || m.architecture?.input_modalities;
+  if (mods) i.vision = mods.some((x) => String(x).startsWith("image"));
+  if (m.capabilities?.tools) i.tools = !!m.capabilities.tools.supported;
+  if (m.capabilities?.reasoning) i.reasoning = !!m.capabilities.reasoning.supported;
+  if (m.go) i.go = { monthly: m.go.monthly_usage, training: m.go.training, zdr: m.go.zdr };
+  for (const k of Object.keys(i)) if (i[k] == null) delete i[k];
+  return i;
+}
 async function fetchModels(p) {
   const base = p.base_url.replace(/\/$/, "");
   const r = p.type === "anthropic"
     ? await request({ url: base + "/v1/models?limit=100", headers: { "x-api-key": p.api_key, "anthropic-version": "2023-06-01" } })
     : await request({ url: base + "/models", headers: { Authorization: "Bearer " + p.api_key } });
   if (r.status >= 400) throw new Error(`HTTP ${r.status}`);
-  return (JSON.parse(r.text).data || []).map((m) => m.id).sort();
+  const data = JSON.parse(r.text).data || [];
+  S.info[p.id] = {};
+  for (const m of data) { const i = parseInfo(m); if (Object.keys(i).length) S.info[p.id][m.id] = i; }
+  store.set("info", S.info);
+  return data.map((m) => m.id).sort();
 }
+const fmtP = (v) => (v == null ? "?" : v === 0 ? "gratis" : "$" + (v < 0.1 ? v.toFixed(3) : v < 10 ? v.toFixed(2) : v.toFixed(0)));
+const fmtTok = (n) => (n >= 1e6 ? +(n / 1e6).toFixed(1) + " M" : n >= 1e3 ? Math.round(n / 1e3) + " k" : String(n));
+function modelHint(pid, m) { const i = (S.info[pid] || {})[m]; return i && i.in != null && i.out != null ? ` · ${i.in === 0 && i.out === 0 ? "gratis" : fmtP(i.in) + "/" + fmtP(i.out)}` : ""; }
+function sheet(...content) {
+  const el = h("div", { class: "sheet", onclick: (e) => { if (e.target === el) el.remove(); } }, h("div", {}, ...content, h("button", { class: "ghost", onclick: () => el.remove() }, "Cerrar")));
+  document.body.append(el); return el;
+}
+function showModelInfo() {
+  const [pid, ...rest] = ($("#model").value || "").split("::"), model = rest.join("::");
+  const i = (S.info[pid] || {})[model] || {}, p = S.providers.find((x) => x.id === pid);
+  const rows = [];
+  if (i.in != null || i.out != null) rows.push(["Precio", i.in === 0 && i.out === 0 ? "Gratis" : `${fmtP(i.in)} entrada · ${fmtP(i.out)} salida (por millón de tokens)`]);
+  if (i.cache != null) rows.push(["Caché", `${fmtP(i.cache)} por millón al releer contexto`]);
+  if (i.ctx) rows.push(["Contexto", fmtTok(i.ctx) + " tokens"]);
+  const can = [i.vision ? "imágenes" : null, i.tools ? "herramientas" : null, i.reasoning ? "razona" : null].filter(Boolean);
+  if (can.length) rows.push(["Admite", can.join(" · ")]);
+  if (i.go) {
+    const mu = i.go.monthly, v = typeof mu === "number" ? mu : mu && typeof mu === "object" ? (mu.go ?? Object.values(mu)[0]) : null;
+    if (typeof v === "number") rows.push(["Cupo en Go", `$${v}/mes si sólo usas este modelo (≈ $${(v / 5).toFixed(0)} cada 5 h)`]);
+    rows.push(["Privacidad", i.go.training ? "⚠ entrena con tus peticiones" : i.go.zdr ? "no guarda tus datos" : "—"]);
+  }
+  sheet(h("h3", {}, i.name || model), h("small", { class: "muted" }, p ? p.name : pid),
+    i.desc ? h("p", {}, i.desc) : null,
+    rows.length ? h("dl", {}, rows.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])) : h("p", { class: "muted" }, "Este proveedor no publica descripción ni precios de sus modelos."));
+}
+$("#model-info").addEventListener("click", showModelInfo)
 async function renderModels(refresh = false) {
   const sel = $("#model"), prev = store.get("model", "");
   sel.innerHTML = "";
@@ -198,29 +255,48 @@ async function renderModels(refresh = false) {
       try { S.models[p.id] = await fetchModels(p); } catch (e) { S.models[p.id] = S.models[p.id] || []; toast(`${p.name}: ${e.message}`); }
     }
     const g = h("optgroup", { label: p.name });
-    for (const m of S.models[p.id]) g.append(h("option", { value: `${p.id}::${m}` }, m));
+    for (const m of S.models[p.id]) g.append(h("option", { value: `${p.id}::${m}` }, m + modelHint(p.id, m)));
     if (!S.models[p.id].length) g.append(h("option", { disabled: true }, "(sin modelos: revisa la clave)"));
     sel.append(g);
   }
   store.set("models", S.models);
   if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  syncModelUi();
 }
-$("#model").addEventListener("change", (e) => store.set("model", e.target.value));
+function syncModelUi() {
+  const [pid, ...rest] = ($("#model").value || "").split("::");
+  $("#model-info").classList.toggle("hidden", !($("#model").value));
+  refreshUsage();
+}
+$("#model").addEventListener("change", (e) => { store.set("model", e.target.value); syncModelUi(); });
 
 // --- Conversaciones ----------------------------------------------------------------------
+let favOnly = store.get("fav_only", false);
 function renderConvs() {
   const box = $("#convs"); box.innerHTML = "";
   const q = ($("#conv-search")?.value || "").trim().toLowerCase();
-  const list = S.convs.filter((c) => !q || c.title.toLowerCase().includes(q) || c.messages.some((m) => (m.content || "").toLowerCase().includes(q)));
-  if (!list.length) box.append(h("p", { class: "muted small" }, q ? "Sin resultados." : "Aún no hay conversaciones."));
-  for (const c of list) {
-    box.append(h("div", { class: "conv" + (S.current === c ? " active" : ""), onclick: () => { open(c); document.body.classList.remove("drawer-open"); } },
-      h("span", {}, c.title),
-      h("button", { onclick: (e) => { e.stopPropagation(); if (!confirm("¿Borrar esta conversación?")) return;
-        S.convs = S.convs.filter((x) => x !== c); saveConvs(); if (S.current === c) open(null); else renderConvs(); } }, ico("trash"))));
-  }
+  const fb = $("#fav-filter"); fb.classList.toggle("on", favOnly); fb.setAttribute("aria-pressed", String(favOnly));
+  const list = S.convs.filter((c) => (!q || c.title.toLowerCase().includes(q) || c.messages.some((m) => (m.content || "").toLowerCase().includes(q))) && (!favOnly || c.fav));
+  if (!list.length) box.append(h("p", { class: "muted small" }, q ? "Sin resultados." : favOnly ? "Aún no hay favoritas: pulsa ☆ en una conversación." : "Aún no hay conversaciones."));
+  const row = (c) => h("div", { class: "conv" + (S.current === c ? " active" : ""), onclick: () => { open(c); document.body.classList.remove("drawer-open"); } },
+    c.fav ? h("span", { class: "star" }, ico("star")) : null,
+    h("span", {}, c.title),
+    h("button", { class: c.pinned ? "on" : "", "aria-label": c.pinned ? "Desfijar" : "Fijar arriba", onclick: (e) => { e.stopPropagation(); c.pinned = c.pinned ? 0 : Date.now(); saveConvs(); renderConvs(); } }, ico("pin")),
+    h("button", { class: c.fav ? "on" : "", "aria-label": c.fav ? "Quitar de favoritas" : "Marcar como favorita", onclick: (e) => { e.stopPropagation(); c.fav = !c.fav; saveConvs(); renderConvs(); } }, ico("star")),
+    h("button", { "aria-label": "Borrar", onclick: (e) => { e.stopPropagation(); if (!confirm("¿Borrar esta conversación?")) return;
+      S.convs = S.convs.filter((x) => x !== c); saveConvs(); if (S.current === c) open(null); else renderConvs(); } }, ico("trash")));
+  const pinned = list.filter((c) => c.pinned).sort((a, b) => b.pinned - a.pinned);
+  if (pinned.length) { box.append(h("div", { class: "conv-group" }, "Fijadas"), ...pinned.map(row)); if (list.length > pinned.length) box.append(h("div", { class: "conv-group" }, "Recientes")); }
+  for (const c of list) if (!c.pinned) box.append(row(c));
 }
-function open(c) { S.current = c; renderMessages(); renderConvs(); }
+$("#fav-filter").addEventListener("click", () => { favOnly = !favOnly; store.set("fav_only", favOnly); renderConvs(); });
+function open(c) { S.current = c; renderMessages(); renderConvs(); $("#export-btn").classList.toggle("hidden", !c || !c.messages.length); }
+// Copiar la conversación entera como Markdown (para pegarla en un correo, notas…)
+$("#export-btn").addEventListener("click", () => {
+  const c = S.current; if (!c) return;
+  const md = `# ${c.title}\n\n` + c.messages.map((m) => `**${m.role === "user" ? "Tú" : "IA" + (m.model ? " (" + m.model + ")" : "")}:**\n\n${m.content || ""}`).join("\n\n---\n\n");
+  copyText(md, "Conversación copiada (Markdown)");
+});
 $("#conv-search").addEventListener("input", renderConvs);
 // Editar un mensaje propio: vuelve al cuadro de texto y se descarta lo posterior
 function editFrom(m) {
@@ -271,7 +347,10 @@ function messageEl(m) {
     el.append(h("div", { class: "meta" },
       h("button", { "aria-label": "Copiar", onclick: () => { copyText(m.content); } }, ico("copy")),
       h("button", { "aria-label": "Volver a generar", onclick: () => regenerate(m) }, ico("retry")),
-      m.error ? h("span", { class: "error" }, m.error) : null, h("span", { class: "model" }, m.model || "")));
+      m.error ? h("span", { class: "error" }, m.error) : null,
+      m.allowance != null ? h("span", { class: "cost", title: "Descontado de tu cupo del plan" }, ` cupo −$${m.allowance.toFixed(4)}`)
+        : m.cost ? h("span", { class: "cost", title: "Coste de la respuesta" }, ` $${m.cost.toFixed(4)}`) : null,
+      h("span", { class: "model" }, m.model || "")));
   }
   return el;
 }
@@ -284,7 +363,11 @@ function renderMessages() {
     const ideas = [["doc", "Resume este texto", "Resume en 5 puntos clave el siguiente texto:\n\n"],
       ["pen", "Redacta un correo", "Redacta un correo breve y cordial para "],
       ["bulb", "Explícame algo", "Explícame de forma sencilla cómo funciona "],
-      ["globe", "Traduce", "Traduce al inglés manteniendo el tono:\n\n"]];
+      ["globe", "Traduce", "Traduce al inglés manteniendo el tono:\n\n"],
+      ["pen", "Corrige mi texto", "Corrige la ortografía y mejora la redacción, sin cambiar el sentido:\n\n"],
+      ["bulb", "Lluvia de ideas", "Dame 10 ideas originales para "],
+      ["doc", "Prepara una reunión", "Prepárame el orden del día y las preguntas clave para una reunión sobre "],
+      ["globe", "Compara opciones", "Compara en una tabla pros y contras de "]];
     box.append(h("div", { class: "empty" }, h("h1", {}, ico("spark"), hello),
       ok ? h("div", { class: "ideas" }, ideas.map(([i, label, text]) => h("button", { onclick: () => { input.value = text; input.focus(); input.dispatchEvent(new Event("input")); } }, ico(i), label)))
         : h("div", {}, h("p", {}, "Para empezar, añade un proveedor de IA (OpenCode Go, OpenRouter, DeepSeek, Claude…) o importa los de tu PC."),
@@ -378,6 +461,11 @@ async function stream(p, model) {
       else if (j.type === "message_delta" && j.delta?.stop_reason === "max_tokens") msg.error = "Respuesta cortada por longitud: escribe «continúa».";
     } else {
       if (j.choices?.[0]?.finish_reason === "length") msg.error = "Respuesta cortada por longitud: escribe «continúa».";
+      if (j.usage) {                                   // el proveedor informa de lo que costó (OpenCode, OpenRouter…)
+        const oc = j.usage.opencode || {};
+        if (typeof oc.allowance === "number") msg.allowance = oc.allowance;
+        if (typeof j.usage.cost === "number") msg.cost = j.usage.cost;
+      }
       const d = j.choices?.[0]?.delta || {};
       if (d.content) msg.content += d.content;
       if (d.reasoning_content || d.reasoning) msg.reasoning += d.reasoning_content || d.reasoning;
@@ -395,7 +483,7 @@ async function stream(p, model) {
     const messages = (st.system ? [{ role: "system", content: st.system }] : []).concat(apiMessages(p));
     req = request({ method: "POST", url: base + "/chat/completions", onLine,
       headers: { Authorization: "Bearer " + p.api_key, "content-type": "application/json" },
-      body: { model, messages, stream: true, temperature: Number(st.temperature), max_tokens: Math.max(Number(st.max_tokens) || 0, 8192) } });
+      body: { model, messages, stream: true, stream_options: { include_usage: true }, temperature: Number(st.temperature), max_tokens: Math.max(Number(st.max_tokens) || 0, 8192) } });
   }
   S.streaming = req.id;
   setSendIcon(true);
@@ -417,8 +505,72 @@ async function stream(p, model) {
     if (msg.content || msg.reasoning || msg.error) conv.messages.push(msg);
     saveConvs();
     if (S.current === conv) renderMessages();
+    refreshUsage(true);
   }
 }
+
+// --- Uso del plan y saldo del proveedor (OpenCode Go, OpenRouter, DeepSeek) ----------------------------
+const usageKind = (p) => { const b = (p.base_url || "").toLowerCase();
+  return b.includes("opencode.ai") && b.includes("/go") ? "go" : b.includes("openrouter.ai") ? "openrouter" : b.includes("api.deepseek.com") ? "deepseek" : null; };
+const money = (v) => (v == null ? "—" : v > 0 && v < 0.01 ? "$" + v.toFixed(4) : "$" + v.toFixed(2));
+const until = (iso) => { if (!iso) return ""; const ms = new Date(iso) - Date.now(); if (!(ms > 0)) return "ya"; const m = Math.round(ms / 6e4), hh = Math.floor(m / 60), dd = Math.floor(hh / 24);
+  return dd >= 1 ? `en ${dd} d ${hh % 24} h` : hh >= 1 ? `en ${hh} h ${m % 60} min` : `en ${m} min`; };
+S.usage = null;
+async function fetchUsage(p) {
+  const kind = usageKind(p), auth = { Authorization: "Bearer " + p.api_key };
+  if (kind === "go") {
+    const base = p.base_url.replace(/\/$/, "");
+    let r = await request({ url: base + "/usage", headers: auth });
+    if (r.status === 404) r = await request({ url: "https://opencode.ai/inference/go/v1/usage", headers: auth });
+    if (r.status === 401 || r.status === 403) { let m = "Esta clave no tiene una suscripción de OpenCode Go activa."; try { m = JSON.parse(r.text).error.message || m; } catch { /* */ } throw new Error(m); }
+    if (r.status >= 400) throw new Error("HTTP " + r.status);
+    const u = (JSON.parse(r.text).usage) || {}, names = { rolling: "5 horas", weekly: "Semana", monthly: "Mes" };
+    return { kind, meters: Object.keys(names).filter((k) => u[k]).map((k) => ({ name: names[k], percent: Number(u[k].percent) || 0, status: u[k].status, resets: u[k].resetsAt })) };
+  }
+  if (kind === "openrouter") {
+    const r = await request({ url: "https://openrouter.ai/api/v1/key", headers: auth });
+    if (r.status >= 400) throw new Error("HTTP " + r.status);
+    const d = JSON.parse(r.text).data || {};
+    return { kind, credits: { used: d.usage, limit: d.limit, remaining: d.limit_remaining } };
+  }
+  const r = await request({ url: "https://api.deepseek.com/user/balance", headers: auth });
+  if (r.status >= 400) throw new Error("HTTP " + r.status);
+  const b = (JSON.parse(r.text).balance_infos || [{}])[0];
+  return { kind, credits: { remaining: Number(b.total_balance) || 0 } };
+}
+async function refreshUsage(force = false) {
+  const chip = $("#usage-chip"), [pid] = ($("#model").value || "").split("::");
+  const p = S.providers.find((x) => x.id === pid);
+  if (!p || !p.api_key || !usageKind(p)) { chip.classList.add("hidden"); S.usage = null; return; }
+  if (!force && S.usage && S.usage.pid === pid && Date.now() - S.usage.at < 60000) return;
+  let d; try { d = await fetchUsage(p); } catch (e) { d = { error: e.message }; }
+  S.usage = { pid, at: Date.now(), data: d };
+  if (d.error) { chip.classList.add("hidden"); return; }
+  chip.classList.remove("hidden");
+  if (d.meters) {
+    const top = d.meters.reduce((a, b) => (b.percent > a.percent ? b : a), d.meters[0] || { percent: 0 });
+    chip.textContent = top.percent + " %"; chip.dataset.level = top.status === "rate-limited" || top.percent >= 90 ? "full" : top.percent >= 70 ? "high" : "ok";
+  } else { const c = d.credits; chip.textContent = money(c.remaining ?? c.used); chip.dataset.level = c.remaining != null && c.remaining < 1 ? "high" : "ok"; }
+}
+$("#usage-chip").addEventListener("click", async () => {
+  await refreshUsage(true);
+  const d = S.usage && S.usage.data; if (!d || d.error) return toast(d?.error || "No se pudo consultar el uso");
+  const p = S.providers.find((x) => x.id === S.usage.pid);
+  const body = [];
+  for (const m of d.meters || []) {
+    const lvl = m.status === "rate-limited" || m.percent >= 90 ? "full" : m.percent >= 70 ? "high" : "ok";
+    body.push(h("div", { class: "meter" }, h("div", { class: "meter-head" }, h("span", {}, m.name), h("b", {}, m.status === "rate-limited" ? "Agotado" : m.percent + " %")),
+      h("div", { class: "meter-bar", "data-level": lvl }, h("span", { style: `width:${Math.min(100, m.percent)}%` })), h("small", { class: "muted" }, "Se reinicia " + until(m.resets))));
+  }
+  if (d.credits) body.push(h("dl", {}, ...[["Saldo disponible", d.credits.remaining], ["Gastado", d.credits.used], ["Límite de la clave", d.credits.limit]].filter(([, v]) => v != null).flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, money(v))])));
+  if (d.kind === "go") body.push(h("p", { class: "muted small" }, "5 horas = 20 % del cupo mensual; semana = 50 % (se reinicia los lunes 00:00 UTC). Todos los modelos de Go comparten el cupo; los gratuitos no lo gastan."));
+  sheet(h("h3", {}, "Uso · " + (p ? p.name : "")), ...body);
+});
+
+// --- Conectar con el PC (vuelve a la lista de equipos: buscar en la red / código) ------------------------
+const toPc = () => { try { Native.openServers(); } catch { toast("Actualiza la app para usar esta función"); } };
+$("#to-pc").addEventListener("click", toPc);
+$("#to-pc-2")?.addEventListener("click", toPc);
 
 // --- Ajustes ------------------------------------------------------------------------------
 $("#settings-btn").addEventListener("click", openSettings);

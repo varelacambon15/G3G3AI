@@ -80,6 +80,18 @@ final class NativeBridge {
         return arr.toString();
     }
 
+    /** «Conectar con mi PC» desde el chat directo: vuelve a la lista de equipos (buscar en la red / código). */
+    @JavascriptInterface
+    public void openServers() {
+        activity.runOnUiThread(() -> {
+            android.content.Intent i = new android.content.Intent(activity, ServersActivity.class);
+            i.putExtra("noauto", true);
+            i.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            activity.startActivity(i);
+            activity.finish();
+        });
+    }
+
     private void run(String id, String method, String url, String headersJson, String body) {
         HttpURLConnection c = null;
         try {

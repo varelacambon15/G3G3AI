@@ -1,7 +1,8 @@
 """Actualizar G3G3AI a la última versión publicada en sus Releases de GitHub.
 
 - Comprueba la última Release del repositorio de la aplicación y la compara con la versión en uso.
-- Descarga el ejecutable de este sistema (G3G3AI.exe en Windows, G3G3AI-linux-x64 en Linux), comprueba su huella
+- Descarga el ejecutable de este sistema (G3G3AI.exe en Windows, G3G3AI-linux-x64 en Linux, G3G3AI-macos.zip con la
+  aplicación en macOS), comprueba su huella
   SHA-256 con la que publica GitHub y lo pone en lugar del actual. Después la aplicación se reinicia sola.
 - En Windows un .exe en marcha no se puede sobrescribir: un pequeño script espera a que se cierre, lo cambia y lo
   vuelve a abrir. En Linux se sustituye directamente y se vuelve a lanzar.
@@ -13,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -40,14 +42,38 @@ def asset_name() -> str | None:
         return "G3G3AI.exe"
     if sys.platform.startswith("linux"):
         return "G3G3AI-linux-x64"
+    if sys.platform == "darwin":
+        return "G3G3AI-macos.zip"
     return None
 
 
 def installed_exe() -> Path | None:
-    """El ejecutable que se puede sustituir (sólo en la aplicación compilada)."""
+    """Lo que se puede sustituir (sólo en la aplicación compilada): el ejecutable o, en macOS, la carpeta G3G3AI.app."""
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve()
+        exe = Path(sys.executable).resolve()
+        if sys.platform == "darwin":
+            app = next((p for p in exe.parents if p.suffix == ".app"), None)
+            return app
+        return exe
     return None
+
+
+def mac_script(app: Path, stage: Path, pid: int, args: list[str]) -> str:
+    """Script de macOS: espera a que la app se cierre, cambia la carpeta .app por la nueva y la vuelve a abrir."""
+    import shlex
+    q = shlex.quote
+    argv = (" --args " + " ".join(q(a) for a in args)) if args else ""
+    return ("#!/bin/sh\n"
+            f"while kill -0 {pid} 2>/dev/null; do sleep 1; done\n"
+            f"rm -rf {q(str(app) + '.old')}\n"
+            f"if mv {q(str(app))} {q(str(app) + '.old')} && mv {q(str(stage / app.name))} {q(str(app))}; then\n"
+            f"  open -n {q(str(app))}{argv}\n"
+            f"  sleep 3; rm -rf {q(str(app) + '.old')} {q(str(stage))}\n"
+            "else\n"
+            f"  [ -d {q(str(app) + '.old')} ] && [ ! -d {q(str(app))} ] && mv {q(str(app) + '.old')} {q(str(app))}\n"
+            f"  open -n {q(str(app))}{argv}\n"
+            "fi\n"
+            'rm -f "$0"\n')
 
 
 class Updater:
@@ -86,7 +112,12 @@ class Updater:
         want = asset_name()
         asset = next((a for a in rel.get("assets") or [] if a.get("name") == want), None)
         exe = installed_exe()
-        if not exe:
+        translocated = bool(exe and "AppTranslocation" in str(exe))
+        if translocated:
+            exe = None
+        if not exe and translocated:
+            how = "Mueve G3G3AI a la carpeta Aplicaciones y ábrela desde allí: así podrá actualizarse sola."
+        elif not exe:
             how = "Estás usando G3G3AI desde el código fuente: actualiza con «git pull» (o descarga la versión nueva)."
         elif not asset:
             how = "Esta versión no tiene ejecutable para tu sistema; descárgala desde la página de la versión."
@@ -118,7 +149,7 @@ class Updater:
     def _install(self, info: dict) -> None:
         try:
             exe = Path(info["exe"])
-            new = exe.with_name(exe.name + ".new")
+            new = exe.with_name(exe.name + (".new.zip" if sys.platform == "darwin" else ".new"))
             self._download(info["asset"], new)
             self.state["phase"] = "installing"
             self._verify(new, info["asset"])
@@ -153,13 +184,28 @@ class Updater:
             raise UpdateError("La huella del archivo descargado no coincide con la publicada: no se instala.")
         with open(path, "rb") as f:
             head = f.read(4)
-        if sys.platform == "win32" and head[:2] != b"MZ" or sys.platform.startswith("linux") and head != b"\x7fELF":
+        if (sys.platform == "win32" and head[:2] != b"MZ" or sys.platform.startswith("linux") and head != b"\x7fELF"
+                or sys.platform == "darwin" and head[:2] != b"PK"):
             path.unlink(missing_ok=True)
             raise UpdateError("El archivo descargado no es un ejecutable válido.")
 
     def _swap_and_restart(self, exe: Path, new: Path) -> None:
         args = [a for a in sys.argv[1:]]
-        if sys.platform == "win32":
+        if sys.platform == "darwin":
+            stage = exe.parent / ".G3G3AI-actualizacion"
+            if stage.exists():
+                shutil.rmtree(stage)
+            stage.mkdir()
+            r = subprocess.run(["ditto", "-x", "-k", str(new), str(stage)], capture_output=True, text=True)
+            new.unlink(missing_ok=True)
+            if r.returncode != 0 or not (stage / exe.name).is_dir():
+                shutil.rmtree(stage, ignore_errors=True)
+                raise UpdateError("No se pudo descomprimir la actualización: " + (r.stderr or "archivo no válido")[:200])
+            script = exe.parent / ".g3g3ai-actualizar.sh"
+            script.write_text(mac_script(exe, stage, os.getpid(), args), encoding="utf-8")
+            os.chmod(script, 0o755)
+            subprocess.Popen(["/bin/sh", str(script)], start_new_session=True, close_fds=True)
+        elif sys.platform == "win32":
             # Un .exe en marcha no se puede sobrescribir: lo cambia un script en cuanto esta app se cierra
             script = exe.with_name("g3g3ai-actualizar.cmd")
             pid = os.getpid()
